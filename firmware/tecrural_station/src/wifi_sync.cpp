@@ -19,10 +19,7 @@ bool apiConfigured() {
          strncmp(API_BASE_URL, "https://", 8) == 0 &&
          strstr(API_BASE_URL, "your-api.example.com") == nullptr &&
          strlen(DEVICE_API_TOKEN) >= 32 &&
-         strstr(DEVICE_API_TOKEN, "provision-a-unique-token-for-this-device") == nullptr &&
-         strstr(SERVER_ROOT_CA, "-----BEGIN CERTIFICATE-----") != nullptr &&
-         strstr(SERVER_ROOT_CA, "-----END CERTIFICATE-----") != nullptr &&
-         strstr(SERVER_ROOT_CA, "...") == nullptr;
+         strstr(DEVICE_API_TOKEN, "provision-a-unique-token-for-this-device") == nullptr;
 }
 
 String apiUrl(const char* path) {
@@ -118,7 +115,7 @@ bool uploadBatch(uint32_t timeout_ms) {
   serializeJson(doc, payload);
 
   WiFiClientSecure tls;
-  tls.setCACert(SERVER_ROOT_CA);
+  tls.useBuiltinCACertBundle();
   HTTPClient http;
   http.setConnectTimeout((int32_t)timeout_ms);
   http.setTimeout((uint16_t)timeout_ms);
@@ -179,7 +176,7 @@ bool fetchConfig(uint32_t timeout_ms) {
   }
 
   WiFiClientSecure tls;
-  tls.setCACert(SERVER_ROOT_CA);
+  tls.useBuiltinCACertBundle();
   HTTPClient http;
   http.setConnectTimeout((int32_t)timeout_ms);
   http.setTimeout((uint16_t)timeout_ms);

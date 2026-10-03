@@ -51,7 +51,11 @@ void printMeasurement(const Measurement& m) {
   if (flagSet(m.flags, FLAG_BATTERY_VALID)) {
     Serial.printf("  Bateria: %u mV, tendencia %s\n", m.battery_mv, Battery::trend());
   } else {
+#if BATTERY_MONITOR_ENABLED
     Serial.println("  Bateria: SIN LECTURA");
+#else
+    Serial.println("  Bateria: MEDICION CONGELADA");
+#endif
   }
   Serial.printf("  Alerta: %s\n", m.alert == ALERT_PRIORITY ? "PRIORITARIA"
                             : m.alert == ALERT_WARNING ? "AVISO" : "ninguna");
@@ -173,6 +177,9 @@ void setup() {
 
   WiFiSync::begin();
   Battery::begin();
+#if !BATTERY_MONITOR_ENABLED
+  Serial.println("[bateria] lectura desactivada temporalmente; circuito y codigo conservados");
+#endif
   Sensors::begin();
 
   runCycle();

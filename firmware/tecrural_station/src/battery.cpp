@@ -1,24 +1,28 @@
 #include "battery.h"
 
+#if BATTERY_MONITOR_ENABLED
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
 #include <esp_attr.h>
+#endif
 #include "config.h"
 
 namespace {
 
+#if BATTERY_MONITOR_ENABLED
 constexpr adc_channel_t kAdcChannel = ADC_CHANNEL_1;
 constexpr adc_atten_t kAtten = ADC_ATTEN_DB_12;
-
 adc_oneshot_unit_handle_t adc_handle = nullptr;
 adc_cali_handle_t cali_handle = nullptr;
 bool calibrated = false;
-int32_t last_raw_mv = 0;
 RTC_DATA_ATTR int32_t previous_battery_mv = 0;
+#endif
+int32_t last_raw_mv = 0;
 enum TrendState : uint8_t { TREND_UNKNOWN, TREND_RISING, TREND_STABLE, TREND_FALLING };
 TrendState current_trend = TREND_UNKNOWN;
 
+#if BATTERY_MONITOR_ENABLED
 bool caliInit() {
   adc_cali_curve_fitting_config_t cfg = {};
   cfg.unit_id = ADC_UNIT_1;
@@ -35,12 +39,18 @@ int32_t rawToMv(int raw) {
   }
   return -1;
 }
+#endif
 
 }  // namespace
 
 namespace Battery {
 
 bool begin() {
+#if !BATTERY_MONITOR_ENABLED
+  last_raw_mv = 0;
+  current_trend = TREND_UNKNOWN;
+  return true;
+#else
   adc_oneshot_unit_init_cfg_t unit_cfg = {};
   unit_cfg.unit_id = ADC_UNIT_1;
   if (adc_oneshot_new_unit(&unit_cfg, &adc_handle) != ESP_OK) {
@@ -55,9 +65,13 @@ bool begin() {
   }
   calibrated = caliInit();
   return true;
+#endif
 }
 
 uint16_t millivolts() {
+#if !BATTERY_MONITOR_ENABLED
+  return 0;
+#else
   if (adc_handle == nullptr) return 0;
   int total = 0, samples = 0;
   for (int i = 0; i < 16; i++) {
@@ -79,6 +93,7 @@ uint16_t millivolts() {
   if (last_raw_mv < 0) last_raw_mv = 0;
   if (last_raw_mv > 5000) last_raw_mv = 5000;
   return (uint16_t)last_raw_mv;
+#endif
 }
 
 const char* trend() {
@@ -91,14 +106,28 @@ const char* trend() {
 }
 
 bool isLow() {
+#if !BATTERY_MONITOR_ENABLED
+  return true;
+#else
   return last_raw_mv > 0 && last_raw_mv <= (uint16_t)ConfigStore::current().battery_low_mv;
+#endif
 }
 
 bool isCritical() {
+#if !BATTERY_MONITOR_ENABLED
+  return true;
+#else
   return last_raw_mv <= (uint16_t)ConfigStore::current().battery_critical_mv;
+#endif
 }
 
 bool read(Measurement& m) {
+#if !BATTERY_MONITOR_ENABLED
+  m.battery_mv = 0;
+  m.flags &= ~FLAG_BATTERY_VALID;
+  current_trend = TREND_UNKNOWN;
+  return false;
+#else
   uint16_t mv = millivolts();
   m.battery_mv = mv;
   m.flags &= ~FLAG_BATTERY_VALID;
@@ -113,9 +142,11 @@ bool read(Measurement& m) {
     current_trend = TREND_UNKNOWN;
   }
   return mv > 0;
+#endif
 }
 
 void powerDown() {
+#if BATTERY_MONITOR_ENABLED
   // Retain the last measured voltage so the next deep-sleep wake can report a trend.
   if (cali_handle) {
     adc_cali_delete_scheme_curve_fitting(cali_handle);
@@ -126,6 +157,7 @@ void powerDown() {
     adc_oneshot_del_unit(adc_handle);
     adc_handle = nullptr;
   }
+#endif
 }
 
 }  // namespace Battery

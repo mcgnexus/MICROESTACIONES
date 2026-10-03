@@ -11,7 +11,6 @@
 #define DEVICE_ID ""
 #define API_BASE_URL ""
 #define DEVICE_API_TOKEN ""
-#define SERVER_ROOT_CA ""
 #endif
 #define SERVER_PATH_UPLOAD "/api/measurements"
 #define SERVER_PATH_CONFIG "/api/config"

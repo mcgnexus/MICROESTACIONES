@@ -28,7 +28,7 @@ SELECT id, 'estacion-01' FROM subscribers WHERE email = 'agricultor@example.com'
 ON CONFLICT DO NOTHING;
 ```
 
-Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `secrets.h`, completa Wi-Fi, un `DEVICE_ID` elegido, URL HTTPS, token individual y certificado raíz PEM del servicio. Usa exactamente el mismo `DEVICE_ID` en `npm run provision-device` y en `secrets.h`. No incluyas `secrets.h` en el repositorio. No se debe usar TLS sin validar el certificado.
+Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `secrets.h`, completa Wi-Fi, un `DEVICE_ID` elegido, URL HTTPS y token individual. Usa exactamente el mismo `DEVICE_ID` en `npm run provision-device` y en `secrets.h`. TLS valida con el paquete de CA integrado en Arduino-ESP32; no desactives esa verificación. No incluyas `secrets.h` en el repositorio.
 
 ## API
 
