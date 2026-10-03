@@ -1,0 +1,4 @@
+api/.env
+api/node_modules/
+firmware/tecrural_station/src/secrets.h
+eim_config.toml

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#153b2b">
+  <title>TECRURAL · Estaciones</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/">TECRURAL<span>ESTACIONES RURALES</span></a><button id="logout" class="quiet hidden" type="button">Cerrar sesión</button></header>
+  <main>
+    <section id="login-view" class="login-card">
+      <p class="eyebrow">PANEL PRIVADO · SUSCRIPTORES</p>
+      <h1>Datos de tu estación</h1>
+      <p>Inicia sesión para consultar mediciones, estado y avisos.</p>
+      <form id="login-form">
+        <label>Correo electrónico<input name="email" type="email" autocomplete="username" required></label>
+        <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+        <button type="submit">Entrar</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+    <section id="dashboard-view" class="hidden">
+      <div class="page-heading"><div><p class="eyebrow">PANEL DE SUSCRIPTOR</p><h1>Estado de la estación</h1></div>
+        <label class="period-label">Periodo de gráficas y resúmenes<select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select></label></div>
+      <p id="dashboard-error" class="error" role="alert"></p>
+      <div id="stations" class="station-list"></div>
+      <section class="panel"><div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Avisos recientes</h2></div></div><div id="alerts" class="alerts"></div></section>
+      <p class="footnote">Las gráficas muestran mediciones propias de la estación. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
