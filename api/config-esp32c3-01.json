@@ -1,0 +1,12 @@
+{
+  "interval_normal_s": 300,
+  "interval_risk_s": 300,
+  "interval_risk_min_s": 300,
+  "sync_interval_s": 900,
+  "sync_enabled": true,
+  "risk_mode_enabled": true,
+  "temp_alert_low_c": 2,
+  "temp_alert_high_c": 35,
+  "humidity_alert_high_pct": 90,
+  "pressure_alert_low_pa": 88500
+}

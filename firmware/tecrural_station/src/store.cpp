@@ -85,7 +85,9 @@ bool writeHeader(File& f) {
   header.crc = headerCrc(header);
   uint32_t slot = header.generation % kHeaderSlots;
   if (!f.seek(slot * kHeaderSlotBytes, SeekSet)) return false;
-  return f.write((const uint8_t*)&header, sizeof(header)) == sizeof(header);
+  if (f.write((const uint8_t*)&header, sizeof(header)) != sizeof(header)) return false;
+  f.flush();
+  return true;
 }
 
 bool loadHeaderSlot(File& f, uint32_t slot, LogHeader* out) {
@@ -163,9 +165,12 @@ bool begin() {
   store_ready = false;
   corrupt_count = 0;
 
-  if (!LittleFS.begin(true, kBasePath, 4, kPartition)) {
-    fault = "no se pudo montar LittleFS en la particion spiffs";
-    return false;
+  if (!LittleFS.begin(false, kBasePath, 4, kPartition)) {
+    if (!LittleFS.begin(true, kBasePath, 4, kPartition)) {
+      fault = "no se pudo montar LittleFS en la particion spiffs";
+      return false;
+    }
+    Serial.println("[almacen] AVISO: LittleFS ilegible o sin formato; se formateo y la cola anterior se perdio");
   }
 
   fs_total = (uint32_t)LittleFS.totalBytes();
@@ -173,8 +178,20 @@ bool begin() {
 
   File f = LittleFS.open(STORE_FILE_PATH, kMode, true);
   if (!f) {
-    fault = "no se pudo abrir la cola persistente";
-    return false;
+    // La cola no existe (p. ej. tras formatear LittleFS): crearla en blanco.
+    f = LittleFS.open(STORE_FILE_PATH, FILE_WRITE);
+    if (!f) {
+      fault = "no se pudo crear la cola persistente";
+      return false;
+    }
+    if (!initialize(f)) {
+      f.close();
+      fault = "no se pudo inicializar la cola persistente";
+      return false;
+    }
+    f.close();
+    store_ready = true;
+    return true;
   }
 
   if (!readHeader(f) && !initialize(f)) {
@@ -308,6 +325,7 @@ uint16_t read(StoredRecord* out, uint16_t max_items) {
     if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
     if (rec.crc != recordCrc(rec)) {
       corrupt_count++;
+      Serial.printf("[almacen] registro corrupto (slot %u), omitido\n", (unsigned)slot);
       continue;
     }
     out[produced++] = rec;

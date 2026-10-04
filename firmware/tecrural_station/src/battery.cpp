@@ -107,7 +107,8 @@ const char* trend() {
 
 bool isLow() {
 #if !BATTERY_MONITOR_ENABLED
-  return true;
+  // A deliberately frozen monitor is treated as a healthy battery for station behavior.
+  return false;
 #else
   return last_raw_mv > 0 && last_raw_mv <= (uint16_t)ConfigStore::current().battery_low_mv;
 #endif
@@ -115,7 +116,8 @@ bool isLow() {
 
 bool isCritical() {
 #if !BATTERY_MONITOR_ENABLED
-  return true;
+  // Do not block alerts or double the sampling interval while voltage sensing is disabled.
+  return false;
 #else
   return last_raw_mv <= (uint16_t)ConfigStore::current().battery_critical_mv;
 #endif

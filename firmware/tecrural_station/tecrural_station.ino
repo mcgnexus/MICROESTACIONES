@@ -10,11 +10,23 @@
 
 namespace {
 
-constexpr uint32_t kWifiConnectTimeoutMs = 12000;
-constexpr uint32_t kWifiHttpTimeoutMs = 8000;
+constexpr uint32_t kWifiConnectTimeoutMs = 25000;
+constexpr uint32_t kWifiHttpTimeoutMs = 20000;
 constexpr uint32_t kAlertSyncCooldownS = 900;
 
-RTC_DATA_ATTR uint32_t last_sync_attempt_epoch = 0;
+// Diagnostico por serie en cada arranque. Subir con -DTECRURAL_BOOT_DIAG_MS=12000
+// para sesiones de banco; el valor por defecto minimiza el tiempo despierto.
+#ifndef TECRURAL_BOOT_DIAG_MS
+#define TECRURAL_BOOT_DIAG_MS 1500
+#endif
+
+// Permanencia despierta minima para comprobaciones. 0 = desactivado.
+#ifndef TECRURAL_MIN_AWAKE_MS
+#define TECRURAL_MIN_AWAKE_MS 150
+#endif
+
+RTC_DATA_ATTR uint32_t last_sync_attempt_stamp = 0;
+RTC_DATA_ATTR bool last_sync_was_uptime = false;
 RTC_DATA_ATTR bool has_attempted_sync = false;
 
 void printHeader(const char* reason) {
@@ -26,7 +38,7 @@ void printHeader(const char* reason) {
 
 void printMeasurement(const Measurement& m) {
   Serial.printf("[lectura] seq=%u ts=%lu (%s)\n",
-                m.sequence, (unsigned long)m.timestamp,
+                (unsigned)m.sequence, (unsigned long)m.timestamp,
                 TimeKeeper::qualityName(TimeKeeper::quality()));
   if (flagSet(m.flags, FLAG_TEMP_VALID)) {
     Serial.printf("  Temperatura: %ld.%02ld C\n",
@@ -61,18 +73,22 @@ void printMeasurement(const Measurement& m) {
                             : m.alert == ALERT_WARNING ? "AVISO" : "ninguna");
 }
 
-bool syncDue(uint32_t now_epoch) {
-  if (!ConfigStore::current().sync_enabled) return false;
-  if (Store::count() == 0) return false;
+bool cooldownElapsed(uint32_t stamp, bool stamp_is_uptime, uint32_t cooldown_s) {
   if (!has_attempted_sync) return true;
-  if (now_epoch == 0) return true;
-  return (now_epoch - last_sync_attempt_epoch) >= ConfigStore::current().sync_interval_s;
+  if (stamp == 0) return true;
+  // Sellos de bases distintas (epoch vs uptime) no son comparables: sincronizar.
+  if (last_sync_was_uptime != stamp_is_uptime) return true;
+  return (stamp - last_sync_attempt_stamp) >= cooldown_s;
 }
 
-bool alertSyncDue(uint32_t now_epoch) {
-  if (!has_attempted_sync) return true;
-  if (now_epoch == 0) return true;
-  return (now_epoch - last_sync_attempt_epoch) >= kAlertSyncCooldownS;
+bool syncDue(uint32_t stamp, bool stamp_is_uptime) {
+  if (!ConfigStore::current().sync_enabled) return false;
+  if (Store::count() == 0) return false;
+  return cooldownElapsed(stamp, stamp_is_uptime, ConfigStore::current().sync_interval_s);
+}
+
+bool alertSyncDue(uint32_t stamp, bool stamp_is_uptime) {
+  return cooldownElapsed(stamp, stamp_is_uptime, kAlertSyncCooldownS);
 }
 
 void runCycle() {
@@ -87,6 +103,7 @@ void runCycle() {
                                                         : TimeKeeper::now();
   m.timestamp = stamp;
   if (quality != TIME_NO_REFERENCE) m.flags |= FLAG_TIME_VALID;
+  const bool stamp_is_uptime = (quality == TIME_NO_REFERENCE);
 
   if (!Store::push(m, stamp, quality)) {
     Serial.printf("[almacen] no se pudo guardar la lectura: %s\n", Store::faultReason());
@@ -112,22 +129,30 @@ void runCycle() {
     Serial.println("[riesgo] alerta prioritaria activa");
   }
 
-  bool must_connect = syncDue(stamp);
+  bool must_connect = syncDue(stamp, stamp_is_uptime);
   if (risk_allowed && !must_connect) {
-    must_connect = alertSyncDue(stamp);
+    must_connect = alertSyncDue(stamp, stamp_is_uptime);
     if (must_connect) Serial.println("[wifi] envio extraordinario por alerta");
   }
 
   if (must_connect) {
-    last_sync_attempt_epoch = stamp;
+    last_sync_attempt_stamp = stamp;
+    last_sync_was_uptime = stamp_is_uptime;
     has_attempted_sync = true;
 
     if (WiFiSync::connect(kWifiConnectTimeoutMs)) {
       if (TimeKeeper::sync()) {
         Serial.printf("[hora] sincronizada, antiguedad de la referencia %lu s\n",
                       (unsigned long)(TimeKeeper::msSinceSync() / 1000UL));
+      } else {
+        Serial.println("[hora] sincronizacion NTP fallida (hora estimada)");
       }
-      WiFiSync::uploadBatch(kWifiHttpTimeoutMs);
+      for (int attempt = 0; attempt < 5 && Store::count() > 0; ++attempt) {
+        if (!WiFiSync::uploadBatch(kWifiHttpTimeoutMs)) {
+          Serial.println("[wifi] reintento de subida");
+          delay(500);
+        }
+      }
       WiFiSync::fetchConfig(kWifiHttpTimeoutMs);
       WiFiSync::disconnect();
     } else {
@@ -139,9 +164,21 @@ void runCycle() {
     Serial.println("[aviso] lectura de sensores incompleta");
   }
 
-  const uint16_t next_s = Power::decideIntervalSeconds(risk_allowed, battery_ok);
-  Serial.printf("[energia] proxima medicion en %u s\n", next_s);
+  const uint32_t next_s = Power::decideIntervalSeconds(risk_allowed, battery_ok);
+  Serial.printf("[energia] proxima medicion en %lu s\n", (unsigned long)next_s);
   Serial.println("========================================");
+
+#if TECRURAL_MIN_AWAKE_MS > 0
+  // Ventana despierta minima: permite monitorizar el ciclo completo.
+  {
+    const uint32_t awake_ms = millis();
+    if (awake_ms < TECRURAL_MIN_AWAKE_MS) {
+      const uint32_t hold_ms = TECRURAL_MIN_AWAKE_MS - awake_ms;
+      Serial.printf("[comprobacion] despierto %lu ms mas\n", (unsigned long)hold_ms);
+      delay(hold_ms);
+    }
+  }
+#endif
 
   Power::enterDeepSleep(next_s);
 }
@@ -150,7 +187,21 @@ void runCycle() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1500);
+  const uint32_t serial_wait_started = millis();
+  while (!Serial && millis() - serial_wait_started < 5000) {
+    delay(10);
+  }
+  delay(200);
+
+#if TECRURAL_BOOT_DIAG_MS > 0
+  {
+    const uint32_t diag_started = millis();
+    while (millis() - diag_started < TECRURAL_BOOT_DIAG_MS) {
+      Serial.printf("[diag] firmware en ejecucion, t=%u ms\n", (unsigned)millis());
+      delay(500);
+    }
+  }
+#endif
 
   Power::begin();
   printHeader(Power::wakeReasonName());

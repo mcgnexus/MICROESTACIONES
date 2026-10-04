@@ -3,8 +3,8 @@
 #include <Arduino.h>
 #include "measurement.h"
 
-#define PIN_I2C_SDA 8
-#define PIN_I2C_SCL 9
+#define PIN_I2C_SDA 6
+#define PIN_I2C_SCL 7
 
 #define SENSOR_TEMP_MIN_C (-40.0f)
 #define SENSOR_TEMP_MAX_C (85.0f)

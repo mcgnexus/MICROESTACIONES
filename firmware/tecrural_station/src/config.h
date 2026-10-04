@@ -4,10 +4,10 @@
 #include <stddef.h>
 
 struct StationConfig {
-  uint16_t interval_normal_s;
-  uint16_t interval_risk_s;
-  uint16_t interval_risk_min_s;
-  uint16_t sync_interval_s;
+  uint32_t interval_normal_s;
+  uint32_t interval_risk_s;
+  uint32_t interval_risk_min_s;
+  uint32_t sync_interval_s;
   int16_t  battery_low_mv;
   int16_t  battery_critical_mv;
   float    temp_alert_high_c;

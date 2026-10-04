@@ -13,6 +13,10 @@ bool server_dirty = false;
 const char* NS = "tecrural";
 const char* KEY_CFG = "cfg";
 const char* KEY_SRV = "srv";
+const char* KEY_VER = "ver";
+// Subir esta version fuerza a descartar la config guardada en NVS y recargar los
+// valores por defecto compilados. Necesario al cambiar umbrales por defecto.
+constexpr uint32_t kSchemaVersion = 2;
 
 bool inRange(int32_t v, int32_t lo, int32_t hi) {
   return v >= lo && v <= hi;
@@ -48,16 +52,16 @@ bool validate(const StationConfig& c) {
 }
 
 void loadDefaults() {
-  config.interval_normal_s = 900;
+  config.interval_normal_s = 300;
   config.interval_risk_s = 300;
   config.interval_risk_min_s = 300;
-  config.sync_interval_s = 3600;
+  config.sync_interval_s = 900;
   config.battery_low_mv = 3400;
   config.battery_critical_mv = 3200;
   config.temp_alert_high_c = 35.0f;
-  config.temp_alert_low_c = 5.0f;
+  config.temp_alert_low_c = 2.0f;
   config.humidity_alert_high_pct = 90;
-  config.pressure_alert_low_pa = 99000;
+  config.pressure_alert_low_pa = 88500;
   config.risk_mode_enabled = 1;
   config.sync_enabled = 1;
 }
@@ -71,6 +75,7 @@ bool begin() {
 }
 
 bool loadFromFlash() {
+  if (prefs.getUInt(KEY_VER, 0) != kSchemaVersion) return false;
   if (prefs.getBytesLength(KEY_CFG) != sizeof(StationConfig)) return false;
   StationConfig tmp;
   if (prefs.getBytes(KEY_CFG, &tmp, sizeof(tmp)) != sizeof(tmp)) return false;
@@ -82,6 +87,7 @@ bool loadFromFlash() {
 bool saveToFlash() {
   if (!prefs.begin(NS, false)) return false;
   bool ok = prefs.putBytes(KEY_CFG, &config, sizeof(config)) > 0;
+  if (ok) ok = prefs.putUInt(KEY_VER, kSchemaVersion) > 0;
   prefs.end();
   return ok;
 }
@@ -109,10 +115,10 @@ bool applyServerJson(const char* json, size_t len) {
   StationConfig candidate = config;
   int32_t v;
 
-  if (numberInRangeImpl(root["interval_normal_s"], 60, 86400, v)) candidate.interval_normal_s = (uint16_t)v;
-  if (numberInRangeImpl(root["interval_risk_s"], 60, 86400, v)) candidate.interval_risk_s = (uint16_t)v;
-  if (numberInRangeImpl(root["interval_risk_min_s"], 60, 86400, v)) candidate.interval_risk_min_s = (uint16_t)v;
-  if (numberInRangeImpl(root["sync_interval_s"], 60, 86400, v)) candidate.sync_interval_s = (uint16_t)v;
+  if (numberInRangeImpl(root["interval_normal_s"], 60, 86400, v)) candidate.interval_normal_s = (uint32_t)v;
+  if (numberInRangeImpl(root["interval_risk_s"], 60, 86400, v)) candidate.interval_risk_s = (uint32_t)v;
+  if (numberInRangeImpl(root["interval_risk_min_s"], 60, 86400, v)) candidate.interval_risk_min_s = (uint32_t)v;
+  if (numberInRangeImpl(root["sync_interval_s"], 60, 86400, v)) candidate.sync_interval_s = (uint32_t)v;
   if (numberInRangeImpl(root["battery_low_mv"], 2500, 4200, v)) candidate.battery_low_mv = (int16_t)v;
   if (numberInRangeImpl(root["battery_critical_mv"], 2000, 4200, v)) candidate.battery_critical_mv = (int16_t)v;
   if (numberInRangeImpl(root["humidity_alert_high_pct"], 0, 100, v)) candidate.humidity_alert_high_pct = (uint16_t)v;

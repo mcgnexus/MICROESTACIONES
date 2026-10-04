@@ -14,7 +14,7 @@
 #endif
 #define SERVER_PATH_UPLOAD "/api/measurements"
 #define SERVER_PATH_CONFIG "/api/config"
-#define SYNC_BATCH_SIZE 32
+#define SYNC_BATCH_SIZE 4
 
 namespace WiFiSync {
 

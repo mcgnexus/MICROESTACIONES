@@ -27,7 +27,7 @@ struct Measurement {
   uint16_t battery_mv;
   uint8_t  flags;
   uint8_t  alert;
-  uint16_t sequence;
+  uint32_t sequence;
 };
 
 inline bool flagSet(uint8_t flags, MeasurementFlags f) {

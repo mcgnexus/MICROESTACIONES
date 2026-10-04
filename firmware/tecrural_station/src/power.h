@@ -14,7 +14,7 @@ enum WakeReason : uint8_t {
 bool begin();
 WakeReason wakeReason();
 const char* wakeReasonName();
-uint16_t decideIntervalSeconds(bool risk_allowed, bool battery_ok);
+uint32_t decideIntervalSeconds(bool risk_allowed, bool battery_ok);
 void enterDeepSleep(uint32_t seconds);
 void prepareForSleep();
 void shutdown();

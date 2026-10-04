@@ -3,3 +3,13 @@ api/node_modules/
 firmware/tecrural_station/src/secrets.h
 eim_config.toml
 .vercel/
+
+# Artefactos generados (no versionar)
+firmware/tecrural_station/build/
+firmware/tecrural_station/build-cdc/
+firmware/esptool4/
+firmware/*.log
+firmware/*.err
+firmware/serial_check*.txt
+firmware/quick_capture.bin
+firmware/module.jpg

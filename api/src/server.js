@@ -124,8 +124,11 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
 });
 
 app.get('/api/config', requireDevice, async (req, res) => {
-  const [row] = await sql`SELECT config FROM device_configs WHERE device_id = ${req.deviceId}`;
-  res.json(row?.config || {});
+  // Se sirve el JSON tal cual (como texto) para NO pasar por transform: postgres.camel
+  // reescribiria las claves snake_case (pressure_alert_low_pa) a camelCase y el
+  // firmware del dispositivo no las reconoceria.
+  const [row] = await sql`SELECT config::text AS config FROM device_configs WHERE device_id = ${req.deviceId}`;
+  res.type('application/json').send(row?.config ?? '{}');
 });
 
 // A server-side provider adapter may push forecast data here; provider keys never reach the browser/device.

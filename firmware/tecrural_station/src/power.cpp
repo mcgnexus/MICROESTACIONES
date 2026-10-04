@@ -37,7 +37,7 @@ const char* wakeReasonName() {
   }
 }
 
-uint16_t decideIntervalSeconds(bool risk_allowed, bool battery_ok) {
+uint32_t decideIntervalSeconds(bool risk_allowed, bool battery_ok) {
   const StationConfig& c = ConfigStore::current();
 
   if (!battery_ok) {
@@ -45,7 +45,7 @@ uint16_t decideIntervalSeconds(bool risk_allowed, bool battery_ok) {
   }
 
   if (risk_allowed && c.risk_mode_enabled) {
-    uint16_t risk = c.interval_risk_s;
+    uint32_t risk = c.interval_risk_s;
     if (risk < c.interval_risk_min_s) risk = c.interval_risk_min_s;
     if (risk < 60) risk = 60;
     return risk;

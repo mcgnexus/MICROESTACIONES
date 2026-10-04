@@ -13,6 +13,37 @@ namespace {
 
 uint32_t failure_counter = 0;
 constexpr size_t kMaxPayloadBytes = 6000;
+volatile uint8_t last_disconnect_reason = 0;
+bool event_registered = false;
+
+void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    last_disconnect_reason = (uint8_t)info.wifi_sta_disconnected.reason;
+  }
+}
+
+const char* disconnectReasonText(uint8_t r) {
+  switch (r) {
+    case 1:
+    case 201:
+      return "red no encontrada o fuera de rango (probable banda 5 GHz)";
+    case 2:
+    case 3:
+    case 4:
+      return "autenticacion/asociacion expirada (posible contrasena)";
+    case 15:
+    case 204:
+      return "handshake agotado - CONTRASENA incorrecta";
+    case 202:
+      return "autenticacion fallida - CONTRASENA incorrecta";
+    case 203:
+      return "fallo de asociacion";
+    case 205:
+      return "fallo de conexion";
+    default:
+      return "desconocido";
+  }
+}
 
 bool apiConfigured() {
   return strlen(DEVICE_ID) > 0 && strlen(API_BASE_URL) > 8 &&
@@ -26,6 +57,15 @@ String apiUrl(const char* path) {
   String base(API_BASE_URL);
   while (base.endsWith("/")) base.remove(base.length() - 1);
   return base + path;
+}
+
+String apiHost() {
+  String base(API_BASE_URL);
+  int sep = base.indexOf("://");
+  if (sep >= 0) base.remove(0, sep + 3);
+  int slash = base.indexOf('/');
+  if (slash >= 0) base.remove(slash);
+  return base;
 }
 
 }  // namespace
@@ -44,8 +84,15 @@ bool connect(uint32_t timeout_ms) {
     return false;
   }
 
+  if (!event_registered) {
+    WiFi.onEvent(onWifiEvent);
+    event_registered = true;
+  }
+  last_disconnect_reason = 0;
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(true);
+  // El modem-sleep descarta respuestas DNS/NTP (paquetes durante el reposo):
+  // la resolucion devolvia 0.0.0.0 y el NTP fallaba. Alimentado por USB, sin ahorro.
+  WiFi.setSleep(false);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   uint32_t start = millis();
@@ -54,11 +101,27 @@ bool connect(uint32_t timeout_ms) {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[wifi] conectado en %lus\n", (millis() - start) / 1000);
+    Serial.printf("[wifi] conectado en %lus, IP %s, gw %s, rssi %d\n",
+                  (millis() - start) / 1000, WiFi.localIP().toString().c_str(),
+                  WiFi.gatewayIP().toString().c_str(), (int)WiFi.RSSI());
     return true;
   }
   failure_counter++;
-  Serial.printf("[wifi] fallo de conexion tras %lus\n", (millis() - start) / 1000);
+  Serial.printf("[wifi] fallo de conexion tras %lus (motivo %u: %s)\n",
+                (millis() - start) / 1000, (unsigned)last_disconnect_reason,
+                disconnectReasonText(last_disconnect_reason));
+
+  // Diagnostico (solo los primeros intentos): listar redes 2.4 GHz visibles.
+  if (failure_counter <= 3) {
+    int n = WiFi.scanNetworks();
+    Serial.printf("[wifi] %d redes visibles en 2.4 GHz\n", n);
+    for (int i = 0; i < n; ++i) {
+      Serial.printf("    SSID \"%s\" (%d dBm)%s\n", WiFi.SSID(i).c_str(),
+                    (int)WiFi.RSSI(i),
+                    WiFi.SSID(i) == WIFI_SSID ? "  <- COINCIDE con SSID configurado" : "");
+    }
+    WiFi.scanDelete();
+  }
   return false;
 }
 
@@ -114,6 +177,20 @@ bool uploadBatch(uint32_t timeout_ms) {
   String payload;
   serializeJson(doc, payload);
 
+  const String host = apiHost();
+  IPAddress resolved;
+  bool dns_ok = false;
+  for (int attempt = 1; attempt <= 3 && !dns_ok; ++attempt) {
+    if (WiFi.hostByName(host.c_str(), resolved) && resolved != IPAddress(0, 0, 0, 0)) {
+      dns_ok = true;
+      Serial.printf("[wifi] DNS %s -> %s (intento %d)\n", host.c_str(),
+                    resolved.toString().c_str(), attempt);
+    } else {
+      Serial.printf("[wifi] DNS fallo intento %d para %s\n", attempt, host.c_str());
+      delay(1000);
+    }
+  }
+
   WiFiClientSecure tls;
   tls.useBuiltinCACertBundle();
   HTTPClient http;
@@ -126,16 +203,23 @@ bool uploadBatch(uint32_t timeout_ms) {
   }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", String("Bearer ") + DEVICE_API_TOKEN);
+  Serial.printf("[wifi] subida: %u lecturas, %u bytes\n", n, (unsigned)payload.length());
+  const uint32_t post_started = millis();
   const int code = http.POST(payload);
+  const uint32_t post_ms = millis() - post_started;
   String response = (code > 0) ? http.getString() : String();
+  char tls_msg[160] = {};
+  const int tls_err = tls.lastError(tls_msg, sizeof(tls_msg));
   http.end();
 
   if (code < 200 || code >= 300) {
     failure_counter++;
-    Serial.printf("[wifi] envio fallo (HTTP %d), se conservan %u lecturas\n",
-                  code, (unsigned)Store::count());
+    Serial.printf("[wifi] envio fallo (HTTP %d: %s) tras %lu ms, tls=%d (%s), se conservan %u lecturas\n",
+                  code, http.errorToString(code).c_str(), (unsigned long)post_ms, tls_err, tls_msg,
+                  (unsigned)Store::count());
     return false;
   }
+  Serial.printf("[wifi] lote aceptado en %lu ms\n", (unsigned long)post_ms);
 
   JsonDocument ack_doc;
   if (deserializeJson(ack_doc, response)) {
