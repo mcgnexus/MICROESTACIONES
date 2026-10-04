@@ -22,7 +22,7 @@ constexpr uint32_t kAlertSyncCooldownS = 900;
 
 // Permanencia despierta minima para comprobaciones. 0 = desactivado.
 #ifndef TECRURAL_MIN_AWAKE_MS
-#define TECRURAL_MIN_AWAKE_MS 30000
+#define TECRURAL_MIN_AWAKE_MS 300
 #endif
 
 RTC_DATA_ATTR uint32_t last_sync_attempt_stamp = 0;
