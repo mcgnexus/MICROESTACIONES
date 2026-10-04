@@ -60,6 +60,9 @@ void prepareForSleep() {
 }
 
 void enterDeepSleep(uint32_t seconds) {
+  // Sin este flush, la ultima salida queda en el buffer USB CDC y se pierde al
+  // dormir: con la ventana despierta corta no llegabamos a ver los fallos.
+  Serial.flush();
   prepareForSleep();
   if (seconds < 10) seconds = 10;
 #ifdef TECRURAL_SLEEP_CAP_S

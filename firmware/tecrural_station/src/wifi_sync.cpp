@@ -130,11 +130,23 @@ bool connect(uint32_t timeout_ms) {
     return false;
   }
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Causa clasica de "veo la red pero no asocio" en el ESP32-C3: potencia de
+  // transmision por encima de lo que la antena soporta; el AP no llega a oir las
+  // tramas de asociacion. Se reduce la potencia y se reintenta hasta 3 veces.
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
   uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < timeout_ms) {
-    delay(100);
+  bool connected = false;
+  for (int attempt = 0; attempt < 3 && !connected && millis() - start < timeout_ms; ++attempt) {
+    if (attempt > 0) {
+      WiFi.disconnect(false);
+      delay(150);
+    }
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED && millis() - start < timeout_ms) {
+      delay(100);
+    }
+    connected = WiFi.status() == WL_CONNECTED;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
