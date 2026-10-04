@@ -115,6 +115,43 @@ function periodRange(kind, isoDate) {
   return { from, to };
 }
 
+function currentRange() {
+  if ($('#table-period').value === 'custom') {
+    const from = $('#table-from').value ? new Date(`${$('#table-from').value}T00:00:00`) : new Date(0);
+    const to = $('#table-to').value ? new Date(`${$('#table-to').value}T00:00:00`) : new Date();
+    if ($('#table-to').value) to.setDate(to.getDate() + 1);
+    return { from, to };
+  }
+  return periodRange($('#table-period').value, $('#table-date').value);
+}
+
+function syncFilterVisibility() {
+  const custom = $('#table-period').value === 'custom';
+  document.querySelectorAll('.custom-range').forEach((element) => element.classList.toggle('hidden', !custom));
+  $('#table-date-label').classList.toggle('hidden', custom);
+}
+
+async function exportCsv() {
+  $('#table-error').textContent = '';
+  const { from, to } = currentRange();
+  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+  if ($('#table-device').value) params.set('device_id', $('#table-device').value);
+  try {
+    const response = await fetch(`/api/v1/measurements.csv?${params}`, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `tecrural-mediciones-${localIsoDate(from)}_${localIsoDate(new Date(to.getTime() - 1))}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    $('#table-error').textContent = `No se pudo exportar: ${error.message}`;
+  }
+}
+
 function syncDeviceFilter(devices) {
   const select = $('#table-device');
   const previous = select.value;
@@ -131,7 +168,7 @@ function renderTableRow(row) {
 async function loadTable({ append = false } = {}) {
   $('#table-error').textContent = '';
   if (!append) tableState.rows = [];
-  const { from, to } = periodRange($('#table-period').value, $('#table-date').value);
+  const { from, to } = currentRange();
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), limit: String(tableState.limit), offset: String(tableState.rows.length) });
   if ($('#table-device').value) params.set('device_id', $('#table-device').value);
   try {
@@ -161,8 +198,13 @@ tableBody.addEventListener('click', async (event) => {
 });
 
 $('#table-apply').addEventListener('click', () => loadTable());
-$('#table-period').addEventListener('change', () => loadTable());
+$('#table-period').addEventListener('change', () => { syncFilterVisibility(); loadTable(); });
 $('#table-more').addEventListener('click', () => loadTable({ append: true }));
-$('#table-date').value = localIsoDate(new Date());
+$('#table-export').addEventListener('click', exportCsv);
+const today = new Date();
+$('#table-date').value = localIsoDate(today);
+$('#table-from').value = localIsoDate(new Date(today.getFullYear(), today.getMonth(), 1));
+$('#table-to').value = localIsoDate(today);
+syncFilterVisibility();
 
 loadDashboard();

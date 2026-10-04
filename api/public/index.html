@@ -29,10 +29,13 @@
       <section class="panel">
         <div class="section-heading"><div><p class="eyebrow">REGISTROS</p><h2>Tabla de mediciones</h2></div></div>
         <div class="table-filters">
-          <label>Ver por<select id="table-period"><option value="day">Día</option><option value="week">Semana</option><option value="month" selected>Mes</option><option value="year">Año</option></select></label>
-          <label>Fecha de referencia<input id="table-date" type="date"></label>
+          <label>Ver por<select id="table-period"><option value="day">Día</option><option value="week">Semana</option><option value="month" selected>Mes</option><option value="year">Año</option><option value="custom">Rango libre</option></select></label>
+          <label id="table-date-label">Fecha de referencia<input id="table-date" type="date"></label>
+          <label class="custom-range hidden">Desde<input id="table-from" type="date"></label>
+          <label class="custom-range hidden">Hasta<input id="table-to" type="date"></label>
           <label>Estación<select id="table-device"></select></label>
           <button id="table-apply" type="button">Aplicar</button>
+          <button id="table-export" type="button" class="quiet">Exportar CSV</button>
         </div>
         <p id="table-error" class="error" role="alert"></p>
         <p id="table-summary" class="coverage"></p>
