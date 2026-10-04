@@ -22,7 +22,7 @@ constexpr uint32_t kAlertSyncCooldownS = 900;
 
 // Permanencia despierta minima para comprobaciones. 0 = desactivado.
 #ifndef TECRURAL_MIN_AWAKE_MS
-#define TECRURAL_MIN_AWAKE_MS 150
+#define TECRURAL_MIN_AWAKE_MS 30000
 #endif
 
 RTC_DATA_ATTR uint32_t last_sync_attempt_stamp = 0;
@@ -81,9 +81,16 @@ bool cooldownElapsed(uint32_t stamp, bool stamp_is_uptime, uint32_t cooldown_s) 
   return (stamp - last_sync_attempt_stamp) >= cooldown_s;
 }
 
+// Red de seguridad: no dejar acumular mas de estas lecturas sin subir aunque el
+// reloj o el cooldown se comporten de forma inesperada (se observo un retraso de
+// ~52 min en el que el chip desperto 9 veces sin intentar sincronizar).
+constexpr uint32_t kSyncBurstRecords = 6;
+
 bool syncDue(uint32_t stamp, bool stamp_is_uptime) {
   if (!ConfigStore::current().sync_enabled) return false;
-  if (Store::count() == 0) return false;
+  const uint32_t pending = Store::count();
+  if (pending == 0) return false;
+  if (pending >= kSyncBurstRecords) return true;  // ~30 min de datos: subir ya
   return cooldownElapsed(stamp, stamp_is_uptime, ConfigStore::current().sync_interval_s);
 }
 

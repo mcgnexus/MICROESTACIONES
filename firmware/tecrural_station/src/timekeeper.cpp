@@ -93,31 +93,15 @@ bool begin() {
 }
 
 bool sync() {
-  static const char* const kServers[] = {"pool.ntp.org", "time.google.com"};
-
-  for (const char* server : kServers) {
-    configTime(kGmtOffsetSec, 0, server);
-
-    const uint32_t started = millis();
-    struct tm timeinfo;
-    while (millis() - started < kSyncTimeoutMs) {
-      if (getLocalTime(&timeinfo, 1000) > 0) {
-        const time_t candidate = time(nullptr);
-        if (candidate > 1700000000) {
-          const uint32_t up = uptimeSeconds();
-          ref_epoch = (uint32_t)candidate;
-          base_epoch = ref_epoch;
-          uptime_base = up;
-          boot_millis = millis();
-          has_reference = true;
-          build_time_fallback = false;
-          Store::saveTimeState({ref_epoch, base_epoch, uptime_base});
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+  // NO se usa SNTP. Dos motivos: (1) esta red bloquea NTP (UDP/123), asi que no
+  // puede funcionar; y (2) configTime() arranca el cliente SNTP de ESP-IDF, cuya
+  // tarea de fondo hace sys_untimeout() sin el lock de lwIP y provoca el panic
+  // "Required to lock TCPIP core functionality!" -> reinicio del chip.
+  // La hora real llega por la cabecera HTTP Date del servidor (setFromHttpDate) y,
+  // antes del primer contacto, por la hora de compilacion. Aqui solo se comprueba
+  // que el reloj actual es utilizable.
+  const uint32_t current = now();
+  return has_reference && current > 1700000000UL;
 }
 
 bool setFromHttpDate(const char* httpDate) {
