@@ -26,6 +26,24 @@
         <label class="period-label">Periodo de gráficas y resúmenes<select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select></label></div>
       <p id="dashboard-error" class="error" role="alert"></p>
       <div id="stations" class="station-list"></div>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">REGISTROS</p><h2>Tabla de mediciones</h2></div></div>
+        <div class="table-filters">
+          <label>Ver por<select id="table-period"><option value="day">Día</option><option value="week">Semana</option><option value="month" selected>Mes</option><option value="year">Año</option></select></label>
+          <label>Fecha de referencia<input id="table-date" type="date"></label>
+          <label>Estación<select id="table-device"></select></label>
+          <button id="table-apply" type="button">Aplicar</button>
+        </div>
+        <p id="table-error" class="error" role="alert"></p>
+        <p id="table-summary" class="coverage"></p>
+        <div class="table-wrap">
+          <table id="measurements-table">
+            <thead><tr><th>Fecha y hora</th><th>Secuencia</th><th>Temp.</th><th>Humedad</th><th>Presión</th><th>Batería</th><th>Alerta</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="table-actions"><button id="table-more" class="quiet hidden" type="button">Cargar más</button></div>
+      </section>
       <section class="panel"><div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Avisos recientes</h2></div></div><div id="alerts" class="alerts"></div></section>
       <p class="footnote">Las gráficas muestran mediciones propias de la estación. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
     </section>

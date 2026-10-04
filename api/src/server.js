@@ -252,6 +252,43 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   res.json({ period, devices: response, alerts });
 });
 
+// Listado de mediciones por rango de fechas y borrado (solo suscriptor y solo sus equipos).
+app.get('/api/v1/measurements', requireSubscriber, async (req, res) => {
+  const from = req.query.from ? new Date(String(req.query.from)) : null;
+  const to = req.query.to ? new Date(String(req.query.to)) : null;
+  if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+    return res.status(400).json({ error: 'invalid_range' });
+  }
+  const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '100', 10) || 100, 1), 500);
+  const offset = Math.max(Number.parseInt(req.query.offset ?? '0', 10) || 0, 0);
+
+  const conditions = [sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`];
+  if (deviceId) conditions.push(sql`m.device_id = ${deviceId}`);
+  if (from) conditions.push(sql`m.observed_at >= ${from}`);
+  if (to) conditions.push(sql`m.observed_at < ${to}`);
+  let where = conditions[0];
+  for (let i = 1; i < conditions.length; i++) where = sql`${where} AND ${conditions[i]}`;
+
+  const rows = await sql`SELECT m.id::text AS id, m.device_id, d.name AS device_name, m.sequence::text AS sequence,
+      m.observed_at, m.time_quality, m.temperature_c, m.humidity_pct, m.pressure_pa, m.battery_mv, m.flags, m.alert_level
+    FROM measurements m JOIN devices d ON d.id = m.device_id
+    WHERE ${where} ORDER BY m.observed_at DESC LIMIT ${limit} OFFSET ${offset}`;
+  const [count] = await sql`SELECT count(*)::integer AS total FROM measurements m WHERE ${where}`;
+  res.json({ measurements: rows, total: count.total, limit, offset });
+});
+
+app.delete('/api/v1/measurements/:id', requireSubscriber, async (req, res) => {
+  // Cabecera obligatoria: un formulario cross-site no puede enviarla (defensa CSRF).
+  if (req.get('x-requested-with') !== 'fetch') return res.status(400).json({ error: 'missing_client_header' });
+  if (!/^\d{1,18}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_id' });
+  const removed = await sql`DELETE FROM measurements m USING subscriber_devices sd
+    WHERE m.id = ${req.params.id}::bigint AND sd.device_id = m.device_id AND sd.subscriber_id = ${req.subscriber.id}
+    RETURNING m.id::text AS id`;
+  if (!removed.length) return res.status(404).json({ error: 'measurement_not_found' });
+  res.status(204).end();
+});
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
 app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { index: 'index.html', maxAge: '1h' }));
 app.get('*path', async (_req, res, next) => {
