@@ -26,6 +26,19 @@ void setSystemClock(uint32_t epoch) {
 // Reloj de respaldo: hora de compilacion del firmware (__DATE__/__TIME__).
 // Esta red bloquea NTP (UDP/123); sin un reloj valido, mbedTLS rechaza el
 // certificado TLS de Vercel por "aun no valido" y la subida falla.
+uint32_t makeEpoch(int year, int month, int day, int hour, int minute, int second) {
+  static const int kMonthDays[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+  const long y = year - 1970;
+  long days = y * 365 + (y + 3) / 4 + kMonthDays[month - 1] + (day - 1);
+  if (month > 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) days += 1;
+  return (uint32_t)(days * 86400L + hour * 3600L + minute * 60L + second);
+}
+
+// Desfase UTC del equipo que compila, en horas (Espana peninsular: 2 en verano,
+// 1 en invierno). Solo afecta al reloj de respaldo previo a la primera hora del
+// servidor, que es la que manda.
+constexpr int kBuildTzOffsetHours = 2;
+
 time_t buildEpoch() {
   // __DATE__ = "Oct  4 2026", __TIME__ = "11:33:14". Se evitan sscanf/mktime
   // porque la particion de aplicacion esta al 99%.
@@ -41,11 +54,8 @@ time_t buildEpoch() {
   const int minute = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
   const int second = (__TIME__[6] - '0') * 10 + (__TIME__[7] - '0');
 
-  static const int kMonthDays[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
-  const long y = year - 1970;
-  long days = y * 365 + (y + 3) / 4 + kMonthDays[month - 1] + (day - 1);
-  if (month > 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) days += 1;
-  return (time_t)days * 86400L + hour * 3600L + minute * 60L + second;
+  return (time_t)(makeEpoch(year, month, day, hour, minute, second) -
+                  (uint32_t)(kBuildTzOffsetHours * 3600));
 }
 
 }  // namespace
@@ -108,6 +118,51 @@ bool sync() {
     }
   }
   return false;
+}
+
+bool setFromHttpDate(const char* httpDate) {
+  // Formato: "Sun, 04 Oct 2026 11:30:00 GMT". Esta red bloquea NTP, asi que la
+  // cabecera Date del servidor es la unica fuente de hora real disponible.
+  static const char kMon[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  if (httpDate == nullptr) return false;
+
+  const char* p = httpDate;
+  while (*p != '\0' && (*p < '0' || *p > '9')) ++p;
+  if (*p < '0' || *p > '9') return false;
+
+  char* end = nullptr;
+  const long day = strtol(p, &end, 10);
+  while (*end == ' ') ++end;
+  char mon[4] = {end[0], end[1], end[2], 0};
+  const char* mp = strstr(kMon, mon);
+  if (mp == nullptr) return false;
+  const int month = (int)((mp - kMon) / 3) + 1;
+  end += 3;
+  while (*end == ' ') ++end;
+  const long year = strtol(end, &end, 10);
+  while (*end == ' ') ++end;
+  const long hour = strtol(end, &end, 10);
+  if (*end == ':') ++end;
+  const long minute = strtol(end, &end, 10);
+  if (*end == ':') ++end;
+  const long second = strtol(end, &end, 10);
+
+  if (year < 2020 || year > 2100 || day < 1 || day > 31) return false;
+
+  const uint32_t epoch =
+      makeEpoch((int)year, month, (int)day, (int)hour, (int)minute, (int)second);
+  if (epoch < 1700000000UL) return false;
+
+  const uint32_t up = uptimeSeconds();
+  ref_epoch = epoch;
+  base_epoch = epoch;
+  uptime_base = up;
+  boot_millis = millis();
+  has_reference = true;
+  build_time_fallback = false;
+  setSystemClock(epoch);
+  Store::saveTimeState({ref_epoch, base_epoch, uptime_base});
+  return true;
 }
 
 bool isSynchronized() {

@@ -7,6 +7,7 @@ namespace TimeKeeper {
 
 bool begin();
 bool sync();
+bool setFromHttpDate(const char* httpDate);
 bool isSynchronized();
 uint32_t now();
 uint32_t uptimeSeconds();

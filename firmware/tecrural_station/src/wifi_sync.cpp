@@ -269,6 +269,7 @@ bool fetchConfig(uint32_t timeout_ms) {
     Serial.println("[wifi] no se pudo inicializar HTTPS para consultar la configuracion");
     return false;
   }
+  http.collectAllHeaders();
   http.addHeader("Authorization", String("Bearer ") + DEVICE_API_TOKEN);
 
   int code = http.GET();
@@ -280,7 +281,15 @@ bool fetchConfig(uint32_t timeout_ms) {
   }
 
   String body = http.getString();
+  // Hora real del servidor (cabecera Date). Esta red bloquea NTP, asi que es la
+  // unica fuente de tiempo fiable; corrige el reloj de respaldo de compilacion.
+  const String server_date = http.header("Date");
   http.end();
+
+  if (server_date.length() > 0 && TimeKeeper::setFromHttpDate(server_date.c_str())) {
+    Serial.printf("[hora] hora del servidor aplicada: %lu\n",
+                  (unsigned long)TimeKeeper::now());
+  }
 
   bool ok = ConfigStore::applyServerJson(body.c_str(), body.length());
   if (ok) {
