@@ -14,6 +14,21 @@ namespace {
 uint32_t failure_counter = 0;
 constexpr size_t kMaxPayloadBytes = 6000;
 volatile uint8_t last_disconnect_reason = 0;
+
+// Fallos de conexion consecutivos (sobrevive a los deep sleeps). Si el SSID no
+// aparece durante muchos ciclos seguidos, el stack WiFi puede quedar en un
+// estado del que solo sale reiniciando el chip por completo.
+RTC_DATA_ATTR uint8_t consecutive_wifi_failures = 0;
+constexpr uint8_t kMaxConsecutiveWifiFailures = 8;
+
+void noteWifiFailure() {
+  if (consecutive_wifi_failures < 255) ++consecutive_wifi_failures;
+  if (consecutive_wifi_failures < kMaxConsecutiveWifiFailures) return;
+  Serial.printf("[wifi] %u fallos consecutivos: reinicio completo del chip\n",
+                (unsigned)consecutive_wifi_failures);
+  delay(300);
+  ESP.restart();
+}
 bool event_registered = false;
 
 void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
@@ -89,10 +104,32 @@ bool connect(uint32_t timeout_ms) {
     event_registered = true;
   }
   last_disconnect_reason = 0;
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   // El modem-sleep descarta respuestas DNS/NTP (paquetes durante el reposo):
   // la resolucion devolvia 0.0.0.0 y el NTP fallaba. Alimentado por USB, sin ahorro.
   WiFi.setSleep(false);
+
+  // El punto de acceso suele ser un hotspot movil que desaparece al quedarse
+  // inactivo. Si el SSID no esta en el aire no tiene sentido esperar el timeout
+  // completo de asociacion: se listan las redes y se sale enseguida.
+  const int visible = WiFi.scanNetworks();
+  bool ssid_visible = false;
+  Serial.printf("[wifi] %d redes visibles en 2.4 GHz\n", visible);
+  for (int i = 0; i < visible; ++i) {
+    Serial.printf("    SSID \"%s\" (%d dBm)%s\n", WiFi.SSID(i).c_str(),
+                  (int)WiFi.RSSI(i),
+                  WiFi.SSID(i) == WIFI_SSID ? "  <- COINCIDE con SSID configurado" : "");
+    if (WiFi.SSID(i) == WIFI_SSID) ssid_visible = true;
+  }
+  WiFi.scanDelete();
+  if (!ssid_visible) {
+    failure_counter++;
+    Serial.println("[wifi] SSID configurado no visible; no se intenta asociar");
+    noteWifiFailure();
+    return false;
+  }
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   uint32_t start = millis();
@@ -101,6 +138,11 @@ bool connect(uint32_t timeout_ms) {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    if (consecutive_wifi_failures != 0) {
+      Serial.printf("[wifi] recuperado tras %u intentos fallidos\n",
+                    (unsigned)consecutive_wifi_failures);
+    }
+    consecutive_wifi_failures = 0;
     Serial.printf("[wifi] conectado en %lus, IP %s, gw %s, rssi %d\n",
                   (millis() - start) / 1000, WiFi.localIP().toString().c_str(),
                   WiFi.gatewayIP().toString().c_str(), (int)WiFi.RSSI());
@@ -110,18 +152,7 @@ bool connect(uint32_t timeout_ms) {
   Serial.printf("[wifi] fallo de conexion tras %lus (motivo %u: %s)\n",
                 (millis() - start) / 1000, (unsigned)last_disconnect_reason,
                 disconnectReasonText(last_disconnect_reason));
-
-  // Diagnostico (solo los primeros intentos): listar redes 2.4 GHz visibles.
-  if (failure_counter <= 3) {
-    int n = WiFi.scanNetworks();
-    Serial.printf("[wifi] %d redes visibles en 2.4 GHz\n", n);
-    for (int i = 0; i < n; ++i) {
-      Serial.printf("    SSID \"%s\" (%d dBm)%s\n", WiFi.SSID(i).c_str(),
-                    (int)WiFi.RSSI(i),
-                    WiFi.SSID(i) == WIFI_SSID ? "  <- COINCIDE con SSID configurado" : "");
-    }
-    WiFi.scanDelete();
-  }
+  noteWifiFailure();
   return false;
 }
 

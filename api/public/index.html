@@ -4,11 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#153b2b">
-  <title>TECRURAL · Estaciones</title>
+  <title>TECRURAL · Panel de estaciones</title>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/">TECRURAL<span>ESTACIONES RURALES</span></a><button id="logout" class="quiet hidden" type="button">Cerrar sesión</button></header>
+  <header class="topbar">
+    <a class="brand" href="#/panel">TECRURAL<span>ESTACIONES RURALES</span></a>
+    <nav id="main-nav" class="topnav hidden" aria-label="Secciones">
+      <a href="#/panel" data-nav="panel">Panel</a>
+      <a href="#/estaciones" data-nav="stations">Estaciones</a>
+      <a href="#/avisos" data-nav="alerts">Avisos</a>
+      <a href="#/admin" data-nav="admin" class="admin-only hidden">Administración</a>
+      <a href="#/cuenta" data-nav="account">Cuenta</a>
+    </nav>
+    <div class="topbar-right">
+      <span id="session-chip" class="chip hidden"></span>
+      <button id="logout" class="quiet hidden" type="button">Cerrar sesión</button>
+    </div>
+  </header>
   <main>
     <section id="login-view" class="login-card">
       <p class="eyebrow">PANEL PRIVADO · SUSCRIPTORES</p>
@@ -21,36 +34,10 @@
         <p id="login-error" class="error" role="alert"></p>
       </form>
     </section>
-    <section id="dashboard-view" class="hidden">
-      <div class="page-heading"><div><p class="eyebrow">PANEL DE SUSCRIPTOR</p><h1>Estado de la estación</h1></div>
-        <label class="period-label">Periodo de gráficas y resúmenes<select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select></label></div>
-      <p id="dashboard-error" class="error" role="alert"></p>
-      <div id="stations" class="station-list"></div>
-      <section class="panel">
-        <div class="section-heading"><div><p class="eyebrow">REGISTROS</p><h2>Tabla de mediciones</h2></div></div>
-        <div class="table-filters">
-          <label>Ver por<select id="table-period"><option value="day">Día</option><option value="week">Semana</option><option value="month" selected>Mes</option><option value="year">Año</option><option value="custom">Rango libre</option></select></label>
-          <label id="table-date-label">Fecha de referencia<input id="table-date" type="date"></label>
-          <label class="custom-range hidden">Desde<input id="table-from" type="date"></label>
-          <label class="custom-range hidden">Hasta<input id="table-to" type="date"></label>
-          <label>Estación<select id="table-device"></select></label>
-          <button id="table-apply" type="button">Aplicar</button>
-          <button id="table-export" type="button" class="quiet">Exportar CSV</button>
-        </div>
-        <p id="table-error" class="error" role="alert"></p>
-        <p id="table-summary" class="coverage"></p>
-        <div class="table-wrap">
-          <table id="measurements-table">
-            <thead><tr><th>Fecha y hora</th><th>Secuencia</th><th>Temp.</th><th>Humedad</th><th>Presión</th><th>Batería</th><th>Alerta</th><th></th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div class="table-actions"><button id="table-more" class="quiet hidden" type="button">Cargar más</button></div>
-      </section>
-      <section class="panel"><div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Avisos recientes</h2></div></div><div id="alerts" class="alerts"></div></section>
-      <p class="footnote">Las gráficas muestran mediciones propias de la estación. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
-    </section>
+    <section id="view-root" class="hidden" aria-live="polite"></section>
   </main>
+  <dialog id="detail-dialog" class="detail-dialog"></dialog>
+  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

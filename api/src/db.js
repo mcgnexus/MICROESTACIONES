@@ -8,5 +8,8 @@ export const sql = postgres(process.env.DATABASE_URL, {
   idle_timeout: 20,
   connect_timeout: 15,
   ssl: 'require',
-  transform: postgres.camel,
+  // Solo se transforman los nombres de columna. Las claves internas de los jsonb
+  // (config del firmware, raw_payload, pilot_requests…) deben conservarse tal cual
+  // están almacenadas: transform.camel reescribiría interval_normal_s a intervalNormalS.
+  transform: { ...postgres.camel, value: {} },
 });

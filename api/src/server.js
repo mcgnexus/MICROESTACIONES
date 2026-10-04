@@ -6,6 +6,14 @@ import { z } from 'zod';
 import { sql } from './db.js';
 import { randomToken, sha256, verifyPassword } from './security.js';
 import { measurementSchema } from './contracts.js';
+import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies } from './auth.js';
+import { evaluateMeasurement, evaluateRules, VFLAG } from './validation.js';
+import { audit } from './audit.js';
+import stationsRouter, { statusPayload } from './stations.js';
+import configsRouter from './configs.js';
+import alertsRouter from './alerts.js';
+import adminRouter from './admin.js';
+import accountRouter from './account.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -21,35 +29,6 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
   next();
 });
-
-function cookies(header = '') {
-  return Object.fromEntries(header.split(';').map((part) => {
-    const i = part.indexOf('=');
-    return i < 0 ? ['', ''] : [part.slice(0, i).trim(), decodeURIComponent(part.slice(i + 1).trim())];
-  }).filter(([key]) => key));
-}
-
-async function requireDevice(req, res, next) {
-  const token = req.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{32,})$/)?.[1];
-  if (!token) return res.status(401).json({ error: 'device_auth_required' });
-  const [credential] = await sql`SELECT d.id FROM device_credentials c
-    JOIN devices d ON d.id = c.device_id
-    WHERE c.token_hash = ${sha256(token)} AND c.revoked_at IS NULL AND d.active = true`;
-  if (!credential) return res.status(401).json({ error: 'invalid_device_token' });
-  req.deviceId = credential.id;
-  next();
-}
-
-async function requireSubscriber(req, res, next) {
-  const token = cookies(req.headers.cookie).tr_session;
-  if (!token) return res.status(401).json({ error: 'authentication_required' });
-  const [subscriber] = await sql`SELECT s.id, s.email FROM web_sessions w
-    JOIN subscribers s ON s.id = w.subscriber_id
-    WHERE w.token_hash = ${sha256(token)} AND w.expires_at > now() AND s.active = true`;
-  if (!subscriber) return res.status(401).json({ error: 'session_expired' });
-  req.subscriber = subscriber;
-  next();
-}
 
 const loginAttempts = new Map();
 function loginLimited(req, res, next) {
@@ -72,7 +51,7 @@ app.post('/api/auth/login', loginLimited, async (req, res) => {
   const parsed = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(256) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_credentials' });
   const email = parsed.data.email.toLowerCase();
-  const [subscriber] = await sql`SELECT id, email, password_hash FROM subscribers WHERE email = ${email} AND active = true`;
+  const [subscriber] = await sql`SELECT id, email, password_hash, role FROM subscribers WHERE email = ${email} AND active = true`;
   const valid = subscriber && await verifyPassword(parsed.data.password, subscriber.passwordHash);
   if (!valid) return res.status(401).json({ error: 'invalid_credentials' });
   loginAttempts.delete(req.ip);
@@ -80,7 +59,7 @@ app.post('/api/auth/login', loginLimited, async (req, res) => {
   await sql`INSERT INTO web_sessions (token_hash, subscriber_id, expires_at)
     VALUES (${sha256(token)}, ${subscriber.id}, now() + (${sessionDays} * interval '1 day'))`;
   res.setHeader('Set-Cookie', `tr_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionDays * 86400}${cookieSecure ? '; Secure' : ''}`);
-  res.json({ email: subscriber.email });
+  res.json({ email: subscriber.email, role: subscriber.role });
 });
 
 app.post('/api/auth/logout', async (req, res) => {
@@ -90,7 +69,18 @@ app.post('/api/auth/logout', async (req, res) => {
   res.status(204).end();
 });
 
-// Keep these paths compatible with the current ESP32 upload/config client.
+// ---------------------------------------------------------------------------
+// Ingesta de mediciones (compatible con el cliente ESP32 actual).
+// El valor recibido se separa del dato validado: lo fuera de rango se conserva
+// en raw_payload y la fila queda marcada como inválida, nunca se borra.
+// ---------------------------------------------------------------------------
+const batteryLevelFor = (batteryMv, config) => {
+  if (batteryMv == null) return null;
+  const critical = Number(config?.battery_critical_mv ?? 3200);
+  const low = Number(config?.battery_low_mv ?? 3400);
+  return batteryMv <= critical ? 'critical' : batteryMv <= low ? 'low' : 'ok';
+};
+
 app.post('/api/measurements', requireDevice, async (req, res) => {
   const parsed = z.array(measurementSchema).min(1).max(32).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_measurements', details: parsed.error.issues });
@@ -99,24 +89,72 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
   }
 
   const ackThrough = await sql.begin(async (tx) => {
+    const [configRow] = await tx`SELECT config FROM device_configs WHERE device_id = ${req.deviceId}`;
+    const config = configRow?.config ?? {};
+    const rules = await tx`SELECT id, metric, comparator, threshold, level, message, recipient, channel
+      FROM alert_rules WHERE device_id = ${req.deviceId} AND enabled`;
     let highest = null;
+    let lastBattery = null;
+    let insertedAny = false;
+
     for (const record of parsed.data) {
       const observedAt = new Date(record.ts * 1000);
+      const evaluated = evaluateMeasurement(record);
       const [inserted] = await tx`INSERT INTO measurements
-        (device_id, sequence, observed_at, time_quality, temperature_c, humidity_pct, pressure_pa, battery_mv, flags, alert_level)
-        VALUES (${req.deviceId}, ${record.sequence}, ${observedAt}, ${record.quality}, ${record.temp_c ?? null},
-          ${record.hum_pct ?? null}, ${record.press_pa ?? null}, ${record.batt_mv ?? null}, ${record.flags}, ${record.alert})
+        (device_id, sequence, observed_at, time_quality, temperature_c, humidity_pct, pressure_pa, battery_mv,
+         flags, alert_level, lux, source, is_validated, validation_flags, raw_payload, invalidated_reason)
+        VALUES (${req.deviceId}, ${record.sequence}, ${observedAt}, ${record.quality},
+          ${evaluated.columns.temperature_c ?? null}, ${evaluated.columns.humidity_pct ?? null},
+          ${evaluated.columns.pressure_pa ?? null}, ${evaluated.columns.battery_mv ?? null},
+          ${record.flags}, ${record.alert}, ${evaluated.columns.lux ?? null}, ${record.source ?? 'wifi'},
+          ${evaluated.is_validated}, ${evaluated.validation_flags},
+          ${evaluated.raw_payload ? tx.json(evaluated.raw_payload) : null}, ${evaluated.invalidated_reason})
         ON CONFLICT (device_id, sequence, observed_at) DO NOTHING RETURNING id`;
-      await tx`UPDATE devices SET last_seen_at = now() WHERE id = ${req.deviceId}`;
-      if (record.alert > 0 && inserted) {
-        const dedupeKey = createHash('sha256').update(`${req.deviceId}:${record.sequence}:${record.ts}:${record.alert}`).digest('hex');
-        const summary = record.alert === 1 ? 'Alerta prioritaria de la estación' : 'Aviso de la estación';
-        await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, observed_at)
-          VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${record.alert}, ${summary},
-            ${tx.json({ temp_c: record.temp_c ?? null, hum_pct: record.hum_pct ?? null, press_pa: record.press_pa ?? null, batt_mv: record.batt_mv ?? null })}, ${observedAt})
-          ON CONFLICT (dedupe_key) DO NOTHING`;
+      if (evaluated.columns.battery_mv != null) lastBattery = evaluated.columns.battery_mv;
+
+      if (inserted) {
+        insertedAny = true;
+        if (record.alert > 0) {
+          const dedupeKey = createHash('sha256')
+            .update(`${req.deviceId}:${record.sequence}:${record.ts}:${record.alert}`).digest('hex');
+          const summary = record.alert === 1 ? 'Alerta prioritaria de la estación' : 'Aviso de la estación';
+          await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, observed_at)
+            VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${record.alert}, ${summary},
+              ${tx.json({ temp_c: record.temp_c ?? null, hum_pct: record.hum_pct ?? null, press_pa: record.press_pa ?? null, batt_mv: record.batt_mv ?? null })}, ${observedAt})
+            ON CONFLICT (dedupe_key) DO NOTHING`;
+        }
+        // Reglas configuradas en servidor: el aviso conserva regla, valor y canal.
+        for (const { rule, value } of evaluateRules(record, rules)) {
+          const dedupeKey = `rule:${rule.id}:${record.sequence}:${record.ts}`;
+          const snapshot = { metric: rule.metric, value, threshold: rule.threshold, comparator: rule.comparator };
+          const isInstant = rule.channel === 'in_app';
+          await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, source,
+              observed_at, rule_id, rule_snapshot, recipient, channel, delivery_status, delivered_at)
+            VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${rule.level}, ${rule.message},
+              ${tx.json(snapshot)}, 'station_measurement', ${observedAt}, ${rule.id}, ${tx.json(snapshot)},
+              ${rule.recipient ?? null}, ${rule.channel},
+              ${isInstant ? 'delivered' : 'pending'}, ${isInstant ? new Date() : null})
+            ON CONFLICT (dedupe_key) DO NOTHING`;
+        }
       }
       highest = record.sequence;
+    }
+
+    // Estado operativo: último contacto, batería y conectividad.
+    const batteryLevel = batteryLevelFor(lastBattery, config) ?? 'unknown';
+    await tx`INSERT INTO device_status (device_id, last_contact, connectivity, battery_mv, battery_level, updated_at)
+      VALUES (${req.deviceId}, now(), 'online', ${lastBattery}, ${batteryLevel}, now())
+      ON CONFLICT (device_id) DO UPDATE SET
+        last_contact = now(), connectivity = 'online',
+        battery_mv = coalesce(${lastBattery}, device_status.battery_mv),
+        battery_level = CASE WHEN ${lastBattery}::integer IS NULL THEN device_status.battery_level ELSE ${batteryLevel} END,
+        updated_at = now()`;
+    await tx`UPDATE devices SET last_seen_at = now() WHERE id = ${req.deviceId}`;
+    if (insertedAny) {
+      await tx`UPDATE device_status s SET last_valid_data = (
+          SELECT max(m.observed_at) FROM measurements m
+          WHERE m.device_id = ${req.deviceId} AND m.is_validated AND m.deleted_at IS NULL)
+        WHERE s.device_id = ${req.deviceId}`;
     }
     return highest;
   });
@@ -128,6 +166,14 @@ app.get('/api/config', requireDevice, async (req, res) => {
   // reescribiria las claves snake_case (pressure_alert_low_pa) a camelCase y el
   // firmware del dispositivo no las reconoceria.
   const [row] = await sql`SELECT config::text AS config FROM device_configs WHERE device_id = ${req.deviceId}`;
+  // El equipo que pide la configuración deja constancia de contacto y de versión solicitada.
+  await sql`UPDATE devices SET last_seen_at = now() WHERE id = ${req.deviceId}`;
+  await sql`INSERT INTO device_status (device_id, last_contact) VALUES (${req.deviceId}, now())
+    ON CONFLICT (device_id) DO UPDATE SET last_contact = now(), updated_at = now()`;
+  await sql`UPDATE device_config_versions SET requested_version = version
+    WHERE device_id = ${req.deviceId}
+      AND version = (SELECT max(version) FROM device_config_versions WHERE device_id = ${req.deviceId})
+      AND requested_version IS DISTINCT FROM version`;
   res.type('application/json').send(row?.config ?? '{}');
 });
 
@@ -168,16 +214,9 @@ app.post('/api/v1/forecasts', async (req, res) => {
   res.json({ stored: forecasts.length, source: 'external_provider' });
 });
 
-app.get('/api/v1/alerts', requireSubscriber, async (req, res) => {
-  const rows = await sql`SELECT a.id, a.device_id, d.name AS device_name, a.level, a.message, a.value,
-      a.source, a.observed_at, a.created_at, a.acknowledged_at
-    FROM alerts a JOIN devices d ON d.id = a.device_id
-    JOIN subscriber_devices sd ON sd.device_id = d.id
-    WHERE sd.subscriber_id = ${req.subscriber.id}
-    ORDER BY a.created_at DESC LIMIT 200`;
-  res.json({ alerts: rows });
-});
-
+// ---------------------------------------------------------------------------
+// Panel del suscriptor
+// ---------------------------------------------------------------------------
 function haversineKm(aLat, aLon, bLat, bLon) {
   const r = Math.PI / 180;
   const dLat = (bLat - aLat) * r;
@@ -191,28 +230,57 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   const hours = { '24h': 24, '7d': 168, '30d': 720 }[period];
   if (!hours) return res.status(400).json({ error: 'period_must_be_24h_7d_or_30d' });
   const devices = await sql`SELECT d.id, d.name, d.latitude, d.longitude, d.coverage_km, d.last_seen_at,
-      c.config, sd.subscriber_id
+      d.owner, d.location_type, d.public_zone, d.altitude, d.sensors, d.firmware_version, d.publish_permission,
+      c.config, st.last_contact, st.last_valid_data, st.battery_mv, st.battery_level,
+      st.firmware_version AS status_firmware_version, st.config_version, st.pending_samples, st.updated_at
     FROM devices d JOIN subscriber_devices sd ON sd.device_id = d.id
     LEFT JOIN device_configs c ON c.device_id = d.id
+    LEFT JOIN device_status st ON st.device_id = d.id
     WHERE sd.subscriber_id = ${req.subscriber.id} AND d.active = true ORDER BY d.name`;
   const response = [];
   for (const device of devices) {
-    const [latest] = await sql`SELECT sequence, observed_at, time_quality, temperature_c, humidity_pct,
-        pressure_pa, battery_mv, flags, alert_level
-      FROM measurements WHERE device_id = ${device.id} ORDER BY observed_at DESC, received_at DESC LIMIT 1`;
-    const history = await sql`SELECT observed_at, temperature_c, humidity_pct, pressure_pa, battery_mv,
-        flags, alert_level, time_quality
-      FROM measurements WHERE device_id = ${device.id} AND observed_at >= now() - (${hours} * interval '1 hour')
+    const config = device.config ?? {};
+    // Último dato recibido (aunque esté invalidado) para señalar el estado real.
+    const [latest] = await sql`SELECT sequence, observed_at, received_at, time_quality, temperature_c, humidity_pct,
+        pressure_pa, battery_mv, lux, source, flags, alert_level, is_validated, validation_flags, invalidated_reason
+      FROM measurements WHERE device_id = ${device.id} AND deleted_at IS NULL
+      ORDER BY observed_at DESC, received_at DESC LIMIT 1`;
+    // Gráficas y estadísticas: solo valores validados, nunca borrados.
+    const history = await sql`SELECT observed_at, received_at, temperature_c, humidity_pct, pressure_pa, battery_mv,
+        lux, flags, alert_level, time_quality, source
+      FROM measurements
+      WHERE device_id = ${device.id} AND observed_at >= now() - (${hours} * interval '1 hour')
+        AND is_validated AND deleted_at IS NULL
       ORDER BY observed_at ASC`;
     const [summary] = await sql`SELECT count(*)::integer AS count,
-        min(temperature_c) AS temp_min, max(temperature_c) AS temp_max, avg(temperature_c) AS temp_avg,
-        min(humidity_pct) AS humidity_min, max(humidity_pct) AS humidity_max, avg(humidity_pct) AS humidity_avg,
-        min(pressure_pa) AS pressure_min, max(pressure_pa) AS pressure_max, avg(pressure_pa) AS pressure_avg,
-        min(battery_mv) AS battery_min, max(battery_mv) AS battery_max, avg(battery_mv) AS battery_avg
-      FROM measurements WHERE device_id = ${device.id} AND observed_at >= now() - (${hours} * interval '1 hour')`;
+        count(*) FILTER (WHERE is_validated)::integer AS valid_count,
+        count(*) FILTER (WHERE NOT is_validated)::integer AS invalid_count,
+        count(*) FILTER (WHERE temperature_c IS NOT NULL)::integer AS measured_count,
+        min(temperature_c) FILTER (WHERE is_validated) AS temp_min,
+        max(temperature_c) FILTER (WHERE is_validated) AS temp_max,
+        avg(temperature_c) FILTER (WHERE is_validated) AS temp_avg,
+        min(humidity_pct) FILTER (WHERE is_validated) AS humidity_min,
+        max(humidity_pct) FILTER (WHERE is_validated) AS humidity_max,
+        avg(humidity_pct) FILTER (WHERE is_validated) AS humidity_avg,
+        min(pressure_pa) FILTER (WHERE is_validated) AS pressure_min,
+        max(pressure_pa) FILTER (WHERE is_validated) AS pressure_max,
+        avg(pressure_pa) FILTER (WHERE is_validated) AS pressure_avg,
+        min(battery_mv) FILTER (WHERE is_validated) AS battery_min,
+        max(battery_mv) FILTER (WHERE is_validated) AS battery_max,
+        avg(battery_mv) FILTER (WHERE is_validated) AS battery_avg,
+        min(lux) FILTER (WHERE is_validated) AS lux_min,
+        max(lux) FILTER (WHERE is_validated) AS lux_max,
+        avg(lux) FILTER (WHERE is_validated) AS lux_avg
+      FROM measurements WHERE device_id = ${device.id}
+        AND observed_at >= now() - (${hours} * interval '1 hour') AND deleted_at IS NULL`;
     const forecasts = await sql`SELECT provider, forecast_for, fetched_at, temperature_c, humidity_pct, precipitation_mm
       FROM external_forecasts WHERE device_id = ${device.id} AND forecast_for >= now() - interval '1 hour'
       ORDER BY forecast_for ASC LIMIT 100`;
+
+    // Cobertura: cuántos datos faltan frente a lo esperado por el intervalo configurado.
+    const intervalSeconds = Number(config.interval_normal_s) || 900;
+    const expected = Math.max(1, Math.floor((hours * 3600) / intervalSeconds));
+    const coveragePct = Math.min(100, Math.round((summary.validCount / expected) * 1000) / 10);
 
     let nearby = { stations: [], representative: false, message: 'Ubicación de estación no configurada.' };
     if (device.latitude != null && device.longitude != null) {
@@ -227,24 +295,31 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
         message: stations.length === 3 ? 'Tres estaciones activas dentro de su cobertura.' : `Solo ${stations.length} de 3 estaciones cercanas disponibles y cubiertas.` };
     }
 
-    const lastSeen = device.lastSeenAt ? new Date(device.lastSeenAt) : null;
     response.push({
-      device: { id: device.id, name: device.name },
-      status: { connected: !!lastSeen && Date.now() - lastSeen.getTime() <= 2 * Number(device.config?.interval_normal_s || 900) * 1000,
-        last_seen_at: device.lastSeenAt || null,
-        battery: latest?.battery_mv == null ? 'unknown' : latest.battery_mv <= Number(device.config?.battery_critical_mv || 3200) ? 'critical' : latest.battery_mv <= Number(device.config?.battery_low_mv || 3400) ? 'low' : 'ok',
-        sensors: latest ? { temperature: latest.temperatureC != null, humidity: latest.humidityPct != null, pressure: latest.pressurePa != null, battery: latest.batteryMv != null } : null },
+      device: {
+        id: device.id, name: device.name, owner: device.owner, locationType: device.locationType,
+        publicZone: device.publicZone, altitude: device.altitude, sensors: device.sensors,
+        firmwareVersion: device.firmwareVersion, publishPermission: device.publishPermission,
+      },
+      status: statusPayload(device, config),
       latest: latest || null,
       history,
-      summary,
+      // El row llega camelizado por el transform de columna: el resumen se expone en snake_case.
+      summary: {
+        ...Object.fromEntries(Object.entries(summary)
+          .map(([key, value]) => [key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), value])),
+        expected,
+        coverage_pct: summary.validCount ? coveragePct : 0,
+      },
       forecasts,
       forecast_source: forecasts.length ? 'external_provider' : null,
       estimates: [],
       nearby,
     });
   }
-  const alerts = await sql`SELECT a.id, a.device_id, d.name AS device_name, a.level, a.message, a.value,
-      a.source, a.observed_at, a.created_at
+  const alerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
+      a.value, a.source, a.observed_at, a.created_at, a.recipient, a.channel, a.delivery_status,
+      a.closed_at, a.acknowledged_at, a.rule_snapshot
     FROM alerts a JOIN devices d ON d.id = a.device_id
     JOIN subscriber_devices sd ON sd.device_id = d.id
     WHERE sd.subscriber_id = ${req.subscriber.id}
@@ -252,52 +327,128 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   res.json({ period, devices: response, alerts });
 });
 
-// Filtro comun: rango de fechas + dispositivo, limitado siempre a las estaciones del suscriptor.
+// Filtro común: rango de fechas + dispositivo, limitado siempre a las estaciones del suscriptor.
 function measurementQuery(req) {
   const from = req.query.from ? new Date(String(req.query.from)) : null;
   const to = req.query.to ? new Date(String(req.query.to)) : null;
   if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) return null;
   const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
-  const conditions = [sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`];
+  const role = req.subscriber.role;
+  const includeDeleted = req.query.include_deleted === 'true' && role !== 'viewer';
+
+  const conditions = [];
+  if (role !== 'admin') {
+    conditions.push(sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`);
+  }
   if (deviceId) conditions.push(sql`m.device_id = ${deviceId}`);
   if (from) conditions.push(sql`m.observed_at >= ${from}`);
   if (to) conditions.push(sql`m.observed_at < ${to}`);
+  if (!includeDeleted) conditions.push(sql`m.deleted_at IS NULL`);
+  if (req.query.validated === 'valid') conditions.push(sql`m.is_validated`);
+  if (req.query.validated === 'invalid') conditions.push(sql`NOT m.is_validated`);
+  if (!conditions.length) return { where: sql`TRUE` };
   let where = conditions[0];
   for (let i = 1; i < conditions.length; i++) where = sql`${where} AND ${conditions[i]}`;
   return { where };
 }
 
-// Listado de mediciones por rango de fechas y borrado (solo suscriptor y solo sus equipos).
+const MEASUREMENT_COLUMNS = sql`m.id::text AS id, m.device_id, d.name AS device_name, m.sequence::text AS sequence,
+  m.observed_at, m.received_at, m.time_quality, m.temperature_c, m.humidity_pct, m.pressure_pa, m.battery_mv,
+  m.lux, m.source, m.flags, m.alert_level, m.is_validated, m.validation_flags, m.validated_at,
+  m.invalidated_reason, m.deleted_at`;
+
+// Listado de mediciones por rango de fechas (solo suscriptor y solo sus equipos).
 app.get('/api/v1/measurements', requireSubscriber, async (req, res) => {
   const query = measurementQuery(req);
   if (!query) return res.status(400).json({ error: 'invalid_range' });
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '100', 10) || 100, 1), 500);
   const offset = Math.max(Number.parseInt(req.query.offset ?? '0', 10) || 0, 0);
 
-  const rows = await sql`SELECT m.id::text AS id, m.device_id, d.name AS device_name, m.sequence::text AS sequence,
-      m.observed_at, m.time_quality, m.temperature_c, m.humidity_pct, m.pressure_pa, m.battery_mv, m.flags, m.alert_level
+  const rows = await sql`SELECT ${MEASUREMENT_COLUMNS}
     FROM measurements m JOIN devices d ON d.id = m.device_id
-    WHERE ${query.where} ORDER BY m.observed_at DESC LIMIT ${limit} OFFSET ${offset}`;
-  const [count] = await sql`SELECT count(*)::integer AS total FROM measurements m WHERE ${query.where}`;
-  res.json({ measurements: rows, total: count.total, limit, offset });
+    WHERE ${query.where} ORDER BY m.observed_at DESC, m.received_at DESC LIMIT ${limit} OFFSET ${offset}`;
+  const [counts] = await sql`SELECT count(*)::integer AS total,
+      count(*) FILTER (WHERE m.is_validated)::integer AS valid,
+      count(*) FILTER (WHERE NOT m.is_validated)::integer AS invalid
+    FROM measurements m WHERE ${query.where}`;
+  res.json({
+    measurements: rows,
+    total: counts.total,
+    valid: counts.valid,
+    invalid: counts.invalid,
+    limit,
+    offset,
+  });
+});
+
+// Detalle de una medición, incluido el valor bruto recibido.
+app.get('/api/v1/measurements/:id', requireSubscriber, async (req, res) => {
+  if (!/^\d{1,18}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_id' });
+  const scope = req.subscriber.role === 'admin'
+    ? sql`TRUE`
+    : sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+  const rows = await sql`SELECT ${MEASUREMENT_COLUMNS}, m.raw_payload, s.email AS validated_by_email
+    FROM measurements m JOIN devices d ON d.id = m.device_id
+    LEFT JOIN subscribers s ON s.id = m.validated_by
+    WHERE m.id = ${req.params.id}::bigint AND ${scope}`;
+  if (!rows.length) return res.status(404).json({ error: 'measurement_not_found' });
+  res.json({ measurement: rows[0] });
+});
+
+// Revisión manual: un operador puede marcar/desmarcar una lectura sin borrarla.
+app.patch('/api/v1/measurements/:id/validate', requireSubscriber, requireRole('operator'), csrfGuard, async (req, res) => {
+  if (!/^\d{1,18}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_id' });
+  const parsed = z.object({
+    is_validated: z.boolean(),
+    reason: z.string().max(300).optional(),
+  }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const { is_validated: isValidated, reason } = parsed.data;
+
+  const scope = req.subscriber.role === 'admin'
+    ? sql`TRUE`
+    : sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+  const rows = await sql`SELECT m.id::text AS id, m.device_id, m.is_validated, m.validation_flags, m.invalidated_reason,
+      m.observed_at, m.sequence
+    FROM measurements m WHERE m.id = ${req.params.id}::bigint AND ${scope}`;
+  if (!rows.length) return res.status(404).json({ error: 'measurement_not_found' });
+  const before = rows[0];
+
+  const [updated] = await sql`UPDATE measurements m SET
+      is_validated = ${isValidated},
+      validation_flags = m.validation_flags | ${VFLAG.MANUAL},
+      invalidated_reason = ${isValidated ? null : (reason?.trim() || 'revisión manual')},
+      validated_by = ${req.subscriber.id},
+      validated_at = now()
+    WHERE m.id = ${before.id}::bigint
+    RETURNING m.id::text AS id, m.is_validated, m.validation_flags, m.invalidated_reason, m.validated_at`;
+  await sql`UPDATE device_status s SET last_valid_data = (
+      SELECT max(m.observed_at) FROM measurements m
+      WHERE m.device_id = ${before.deviceId} AND m.is_validated AND m.deleted_at IS NULL)
+    WHERE s.device_id = ${before.deviceId}`;
+  await audit(sql, req, 'measurement.validate', 'measurement', before.id, before, updated);
+  res.json({ measurement: updated });
 });
 
 // Exportacion CSV con los mismos filtros que la tabla.
 app.get('/api/v1/measurements.csv', requireSubscriber, async (req, res) => {
   const query = measurementQuery(req);
   if (!query) return res.status(400).json({ error: 'invalid_range' });
-  const rows = await sql`SELECT m.id::text AS id, m.device_id, d.name AS device_name, m.sequence::text AS sequence,
-      m.observed_at, m.time_quality, m.temperature_c, m.humidity_pct, m.pressure_pa, m.battery_mv, m.flags, m.alert_level
+  const rows = await sql`SELECT ${MEASUREMENT_COLUMNS}
     FROM measurements m JOIN devices d ON d.id = m.device_id
     WHERE ${query.where} ORDER BY m.observed_at DESC LIMIT 20000`;
 
   const alertName = (level) => level === 1 ? 'prioritaria' : level === 2 ? 'aviso' : '';
-  const columns = ['estacion', 'dispositivo', 'secuencia', 'fecha_hora_utc', 'calidad_hora',
-    'temperatura_c', 'humedad_pct', 'presion_pa', 'bateria_mv', 'flags', 'alerta'];
+  const columns = ['estacion', 'dispositivo', 'secuencia', 'fecha_hora_utc', 'recibido_utc', 'calidad_hora',
+    'temperatura_c', 'humedad_pct', 'presion_pa', 'bateria_mv', 'lux', 'origen', 'validado',
+    'flags_validacion', 'motivo_invalido', 'flags', 'alerta'];
   const lines = [columns.join(',')];
   for (const row of rows) {
-    lines.push([row.deviceName, row.deviceId, row.sequence, row.observedAt.toISOString(), row.timeQuality,
-      row.temperatureC, row.humidityPct, row.pressurePa, row.batteryMv, row.flags, alertName(row.alertLevel)]
+    lines.push([row.deviceName, row.deviceId, row.sequence, row.observedAt?.toISOString?.() ?? row.observed_at,
+      row.receivedAt?.toISOString?.() ?? row.received_at, row.timeQuality,
+      row.temperatureC, row.humidityPct, row.pressurePa, row.batteryMv, row.lux, row.source,
+      row.isValidated ? 'si' : 'no', row.validationFlags, row.invalidatedReason, row.flags,
+      alertName(row.alertLevel)]
       .map((value) => {
         const text = value == null ? '' : String(value);
         return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
@@ -308,16 +459,28 @@ app.get('/api/v1/measurements.csv', requireSubscriber, async (req, res) => {
   res.send('\uFEFF' + lines.join('\r\n') + '\r\n');
 });
 
-app.delete('/api/v1/measurements/:id', requireSubscriber, async (req, res) => {
-  // Cabecera obligatoria: un formulario cross-site no puede enviarla (defensa CSRF).
-  if (req.get('x-requested-with') !== 'fetch') return res.status(400).json({ error: 'missing_client_header' });
+// Borrado suave: la fila se conserva con deleted_at para no perder rastro.
+app.delete('/api/v1/measurements/:id', requireSubscriber, requireRole('operator'), csrfGuard, async (req, res) => {
   if (!/^\d{1,18}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_id' });
-  const removed = await sql`DELETE FROM measurements m USING subscriber_devices sd
-    WHERE m.id = ${req.params.id}::bigint AND sd.device_id = m.device_id AND sd.subscriber_id = ${req.subscriber.id}
-    RETURNING m.id::text AS id`;
+  const scope = req.subscriber.role === 'admin'
+    ? sql`TRUE`
+    : sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+  const removed = await sql`UPDATE measurements m SET deleted_at = now(), deleted_by = ${req.subscriber.id}
+    WHERE m.id = ${req.params.id}::bigint AND m.deleted_at IS NULL AND ${scope}
+    RETURNING m.id::text AS id, m.device_id, m.sequence::text AS sequence, m.observed_at`;
   if (!removed.length) return res.status(404).json({ error: 'measurement_not_found' });
+  await audit(sql, req, 'measurement.delete', 'measurement', removed[0].id, removed[0], { deleted: true });
   res.status(204).end();
 });
+
+// ---------------------------------------------------------------------------
+// Routers de estaciones, configuración, avisos, cuenta y administración
+// ---------------------------------------------------------------------------
+app.use('/api/v1/stations', stationsRouter);
+app.use('/api/v1/stations', configsRouter);
+app.use('/api/v1/alerts', alertsRouter);
+app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1', accountRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
 app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { index: 'index.html', maxAge: '1h' }));
