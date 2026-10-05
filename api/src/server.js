@@ -5,11 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { sql } from './db.js';
 import { randomToken, sha256, verifyPassword } from './security.js';
+import { clearLoginAttempts, consumeLoginAttempt, loginRateLimitKeys } from './login-rate-limit.js';
 import { measurementSchema, hasAnyValue } from './contracts.js';
 import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies } from './auth.js';
 import { evaluateMeasurement, VFLAG } from './validation.js';
 import { evaluateMeasurementRules, evaluateSystemRules, releaseDirectives, pendingDirectiveIds, alertAge } from './alert-engine.js';
 import { audit } from './audit.js';
+import { csvCell } from './csv.js';
 import stationsRouter, { statusPayload } from './stations.js';
 import configsRouter from './configs.js';
 import alertsRouter from './alerts.js';
@@ -21,41 +23,32 @@ const port = Number(process.env.PORT || 8080);
 const sessionDays = Math.max(1, Math.min(30, Number(process.env.SESSION_TTL_DAYS || 7)));
 const cookieSecure = process.env.COOKIE_SECURE !== 'false';
 app.disable('x-powered-by');
-if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
+if (process.env.TRUST_PROXY === 'true' || process.env.VERCEL) app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb', strict: true }));
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Referrer-Policy', 'same-origin');
   res.set('X-Frame-Options', 'DENY');
+  res.set('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'");
   if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
   next();
 });
-
-const loginAttempts = new Map();
-function loginLimited(req, res, next) {
-  const key = req.ip;
-  const now = Date.now();
-  const item = loginAttempts.get(key) || { count: 0, until: now + 15 * 60_000 };
-  if (now > item.until) { item.count = 0; item.until = now + 15 * 60_000; }
-  if (item.count >= 10) return res.status(429).json({ error: 'too_many_attempts' });
-  item.count++;
-  loginAttempts.set(key, item);
-  next();
-}
 
 app.get('/health', async (_req, res) => {
   await sql`SELECT 1`;
   res.json({ status: 'ok' });
 });
 
-app.post('/api/auth/login', loginLimited, async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const parsed = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(256) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_credentials' });
   const email = parsed.data.email.toLowerCase();
+  const rateLimitKeys = loginRateLimitKeys(req.ip || req.socket.remoteAddress, email);
+  if (await consumeLoginAttempt(sql, rateLimitKeys)) return res.status(429).json({ error: 'too_many_attempts' });
   const [subscriber] = await sql`SELECT id, email, password_hash, role FROM subscribers WHERE email = ${email} AND active = true`;
   const valid = subscriber && await verifyPassword(parsed.data.password, subscriber.passwordHash);
   if (!valid) return res.status(401).json({ error: 'invalid_credentials' });
-  loginAttempts.delete(req.ip);
+  await clearLoginAttempts(sql, rateLimitKeys);
   const token = randomToken();
   await sql`INSERT INTO web_sessions (token_hash, subscriber_id, expires_at)
     VALUES (${sha256(token)}, ${subscriber.id}, now() + (${sessionDays} * interval '1 day'))`;
@@ -299,45 +292,105 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
     LEFT JOIN device_configs c ON c.device_id = d.id
     LEFT JOIN device_status st ON st.device_id = d.id
     WHERE sd.subscriber_id = ${req.subscriber.id} AND d.active = true ORDER BY d.name`;
-  const response = [];
-  for (const device of devices) {
+  const deviceIds = devices.map((device) => device.id);
+  const [latestRows, historyRows, summaryRows, forecastRows, nearbyCandidates] = deviceIds.length
+    ? await Promise.all([
+      sql`SELECT DISTINCT ON (device_id) device_id, sequence, observed_at, received_at, time_quality,
+          temperature_c, humidity_pct, pressure_pa, battery_mv, lux, source, flags, alert_level,
+          is_validated, validation_flags, invalidated_reason
+        FROM measurements WHERE device_id = ANY(${deviceIds}) AND deleted_at IS NULL
+        ORDER BY device_id, observed_at DESC, received_at DESC`,
+      // Reduce a maximum de 500 puntos por estación, conservando el periodo y sus extremos.
+      sql`WITH ranked AS (
+          SELECT device_id, observed_at, received_at, temperature_c, humidity_pct, pressure_pa,
+              battery_mv, lux, flags, alert_level, time_quality, source,
+              row_number() OVER (PARTITION BY device_id ORDER BY observed_at, received_at) AS sample_no,
+              count(*) OVER (PARTITION BY device_id) AS sample_count,
+              min(temperature_c) OVER (PARTITION BY device_id) AS min_temp,
+              max(temperature_c) OVER (PARTITION BY device_id) AS max_temp,
+              min(humidity_pct) OVER (PARTITION BY device_id) AS min_humidity,
+              max(humidity_pct) OVER (PARTITION BY device_id) AS max_humidity,
+              min(pressure_pa) OVER (PARTITION BY device_id) AS min_pressure,
+              max(pressure_pa) OVER (PARTITION BY device_id) AS max_pressure,
+              min(battery_mv) OVER (PARTITION BY device_id) AS min_battery,
+              max(battery_mv) OVER (PARTITION BY device_id) AS max_battery
+            FROM measurements
+            WHERE device_id = ANY(${deviceIds}) AND observed_at >= now() - (${hours} * interval '1 hour')
+              AND is_validated AND deleted_at IS NULL
+        )
+        SELECT device_id, observed_at, received_at, temperature_c, humidity_pct, pressure_pa,
+            battery_mv, lux, flags, alert_level, time_quality, source
+          FROM ranked
+          WHERE sample_count <= 500 OR sample_no = 1 OR sample_no = sample_count
+            OR mod(sample_no, ceil(sample_count::numeric / 500)::bigint) = 0
+            OR (min_temp IS NOT NULL AND temperature_c IN (min_temp, max_temp))
+            OR (min_humidity IS NOT NULL AND humidity_pct IN (min_humidity, max_humidity))
+            OR (min_pressure IS NOT NULL AND pressure_pa IN (min_pressure, max_pressure))
+            OR (min_battery IS NOT NULL AND battery_mv IN (min_battery, max_battery))
+          ORDER BY device_id, observed_at, received_at`,
+      sql`SELECT device_id, count(*)::integer AS count,
+          count(*) FILTER (WHERE is_validated)::integer AS valid_count,
+          count(*) FILTER (WHERE NOT is_validated)::integer AS invalid_count,
+          count(*) FILTER (WHERE temperature_c IS NOT NULL)::integer AS measured_count,
+          min(temperature_c) FILTER (WHERE is_validated) AS temp_min,
+          max(temperature_c) FILTER (WHERE is_validated) AS temp_max,
+          avg(temperature_c) FILTER (WHERE is_validated) AS temp_avg,
+          min(humidity_pct) FILTER (WHERE is_validated) AS humidity_min,
+          max(humidity_pct) FILTER (WHERE is_validated) AS humidity_max,
+          avg(humidity_pct) FILTER (WHERE is_validated) AS humidity_avg,
+          min(pressure_pa) FILTER (WHERE is_validated) AS pressure_min,
+          max(pressure_pa) FILTER (WHERE is_validated) AS pressure_max,
+          avg(pressure_pa) FILTER (WHERE is_validated) AS pressure_avg,
+          min(battery_mv) FILTER (WHERE is_validated) AS battery_min,
+          max(battery_mv) FILTER (WHERE is_validated) AS battery_max,
+          avg(battery_mv) FILTER (WHERE is_validated) AS battery_avg,
+          min(lux) FILTER (WHERE is_validated) AS lux_min,
+          max(lux) FILTER (WHERE is_validated) AS lux_max,
+          avg(lux) FILTER (WHERE is_validated) AS lux_avg
+        FROM measurements WHERE device_id = ANY(${deviceIds})
+          AND observed_at >= now() - (${hours} * interval '1 hour') AND deleted_at IS NULL
+        GROUP BY device_id`,
+      sql`WITH ranked AS (
+          SELECT device_id, provider, forecast_for, fetched_at, temperature_c, humidity_pct, precipitation_mm,
+              row_number() OVER (PARTITION BY device_id ORDER BY forecast_for) AS row_no
+            FROM external_forecasts WHERE device_id = ANY(${deviceIds})
+              AND forecast_for >= now() - interval '1 hour'
+        )
+        SELECT device_id, provider, forecast_for, fetched_at, temperature_c, humidity_pct, precipitation_mm
+          FROM ranked WHERE row_no <= 100 ORDER BY device_id, forecast_for`,
+      sql`SELECT name, latitude, longitude, coverage_km, last_seen_at
+        FROM devices WHERE active = true AND publish_permission = true
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND last_seen_at >= now() - interval '2 hours'`,
+    ])
+    : [[], [], [], [], []];
+
+  const latestByDevice = new Map(latestRows.map((row) => [row.deviceId, row]));
+  const historyByDevice = new Map();
+  for (const row of historyRows) {
+    if (!historyByDevice.has(row.deviceId)) historyByDevice.set(row.deviceId, []);
+    historyByDevice.get(row.deviceId).push(row);
+  }
+  const summaryByDevice = new Map(summaryRows.map((row) => [row.deviceId, row]));
+  const forecastsByDevice = new Map();
+  for (const row of forecastRows) {
+    if (!forecastsByDevice.has(row.deviceId)) forecastsByDevice.set(row.deviceId, []);
+    forecastsByDevice.get(row.deviceId).push(row);
+  }
+
+  const response = devices.map((device) => {
     const config = device.config ?? {};
-    // Último dato recibido (aunque esté invalidado) para señalar el estado real.
-    const [latest] = await sql`SELECT sequence, observed_at, received_at, time_quality, temperature_c, humidity_pct,
-        pressure_pa, battery_mv, lux, source, flags, alert_level, is_validated, validation_flags, invalidated_reason
-      FROM measurements WHERE device_id = ${device.id} AND deleted_at IS NULL
-      ORDER BY observed_at DESC, received_at DESC LIMIT 1`;
-    // Gráficas y estadísticas: solo valores validados, nunca borrados.
-    const history = await sql`SELECT observed_at, received_at, temperature_c, humidity_pct, pressure_pa, battery_mv,
-        lux, flags, alert_level, time_quality, source
-      FROM measurements
-      WHERE device_id = ${device.id} AND observed_at >= now() - (${hours} * interval '1 hour')
-        AND is_validated AND deleted_at IS NULL
-      ORDER BY observed_at ASC`;
-    const [summary] = await sql`SELECT count(*)::integer AS count,
-        count(*) FILTER (WHERE is_validated)::integer AS valid_count,
-        count(*) FILTER (WHERE NOT is_validated)::integer AS invalid_count,
-        count(*) FILTER (WHERE temperature_c IS NOT NULL)::integer AS measured_count,
-        min(temperature_c) FILTER (WHERE is_validated) AS temp_min,
-        max(temperature_c) FILTER (WHERE is_validated) AS temp_max,
-        avg(temperature_c) FILTER (WHERE is_validated) AS temp_avg,
-        min(humidity_pct) FILTER (WHERE is_validated) AS humidity_min,
-        max(humidity_pct) FILTER (WHERE is_validated) AS humidity_max,
-        avg(humidity_pct) FILTER (WHERE is_validated) AS humidity_avg,
-        min(pressure_pa) FILTER (WHERE is_validated) AS pressure_min,
-        max(pressure_pa) FILTER (WHERE is_validated) AS pressure_max,
-        avg(pressure_pa) FILTER (WHERE is_validated) AS pressure_avg,
-        min(battery_mv) FILTER (WHERE is_validated) AS battery_min,
-        max(battery_mv) FILTER (WHERE is_validated) AS battery_max,
-        avg(battery_mv) FILTER (WHERE is_validated) AS battery_avg,
-        min(lux) FILTER (WHERE is_validated) AS lux_min,
-        max(lux) FILTER (WHERE is_validated) AS lux_max,
-        avg(lux) FILTER (WHERE is_validated) AS lux_avg
-      FROM measurements WHERE device_id = ${device.id}
-        AND observed_at >= now() - (${hours} * interval '1 hour') AND deleted_at IS NULL`;
-    const forecasts = await sql`SELECT provider, forecast_for, fetched_at, temperature_c, humidity_pct, precipitation_mm
-      FROM external_forecasts WHERE device_id = ${device.id} AND forecast_for >= now() - interval '1 hour'
-      ORDER BY forecast_for ASC LIMIT 100`;
+    const latest = latestByDevice.get(device.id) ?? null;
+    const history = historyByDevice.get(device.id) ?? [];
+    const summary = summaryByDevice.get(device.id) ?? {
+      count: 0, validCount: 0, invalidCount: 0, measuredCount: 0,
+      tempMin: null, tempMax: null, tempAvg: null,
+      humidityMin: null, humidityMax: null, humidityAvg: null,
+      pressureMin: null, pressureMax: null, pressureAvg: null,
+      batteryMin: null, batteryMax: null, batteryAvg: null,
+      luxMin: null, luxMax: null, luxAvg: null,
+    };
+    const forecasts = forecastsByDevice.get(device.id) ?? [];
 
     // Cobertura: cuántos datos faltan frente a lo esperado por el intervalo configurado.
     const intervalSeconds = Number(config.interval_normal_s) || 900;
@@ -346,18 +399,19 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
 
     let nearby = { stations: [], representative: false, message: 'Ubicación de estación no configurada.' };
     if (device.latitude != null && device.longitude != null) {
-      const candidates = await sql`SELECT id, name, latitude, longitude, coverage_km, last_seen_at
-        FROM devices WHERE active = true AND id <> ${device.id} AND latitude IS NOT NULL AND longitude IS NOT NULL
-          AND last_seen_at >= now() - interval '2 hours'`;
-      const stations = candidates.map((candidate) => ({ ...candidate,
-        distance_km: haversineKm(device.latitude, device.longitude, candidate.latitude, candidate.longitude),
-      })).filter((station) => station.distance_km <= station.coverage_km)
-        .sort((a, b) => a.distance_km - b.distance_km).slice(0, 3);
+      const stations = nearbyCandidates.map((candidate) => ({
+        name: candidate.name,
+        lastSeenAt: candidate.lastSeenAt,
+        distanceKm: haversineKm(device.latitude, device.longitude, candidate.latitude, candidate.longitude),
+        coverageKm: candidate.coverageKm,
+      })).filter((station) => station.distanceKm <= station.coverageKm)
+        .sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 3)
+        .map(({ name, lastSeenAt, distanceKm }) => ({ name, lastSeenAt, distanceKm }));
       nearby = { stations, representative: stations.length === 3,
         message: stations.length === 3 ? 'Tres estaciones activas dentro de su cobertura.' : `Solo ${stations.length} de 3 estaciones cercanas disponibles y cubiertas.` };
     }
 
-    response.push({
+    return {
       device: {
         id: device.id, name: device.name, owner: device.owner, locationType: device.locationType,
         publicZone: device.publicZone, altitude: device.altitude, sensors: device.sensors,
@@ -368,7 +422,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
       history,
       // El row llega camelizado por el transform de columna: el resumen se expone en snake_case.
       summary: {
-        ...Object.fromEntries(Object.entries(summary)
+        ...Object.fromEntries(Object.entries(summary).filter(([key]) => key !== 'deviceId')
           .map(([key, value]) => [key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), value])),
         expected,
         coverage_pct: summary.validCount ? coveragePct : 0,
@@ -377,8 +431,8 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
       forecast_source: forecasts.length ? 'external_provider' : null,
       estimates: [],
       nearby,
-    });
-  }
+    };
+  });
   const alerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
       a.value, a.source, a.observed_at, a.created_at, a.recipient, a.channel, a.delivery_status,
       a.closed_at, a.acknowledged_at, a.rule_snapshot, a.auto_resolved
@@ -513,10 +567,7 @@ app.get('/api/v1/measurements.csv', requireSubscriber, async (req, res) => {
       row.temperatureC, row.humidityPct, row.pressurePa, row.batteryMv, row.lux, row.source,
       row.isValidated ? 'si' : 'no', row.validationFlags, row.invalidatedReason, row.flags,
       alertName(row.alertLevel)]
-      .map((value) => {
-        const text = value == null ? '' : String(value);
-        return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-      }).join(','));
+       .map(csvCell).join(','));
   }
   res.set('Content-Type', 'text/csv; charset=utf-8');
   res.set('Content-Disposition', 'attachment; filename="tecrural-mediciones.csv"');
@@ -572,23 +623,25 @@ async function runSystemPass() {
 
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-if (!isServerless) {
-  const systemTimer = setInterval(runSystemPass, SYSTEM_EVAL_MS);
-  systemTimer.unref();
-  const systemKick = setTimeout(runSystemPass, 5000);
-  systemKick.unref();
-} else {
-  app.use((req, res, next) => {
-    // Solo con tráfico real del panel, y como mucho una vez por intervalo.
-    if (!req.path.startsWith('/api/v1/')) return next();
-    if (Date.now() - lastSystemPass < SYSTEM_EVAL_MS) return next();
-    runSystemPass().catch(() => {});
-    next();
-  });
+if (process.env.SYSTEM_EVAL_DISABLED !== 'true') {
+  if (!isServerless) {
+    const systemTimer = setInterval(runSystemPass, SYSTEM_EVAL_MS);
+    systemTimer.unref();
+    const systemKick = setTimeout(runSystemPass, 5000);
+    systemKick.unref();
+  } else {
+    app.use((req, res, next) => {
+      // Solo con tráfico real del panel, y como mucho una vez por intervalo.
+      if (!req.path.startsWith('/api/v1/')) return next();
+      if (Date.now() - lastSystemPass < SYSTEM_EVAL_MS) return next();
+      runSystemPass().catch(() => {});
+      next();
+    });
+  }
 }
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
-app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { index: 'index.html', maxAge: '1h' }));
+app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { index: 'index.html', maxAge: 0 }));
 app.get('*path', async (_req, res, next) => {
   try { res.type('html').send(await readFile(new URL('../public/index.html', import.meta.url))); }
   catch (error) { next(error); }

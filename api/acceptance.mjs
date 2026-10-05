@@ -5,6 +5,7 @@
 //  3. Un cambio remoto permanece pendiente hasta que la ESP32-C3 lo confirma.
 //  4. Un usuario no puede consultar ni borrar datos de otra estación.
 //  5. Un registro sin canales no bloquea el lote.
+//  6. El panel no filtra la ubicación exacta de estaciones vecinas.
 //
 // Requieren la base de datos real y un servidor en un puerto libre. Todo lo que
 // se crea lleva el prefijo acp- y se borra al terminar.
@@ -22,7 +23,6 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const PREFIX = 'acp';
 const DEVICE_A = `${PREFIX}-device-a`;
 const DEVICE_B = `${PREFIX}-device-b`;
-const startedAt = new Date();
 
 const sql = postgres(process.env.DATABASE_URL, {
   max: 5, ssl: 'require', transform: { ...postgres.camel, value: {} },
@@ -39,7 +39,7 @@ const section = (title) => console.log(`\n${title}`);
 
 const server = spawn(process.execPath, ['src/server.js'], {
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), SYSTEM_EVAL_INTERVAL_S: '3600' },
+  env: { ...process.env, PORT: String(PORT), SYSTEM_EVAL_INTERVAL_S: '3600', SYSTEM_EVAL_DISABLED: 'true' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let serverLog = '';
@@ -78,7 +78,8 @@ async function cleanup() {
   await sql`DELETE FROM measurements WHERE device_id IN (${DEVICE_A}, ${DEVICE_B})`;
   await sql`DELETE FROM subscriber_devices WHERE device_id IN (${DEVICE_A}, ${DEVICE_B})`;
   await sql`DELETE FROM devices WHERE id IN (${DEVICE_A}, ${DEVICE_B})`;
-  await sql`DELETE FROM audit_logs WHERE created_at >= ${startedAt} OR target_id IN (${DEVICE_A}, ${DEVICE_B})`;
+  await sql`DELETE FROM audit_logs WHERE target_id IN (${DEVICE_A}, ${DEVICE_B})
+    OR actor_id IN (SELECT id FROM subscribers WHERE email LIKE ${`${PREFIX}-%`})`;
   // La auditoría referencia a su autor: se borra antes de los suscriptores.
   await sql`DELETE FROM web_sessions WHERE subscriber_id IN (
     SELECT id FROM subscribers WHERE email LIKE ${`${PREFIX}-%`})`;
@@ -418,6 +419,29 @@ try {
   const counted = await sql`SELECT count(*)::int AS total FROM measurements
     WHERE device_id = ${DEVICE_B} AND sequence >= 200`;
   check('sin ningún canal no se guarda nada', counted[0].total === 1, JSON.stringify(counted[0]));
+
+  // ==========================================================================
+  section('6. El panel respeta el permiso de datos públicos de estaciones vecinas');
+
+  await sql`UPDATE devices SET latitude = 40, longitude = -3, coverage_km = 25, last_seen_at = now()
+    WHERE id = ${DEVICE_A}`;
+  await sql`UPDATE devices SET latitude = 40.001, longitude = -3.001, coverage_km = 25,
+      last_seen_at = now(), publish_permission = false
+    WHERE id = ${DEVICE_B}`;
+  const privateNearby = await call('/api/v1/dashboard?period=24h', { as: 'owner' });
+  const privateNames = privateNearby.body.devices[0].nearby.stations.map((item) => item.name);
+  check('oculta estaciones vecinas sin permiso de publicación',
+    !privateNames.includes(`Estación ${DEVICE_B}`), JSON.stringify(privateNames));
+
+  await sql`UPDATE devices SET publish_permission = true WHERE id = ${DEVICE_B}`;
+  const publicNearby = await call('/api/v1/dashboard?period=24h', { as: 'owner' });
+  const publicStations = publicNearby.body.devices[0].nearby.stations;
+  const publishedStation = publicStations.find((item) => item.name === `Estación ${DEVICE_B}`);
+  check('incluye la estación cercana cuando permite datos públicos', !!publishedStation,
+    JSON.stringify(publicStations));
+  check('la respuesta pública solo incluye nombre, fecha y distancia aproximada',
+    !!publishedStation && Object.keys(publishedStation).sort().join(',') === 'distanceKm,lastSeenAt,name',
+    JSON.stringify(publishedStation));
 } catch (error) {
   failures.push(`excepción: ${error.message}`);
   console.error('\n', error);

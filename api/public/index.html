@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Saltar al contenido</a>
   <header class="topbar">
     <a class="brand" href="#/panel">TECRURAL<span>ESTACIONES RURALES</span></a>
     <nav id="main-nav" class="topnav hidden" aria-label="Secciones">
@@ -22,7 +23,7 @@
       <button id="logout" class="quiet hidden" type="button">Cerrar sesión</button>
     </div>
   </header>
-  <main>
+  <main id="main-content" tabindex="-1">
     <section id="login-view" class="login-card">
       <p class="eyebrow">PANEL PRIVADO · SUSCRIPTORES</p>
       <h1>Datos de tu estación</h1>
@@ -36,7 +37,7 @@
     </section>
     <section id="view-root" class="hidden" aria-live="polite"></section>
   </main>
-  <dialog id="detail-dialog" class="detail-dialog"></dialog>
+  <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
   <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
   <script type="module" src="/app.js"></script>
 </body>

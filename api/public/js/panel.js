@@ -45,7 +45,7 @@ export function renderStationCard(item) {
     </div>
     <p class="coverage">${escapeText(coverage)}</p>
     <p class="coverage">Sensores: ${sensorState}</p>
-    ${chartSection(history)}
+    ${chartSection(history, summary)}
     <div class="subsection"><h3>Previsión meteorológica</h3><p class="coverage">Fuente externa separada de las mediciones de la estación.</p>${forecastSection}</div>
     <div class="subsection"><h3>Estaciones cercanas</h3><p class="coverage">${escapeText(nearby.message)} ${nearby.representative ? 'Cobertura representativa disponible.' : 'La cobertura puede ser insuficiente.'}</p>${nearbyRows}</div>
   </article>`;

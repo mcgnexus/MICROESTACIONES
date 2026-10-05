@@ -42,7 +42,7 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 
 Los avisos de la estación se crean de forma idempotente al ingresar una lectura con nivel de alerta. Previsiones y estimaciones se almacenan/devuelven en campos distintos a las mediciones propias; este servicio no genera predicciones. La ruta de ingesta de previsiones queda lista para un adaptador del proveedor elegido; aún no se ha seleccionado ni conectado un proveedor.
 
-La lista de estaciones cercanas incluye únicamente estaciones activas, vistas en las últimas dos horas y dentro del radio de cobertura configurado. El panel indica explícitamente si no hay tres estaciones representativas.
+La lista de estaciones cercanas incluye únicamente estaciones activas que han permitido compartir datos públicos agregados, vistas en las últimas dos horas y dentro del radio de cobertura configurado. La respuesta solo contiene nombre, última conexión y distancia; nunca entrega las coordenadas exactas de otra estación. El panel indica explícitamente si no hay tres estaciones representativas.
 
 ## Seguridad y operación
 
@@ -50,4 +50,5 @@ La lista de estaciones cercanas incluye únicamente estaciones activas, vistas e
 - Usa un token aleatorio distinto por estación y revócalo poniendo `revoked_at` en `device_credentials` si se pierde.
 - No expongas el servidor directamente en HTTP. Configura `TRUST_PROXY=true` solo detrás de un proxy inverso de confianza.
 - Crea usuarios mediante el comando de aprovisionamiento; no hay registro público.
+- Los intentos de inicio de sesión se limitan por IP y correo normalizado en PostgreSQL (ventana de 15 minutos); ejecuta `npm run migrate` antes de desplegar cambios de esquema.
 - Antes de producción, configura proveedor externo, política de retención y revisa los límites de tarifa/uso de Neon.

@@ -60,7 +60,8 @@ async function route() {
     else await renderPanel(viewRoot);
   } catch (error) {
     if (error.message === 'authentication_required' || error.message === 'session_expired') { showLogin(); return; }
-    viewRoot.innerHTML = `<section class="panel"><p class="error">No se pudo cargar la vista: ${error.message}</p></section>`;
+    viewRoot.innerHTML = '<section class="panel"><p class="error" data-route-error></p></section>';
+    $('[data-route-error]', viewRoot).textContent = `No se pudo cargar la vista: ${error.message}`;
   }
   window.scrollTo({ top: 0 });
 }

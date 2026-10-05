@@ -102,3 +102,14 @@ tr.row-system td{color:#5c6a60}
 .dialog-body{padding:20px 22px;max-height:60vh;overflow:auto}
 .dialog-actions{display:flex;gap:9px;justify-content:flex-end;padding:16px 22px;border-top:1px solid #edf0ec}
 @media(max-width:760px){.topbar{height:auto;flex-wrap:wrap;padding-top:12px;padding-bottom:12px}.topnav{margin-left:0;width:100%}.detail-grid{grid-template-columns:1fr}}
+.quiet{color:#1f6241}
+.quiet:hover{background:#f2f6f2}
+button:disabled{opacity:.5;cursor:not-allowed}
+.measurements-toolbar{display:flex;justify-content:flex-end;margin:10px 0 14px}
+.measurements-toolbar button{white-space:nowrap}
+.table-pagination{display:flex;align-items:center;justify-content:center;gap:14px;margin:18px 0}
+.table-pagination span{font-size:13px;color:#5d6f62;font-weight:650}
+@media(max-width:760px){.measurements-toolbar button{width:100%}.table-pagination{justify-content:space-between;gap:8px}}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:1000;background:white;color:#153b2b;padding:10px 14px;border-radius:8px}
+.skip-link:focus{top:12px}
+:focus-visible{outline:3px solid #d47749;outline-offset:2px}

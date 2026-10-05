@@ -27,7 +27,9 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
         <option value="">Todas</option><option value="valid">Solo válidas</option><option value="invalid">Solo inválidas</option>
       </select></label>
       <button type="button" data-action="apply">Aplicar</button>
-      <button type="button" class="quiet" data-action="csv">Exportar CSV</button>
+    </div>
+    <div class="measurements-toolbar">
+      <button type="button" data-action="csv">Exportar CSV</button>
     </div>
     <p class="error" data-error role="alert"></p>
     <p class="coverage" data-summary></p>
@@ -40,9 +42,13 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
         <tbody data-rows></tbody>
       </table>
     </div>
-    <div class="table-actions"><button type="button" class="quiet hidden" data-action="more">Cargar más</button></div>`;
+    <div class="table-pagination hidden" data-pagination aria-label="Paginación de mediciones">
+      <button type="button" class="quiet" data-action="previous">Anterior</button>
+      <span data-page-status></span>
+      <button type="button" class="quiet" data-action="next">Siguiente</button>
+    </div>`;
 
-  const state = { rows: [], total: 0, valid: 0, invalid: 0, limit: 100, gaps: null };
+  const state = { rows: [], total: 0, valid: 0, invalid: 0, page: 0, pageSize: 10, gaps: null };
 
   const today = new Date();
   $('[data-filter="date"]', root).value = localIsoDate(today);
@@ -72,7 +78,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
     if (device) params.set('device_id', device);
     const validated = $('[data-filter="validated"]', root).value;
     if (validated) params.set('validated', validated);
-    if (!forCsv) params.set('limit', String(state.limit));
+    if (!forCsv) params.set('limit', String(state.pageSize));
     return { params, from, to };
   }
 
@@ -116,27 +122,37 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
     } catch { state.gaps = null; }
   }
 
-  async function load({ append = false } = {}) {
+  async function load({ resetPage = false } = {}) {
     $('[data-error]', root).textContent = '';
-    if (!append) { state.rows = []; state.limit = 100; }
+    if (resetPage) state.page = 0;
     const { params, from, to } = currentParams();
-    params.set('offset', String(state.rows.length));
+    params.set('offset', String(state.page * state.pageSize));
     try {
       const data = await api(`/api/v1/measurements?${params}`);
       state.total = data.total;
       state.valid = data.valid;
       state.invalid = data.invalid;
-      state.rows = append ? state.rows.concat(data.measurements) : data.measurements;
+      state.rows = data.measurements;
+      if (state.rows.length === 0 && state.total > 0 && state.page > 0) {
+        state.page = Math.min(state.page - 1, Math.ceil(state.total / state.pageSize) - 1);
+        return load();
+      }
       $('[data-rows]', root).innerHTML = state.rows.map(renderRow).join('')
         || '<tr><td colspan="12">No hay mediciones en este periodo.</td></tr>';
-      if (!append) await loadGaps(from, to);
+      if (resetPage || state.gaps === null) await loadGaps(from, to);
       const gapsInfo = state.gaps
         ? ` · huecos de secuencia: ${state.gaps.gaps.length} (${state.gaps.missing} muestras sin recibir, cobertura ${state.gaps.coveragePct ?? '—'} %)`
         : '';
+      const first = state.total ? state.page * state.pageSize + 1 : 0;
+      const last = Math.min((state.page + 1) * state.pageSize, state.total);
       $('[data-summary]', root).textContent =
-        `${state.rows.length} de ${state.total} mediciones · ${state.valid} válidas · ${state.invalid} inválidas`
+        `Mostrando ${first}–${last} de ${state.total} mediciones · ${state.valid} válidas · ${state.invalid} inválidas`
         + ` · ${from.toLocaleDateString('es-ES')} → ${new Date(to.getTime() - 1).toLocaleDateString('es-ES')}${gapsInfo}`;
-      $('[data-action="more"]', root).classList.toggle('hidden', state.rows.length >= state.total);
+      const pageCount = Math.ceil(state.total / state.pageSize);
+      $('[data-pagination]', root).classList.toggle('hidden', pageCount <= 1);
+      $('[data-page-status]', root).textContent = `Página ${state.page + 1} de ${pageCount}`;
+      $('[data-action="previous"]', root).disabled = state.page === 0;
+      $('[data-action="next"]', root).disabled = state.page + 1 >= pageCount;
     } catch (error) {
       $('[data-error]', root).textContent = `No se pudo cargar la tabla: ${error.message}`;
     }
@@ -212,9 +228,10 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
   root.addEventListener('click', (event) => {
     const button = event.target.closest('button');
     if (!button) return;
-    if (button.dataset.action === 'apply') load();
+    if (button.dataset.action === 'apply') load({ resetPage: true });
     else if (button.dataset.action === 'csv') exportCsv();
-    else if (button.dataset.action === 'more') load({ append: true });
+    else if (button.dataset.action === 'previous' && state.page > 0) { state.page -= 1; load(); }
+    else if (button.dataset.action === 'next' && (state.page + 1) * state.pageSize < state.total) { state.page += 1; load(); }
     else if (button.dataset.detail) showDetail(button.dataset.detail);
     else if (button.dataset.validate) validate(button.dataset.validate, button.dataset.next === 'true');
     else if (button.dataset.delete) remove(button.dataset.delete);
@@ -234,7 +251,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
   };
 
   root.querySelectorAll('[data-filter="period"]').forEach((el) =>
-    el.addEventListener('change', () => { syncFilterVisibility(); load(); }));
+    el.addEventListener('change', () => { syncFilterVisibility(); load({ resetPage: true }); }));
 
   syncFilterVisibility();
   load();

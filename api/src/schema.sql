@@ -59,6 +59,14 @@ CREATE TABLE IF NOT EXISTS web_sessions (
 );
 CREATE INDEX IF NOT EXISTS web_sessions_expiry_idx ON web_sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS login_rate_limits (
+  limiter_key text PRIMARY KEY,
+  attempts integer NOT NULL CHECK (attempts > 0),
+  window_started_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS login_rate_limits_updated_idx ON login_rate_limits(updated_at);
+
 -- Cada fila conserva lo que el equipo transmitió: instante de medida (observed_at)
 -- e instante de recepción (received_at) son distintos para reconstruir lotes tardíos.
 -- is_validated separa el valor recibido del dato validado. Los invalidados nunca se

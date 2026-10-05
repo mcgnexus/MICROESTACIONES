@@ -96,29 +96,61 @@ export const CHANNEL_LABELS = { email: 'Correo', sms: 'SMS', webhook: 'Webhook',
 export const ALERT_LEVELS = { 1: 'Prioritario', 2: 'Aviso' };
 
 // ---- Gráficas (solo mediciones validadas: el filtro lo hace el servidor) ---
-export function makeChart(title, rows, key, color, unit, digits = 1) {
+export function sampleChartRows(rows, key, limit = 300) {
   const points = rows.filter((row) => row[key] != null);
-  if (!points.length) return `<div class="chart-box"><h3>${title}</h3><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
+  if (points.length <= limit) return points;
+
+  const bucketCount = Math.max(1, Math.floor((limit - 2) / 2));
+  const interiorCount = points.length - 2;
+  const sampled = [points[0]];
+  for (let bucket = 0; bucket < bucketCount; bucket++) {
+    const start = 1 + Math.floor((bucket * interiorCount) / bucketCount);
+    const end = 1 + Math.floor(((bucket + 1) * interiorCount) / bucketCount);
+    let minIndex = start;
+    let maxIndex = start;
+    for (let index = start + 1; index < end; index++) {
+      if (Number(points[index][key]) < Number(points[minIndex][key])) minIndex = index;
+      if (Number(points[index][key]) > Number(points[maxIndex][key])) maxIndex = index;
+    }
+    for (const index of [...new Set([minIndex, maxIndex])].sort((a, b) => a - b)) {
+      sampled.push(points[index]);
+    }
+  }
+  sampled.push(points.at(-1));
+  return sampled;
+}
+
+export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null) {
+  const allPoints = rows.filter((row) => row[key] != null);
+  const points = sampleChartRows(rows, key);
+  if (!allPoints.length) return `<div class="chart-box"><h3>${title}</h3><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
   const width = 500, height = 135, pad = 18;
-  const values = points.map((row) => Number(row[key]));
-  let low = Math.min(...values), high = Math.max(...values);
+  const values = allPoints.map((row) => Number(row[key]));
+  const min = exactStats?.min ?? Math.min(...values);
+  const max = exactStats?.max ?? Math.max(...values);
+  const average = exactStats?.avg ?? values.reduce((a, b) => a + b, 0) / values.length;
+  let low = min, high = max;
   if (high === low) { high += 1; low -= 1; }
   const coords = points.map((row, index) => {
     const x = pad + (points.length === 1 ? 0.5 : index / (points.length - 1)) * (width - pad * 2);
     const y = height - pad - ((Number(row[key]) - low) / (high - low)) * (height - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  const first = dateText(points[0].observedAt);
-  const last = dateText(points.at(-1).observedAt);
-  return `<div class="chart-box"><h3>${title} · ${unit}</h3><svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeText(title)} desde ${first} hasta ${last}"><line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#dfe7df"/><polyline fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${coords}"/>${points.map((row, i) => { const p = coords.split(' ')[i].split(','); return `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${color}"/>`; }).join('')}</svg><div class="summary"><span>Mín. ${numberText(Math.min(...values), digits)} ${unit}</span><span>Máx. ${numberText(Math.max(...values), digits)} ${unit}</span><span>Prom. ${numberText(values.reduce((a, b) => a + b, 0) / values.length, digits)} ${unit}</span></div></div>`;
+    return [x.toFixed(1), y.toFixed(1)];
+  });
+  const first = dateText(allPoints[0].observedAt);
+  const last = dateText(allPoints.at(-1).observedAt);
+  const pointsText = coords.map(([x, y]) => `${x},${y}`).join(' ');
+  const markers = points.length <= 80
+    ? coords.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`).join('')
+    : '';
+  return `<div class="chart-box"><h3>${title} · ${unit}</h3><svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeText(title)} desde ${first} hasta ${last}"><line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#dfe7df"/><polyline fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${pointsText}"/>${markers}</svg><div class="summary"><span>Mín. ${numberText(min, digits)} ${unit}</span><span>Máx. ${numberText(max, digits)} ${unit}</span><span>Prom. ${numberText(average, digits)} ${unit}</span></div></div>`;
 }
 
-export const chartSection = (history) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C')}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%')}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0)}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0)}</div>`;
+export const chartSection = (history, summary = {}) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0, { min: summary.pressure_min, max: summary.pressure_max, avg: summary.pressure_avg })}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div>`;
 
 // ---- Diálogo de detalle ----------------------------------------------------
 export function openDialog(title, bodyHtml, actionsHtml = '') {
   const dialog = $('#detail-dialog');
-  dialog.innerHTML = `<div class="dialog-head"><h3>${escapeText(title)}</h3><button type="button" class="quiet" data-dialog-close>Cerrar</button></div>
+  dialog.innerHTML = `<div class="dialog-head"><h3 id="detail-dialog-title">${escapeText(title)}</h3><button type="button" class="quiet" data-dialog-close>Cerrar</button></div>
     <div class="dialog-body">${bodyHtml}</div>${actionsHtml ? `<div class="dialog-actions">${actionsHtml}</div>` : ''}`;
   dialog.querySelector('[data-dialog-close]').addEventListener('click', () => dialog.close());
   dialog.showModal();
