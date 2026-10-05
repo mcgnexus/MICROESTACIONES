@@ -1,0 +1,7 @@
+.git
+.vercel/
+firmware/
+eim_config.toml
+api/node_modules/
+api/.env*
+api/.vercel/
