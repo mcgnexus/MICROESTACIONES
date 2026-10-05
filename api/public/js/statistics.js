@@ -1,4 +1,4 @@
-import { $, api, escapeText, dateText, numberText, canEdit } from './ui.js';
+import { $, api, escapeText, dateText, numberText, canEdit, METRIC_ICONS } from './ui.js';
 import { makeChart } from './ui.js';
 
 const TREND_LABELS = { sube: 'sube', baja: 'baja', estable: 'estable', insuficiente: 'sin datos suficientes' };
@@ -18,7 +18,7 @@ export async function renderStatisticsTab(content, stationId, station) {
   const coverage = data.coverage;
   const metricCards = Object.entries(data.metrics).map(([key, metric]) => `
     <div class="stat-card">
-      <p class="eyebrow">${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
+      <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span aria-hidden="true">${METRIC_ICONS[metric.label]} </span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
       <div class="stat-row">
         <span>Mín</span><strong>${numberText(metric.min, metric.digits ?? 1)}</strong>
         <span>Máx</span><strong>${numberText(metric.max, metric.digits ?? 1)}</strong>
@@ -29,7 +29,8 @@ export async function renderStatisticsTab(content, stationId, station) {
         <span>Desv.</span><strong>${numberText(metric.stddev, metric.digits ?? 1)}</strong>
         <span>Muestras</span><strong>${metric.count}</strong>
       </div>
-      <p class="trend" style="--trend-color:${TREND_COLORS[metric.trend.direction] || TREND_COLORS.insuficiente}">
+      <p class="trend trend-${escapeText(metric.trend.direction)}" style="--trend-color:${TREND_COLORS[metric.trend.direction] || TREND_COLORS.insuficiente}">
+        ${metric.trend.direction === 'sube' ? '↑ ' : metric.trend.direction === 'baja' ? '↓ ' : metric.trend.direction === 'estable' ? '→ ' : '· '}
         Tendencia ${escapeText(TREND_LABELS[metric.trend.direction] || metric.trend.direction)}
         ${metric.trend.slopePerHour != null ? ` · ${numberText(metric.trend.slopePerHour, 3)} ${escapeText(metric.unit)}/h` : ''}
       </p>

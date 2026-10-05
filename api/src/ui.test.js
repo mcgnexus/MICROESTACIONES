@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleChartRows } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, makeChart, metric } from '../public/js/ui.js';
 
 test('chart sampling bounds dense data and keeps the endpoints and local extrema', () => {
   const rows = Array.from({ length: 2000 }, (_, index) => ({
@@ -20,4 +20,25 @@ test('chart sampling bounds dense data and keeps the endpoints and local extrema
 test('chart sampling excludes missing values and leaves short series intact', () => {
   const rows = [{ value: 1 }, { value: null }, { value: 2 }];
   assert.deepEqual(sampleChartRows(rows, 'value'), [rows[0], rows[2]]);
+});
+
+test('chart trends describe rising, falling, stable, and insufficient series', () => {
+  const series = (values) => values.map((value, i) => ({
+    observedAt: new Date(i * 30 * 60 * 1000).toISOString(), temperatureC: value,
+  }));
+  assert.equal(chartTrend(series([1, 2, 3]), 'temperatureC').direction, 'sube');
+  assert.equal(chartTrend(series([3, 2, 1]), 'temperatureC').direction, 'baja');
+  assert.equal(chartTrend(series([1, 2, 1]), 'temperatureC').direction, 'estable');
+  assert.equal(chartTrend(series([1, 2]), 'temperatureC').direction, 'insuficiente');
+});
+
+test('metrics include an icon and graphs explain temperature trend with an arrow', () => {
+  assert.match(metric('Temperatura', '19,2', '°C'), /🌡️/);
+  const rows = [1, 2, 3].map((temperatureC, i) => ({
+    observedAt: new Date(i * 30 * 60 * 1000).toISOString(), temperatureC,
+  }));
+  const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C');
+  assert.match(chart, /chart-trend trend-sube/);
+  assert.match(chart, /↑/);
+  assert.match(chart, /calentamiento/);
 });

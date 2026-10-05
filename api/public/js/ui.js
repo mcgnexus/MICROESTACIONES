@@ -38,8 +38,11 @@ export async function api(path, options = {}) {
 export const canEdit = () => ['admin', 'operator'].includes(session.me?.role);
 export const isAdmin = () => session.me?.role === 'admin';
 
+export const METRIC_ICONS = { Temperatura: '🌡️', Humedad: '💧', Presión: '🌬️', Batería: '🔋', Lux: '☀️', Iluminancia: '☀️' };
+
 export function metric(label, value, unit = '') {
-  return `<div class="metric"><span>${label}</span><strong>${value}</strong> <small>${unit}</small></div>`;
+  const icon = METRIC_ICONS[label] || '';
+  return `<div class="metric"><span>${icon ? `<span aria-hidden="true">${icon}</span> ` : ''}${label}</span><strong>${value}</strong> <small>${unit}</small></div>`;
 }
 
 export function fieldError(root, message) {
@@ -120,6 +123,50 @@ export function sampleChartRows(rows, key, limit = 300) {
   return sampled;
 }
 
+const TREND_METRICS = {
+  temperatureC: { icon: '🌡️', up: 'calentamiento', down: 'enfriamiento', unit: '°C' },
+  humidityPct: { icon: '💧', up: 'aumenta la humedad relativa', down: 'disminuye la humedad relativa', unit: '%' },
+  pressurePa: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'Pa' },
+};
+
+export function chartTrend(rows, key) {
+  const points = (rows || []).map((row) => ({
+    time: new Date(row.observedAt).getTime(), value: Number(row[key]),
+  })).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
+    .sort((a, b) => a.time - b.time);
+  if (points.length < 3) return { direction: 'insuficiente', change: null };
+  const origin = points[0].time;
+  const xs = points.map((point) => (point.time - origin) / 3600000);
+  const ys = points.map((point) => point.value);
+  const meanX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+  const meanY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
+  let numerator = 0, denominator = 0;
+  for (let i = 0; i < points.length; i++) {
+    numerator += (xs[i] - meanX) * (ys[i] - meanY);
+    denominator += (xs[i] - meanX) ** 2;
+  }
+  if (!denominator) return { direction: 'insuficiente', change: null };
+  const change = (numerator / denominator) * (xs.at(-1) - xs[0]);
+  const range = Math.max(...ys) - Math.min(...ys);
+  const direction = range === 0 || Math.abs(change) <= range * 0.1
+    ? 'estable' : change > 0 ? 'sube' : 'baja';
+  return { direction, change };
+}
+
+function chartTrendBadge(rows, key, digits) {
+  const metric = TREND_METRICS[key];
+  if (!metric) return '';
+  const { direction, change } = chartTrend(rows, key);
+  const icon = direction === 'sube' ? '↑' : direction === 'baja' ? '↓' : direction === 'estable' ? '→' : '·';
+  const explanation = direction === 'sube' ? metric.up
+    : direction === 'baja' ? metric.down
+      : direction === 'estable' ? 'variación pequeña durante el periodo'
+        : 'se necesitan al menos 3 muestras con horas distintas';
+  const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit} en el periodo`;
+  const accessible = `${direction}: ${explanation}${amount}`;
+  return `<div class="chart-trend-wrap"><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="Tendencia ${escapeText(accessible)}"><strong aria-hidden="true">${icon}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${amount ? escapeText(amount) : ''}</small></div>`;
+}
+
 export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null) {
   const allPoints = rows.filter((row) => row[key] != null);
   const points = sampleChartRows(rows, key);
@@ -172,7 +219,7 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     const tabIndex = coords.length <= 40 || pointIndex === 0 || pointIndex === coords.length - 1 ? 0 : -1;
     return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.5" fill="${color}" pointer-events="none"/>`;
   }).join('');
-  return `<div class="chart-box"><h3>${escapeText(title)} · ${escapeText(unit)}</h3><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}">${ticks}${timeLabels}${paths}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${unit}</span><span>Máx. ${numberText(max, digits)} ${unit}</span><span>Prom. ${numberText(average, digits)} ${unit}</span></div></div>`;
+  return `<div class="chart-box"><div class="chart-heading"><h3>${TREND_METRICS[key]?.icon || ''} ${escapeText(title)} · ${escapeText(unit)}</h3>${chartTrendBadge(allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}">${ticks}${timeLabels}${paths}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${unit}</span><span>Máx. ${numberText(max, digits)} ${unit}</span><span>Prom. ${numberText(average, digits)} ${unit}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {
@@ -206,7 +253,7 @@ if (typeof document !== 'undefined') {
   });
 }
 
-export const chartSection = (history, summary = {}) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0, { min: summary.pressure_min, max: summary.pressure_max, avg: summary.pressure_avg })}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div>`;
+export const chartSection = (history, summary = {}) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0, { min: summary.pressure_min, max: summary.pressure_max, avg: summary.pressure_avg })}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">Las flechas resumen la evolución de las lecturas en el periodo seleccionado; no son un pronóstico.</p>`;
 
 // ---- Diálogo de detalle ----------------------------------------------------
 export function openDialog(title, bodyHtml, actionsHtml = '') {
