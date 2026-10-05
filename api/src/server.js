@@ -593,6 +593,9 @@ app.use((error, _req, res, _next) => {
 });
 
 export { app };
+// Vercel toma src/server.js como entrada de una de las funciones: además del
+// export con nombre hace falta el por defecto, o la función arranca con error.
+export default app;
 
 // En local el proceso escucha; en Vercel la función recibe (req, res).
 if (!isServerless) {

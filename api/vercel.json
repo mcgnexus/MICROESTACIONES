@@ -2,11 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/index.js": {
-      "memory": 1024,
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/((?!api/|.*\\.[a-zA-Z0-9]+$).*)", "destination": "/api/index.js" }
+    { "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)", "destination": "/api/index.js" }
   ]
 }
