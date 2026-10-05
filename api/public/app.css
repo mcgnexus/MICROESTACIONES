@@ -113,3 +113,4 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .skip-link{position:absolute;left:12px;top:-60px;z-index:1000;background:white;color:#153b2b;padding:10px 14px;border-radius:8px}
 .skip-link:focus{top:12px}
 :focus-visible{outline:3px solid #d47749;outline-offset:2px}
+.chart-wrap{position:relative;min-width:0}.chart{display:block;width:100%;height:135px;overflow:visible}.chart-gridline{stroke:#e7ece7;stroke-width:1}.chart-axis-label{fill:#68756c;font-size:10px}.chart-hit{cursor:crosshair;pointer-events:all;outline:none}.chart-hit:focus{stroke:#1e2c24;stroke-width:2}.chart-tooltip{position:absolute;z-index:2;transform:translate(-50%,-115%);max-width:220px;padding:6px 9px;border-radius:6px;background:#153b2b;color:white;font-size:11px;line-height:1.35;white-space:nowrap;pointer-events:none;box-shadow:0 2px 8px #17352530}.chart-tooltip[hidden]{display:none}

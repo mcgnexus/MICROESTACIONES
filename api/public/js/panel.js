@@ -21,12 +21,20 @@ export function renderStationCard(item) {
   const coverage = summary.expected
     ? `Cobertura ${numberText(summary.coverage_pct)} % · ${summary.valid_count} válidas · ${summary.invalid_count} inválidas de ${summary.expected} esperadas`
     : 'Sin intervalo configurado para la cobertura';
+  const coverageClass = summary.expected && summary.coverage_pct < 90 ? 'warn-box reliability-summary' : 'coverage reliability-summary';
   const forecastSection = forecasts.length
     ? forecasts.map((forecast) => `<div class="forecast-row"><span><span class="source-tag">Previsión externa · ${escapeText(forecast.provider)}</span><br>${dateText(forecast.forecastFor)}</span><span>${numberText(forecast.temperatureC)} °C · lluvia ${numberText(forecast.precipitationMm)} mm</span></div>`).join('')
-    : '<p class="empty">Sin previsión externa disponible. No se muestran estimaciones propias.</p>';
+    : '';
   const nearbyRows = nearby.stations.length
     ? nearby.stations.map((station) => `<div class="nearby-row"><span>${escapeText(station.name)} · última conexión ${dateText(station.lastSeenAt)}</span><strong>${numberText(station.distanceKm, 1)} km</strong></div>`).join('')
-    : `<p class="empty">${escapeText(nearby.message)}</p>`;
+    : '';
+  const batteryDisabled = sensors.battery === false;
+  const forecastBlock = forecasts.length
+    ? `<div class="subsection"><h3>Previsión meteorológica</h3><p class="coverage">Fuente externa separada de las mediciones de la estación.</p>${forecastSection}</div>`
+    : '';
+  const nearbyBlock = nearby.stations.length || !/ubicación.*no configurada/i.test(nearby.message)
+    ? `<div class="subsection"><h3>Estaciones cercanas</h3><p class="coverage">${escapeText(nearby.message)} ${nearby.representative ? 'Cobertura representativa disponible.' : 'La cobertura puede ser insuficiente.'}</p>${nearbyRows}</div>`
+    : '';
 
   return `<article class="station-card">
     <div class="station-head">
@@ -41,13 +49,13 @@ export function renderStationCard(item) {
       ${metric('Temperatura', numberText(latest?.temperatureC), '°C')}
       ${metric('Humedad', numberText(latest?.humidityPct), '%')}
       ${metric('Presión', numberText(latest?.pressurePa, 0), 'Pa')}
-      ${metric('Batería', numberText(latest?.batteryMv, 0), `mV · ${batteryLabel(status.batteryLevel)}`)}
+      ${metric('Batería', batteryDisabled ? '—' : numberText(latest?.batteryMv, 0), batteryDisabled ? 'Desactivada' : `mV · ${batteryLabel(latest?.batteryMv == null ? 'unknown' : status.batteryLevel)}`)}
     </div>
-    <p class="coverage">${escapeText(coverage)}</p>
+    <div class="${coverageClass}"><strong>Fiabilidad de lecturas</strong><p>${escapeText(coverage)}</p>${summary.expected && summary.coverage_pct < 90 ? '<p>La estación está perdiendo lecturas y requiere revisión de conectividad.</p>' : ''}</div>
     <p class="coverage">Sensores: ${sensorState}</p>
     ${chartSection(history, summary)}
-    <div class="subsection"><h3>Previsión meteorológica</h3><p class="coverage">Fuente externa separada de las mediciones de la estación.</p>${forecastSection}</div>
-    <div class="subsection"><h3>Estaciones cercanas</h3><p class="coverage">${escapeText(nearby.message)} ${nearby.representative ? 'Cobertura representativa disponible.' : 'La cobertura puede ser insuficiente.'}</p>${nearbyRows}</div>
+    ${forecastBlock}
+    ${nearbyBlock}
   </article>`;
 }
 
