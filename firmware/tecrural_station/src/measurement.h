@@ -34,6 +34,16 @@ inline bool flagSet(uint8_t flags, MeasurementFlags f) {
   return (flags & static_cast<uint8_t>(f)) != 0;
 }
 
+// Un registro sin ningun canal valido no aporta nada que guardar. No se
+// almacena, y si aun asi llega encolado se omite al subir: el servidor lo
+// confirma sin guardar, pero no conviene gastar banda en el.
+inline bool hasAnyValue(uint8_t flags) {
+  return flagSet(flags, FLAG_TEMP_VALID) ||
+         flagSet(flags, FLAG_HUM_VALID) ||
+         flagSet(flags, FLAG_PRESS_VALID) ||
+         flagSet(flags, FLAG_BATTERY_VALID);
+}
+
 inline bool measurementValid(const Measurement& m) {
   return flagSet(m.flags, FLAG_TEMP_VALID) &&
          flagSet(m.flags, FLAG_HUM_VALID) &&

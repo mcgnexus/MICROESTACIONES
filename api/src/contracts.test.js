@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { measurementSchema } from './contracts.js';
+import { measurementSchema, hasAnyValue } from './contracts.js';
 import { evaluateMeasurement, VFLAG } from './validation.js';
 
 const base = {
@@ -16,8 +16,16 @@ test('measurement contract accepts the firmware uint32 sequence range', () => {
 test('measurement contract rejects malformed payloads and unexpected fields', () => {
   assert.equal(measurementSchema.safeParse({ ...base, temp_c: 151 }).success, false);
   assert.equal(measurementSchema.safeParse({ ...base, api_key: 'not-allowed' }).success, false);
-  assert.equal(measurementSchema.safeParse({ ...base, temp_c: undefined, hum_pct: undefined,
-    press_pa: undefined, batt_mv: undefined, lux: undefined }).success, false);
+});
+
+// El registro sin canales no se rechaza en el contrato: hacerlo tumbaria el
+// lote entero y dejaria a la estacion bloqueada. Se descarta en el endpoint.
+test('a record without any channel is flagged as empty instead of rejected', () => {
+  const empty = { ...base, temp_c: undefined, hum_pct: undefined,
+    press_pa: undefined, batt_mv: undefined, lux: undefined };
+  assert.equal(measurementSchema.safeParse(empty).success, true);
+  assert.equal(hasAnyValue(measurementSchema.parse(empty)), false);
+  assert.equal(hasAnyValue(base), true);
 });
 
 test('strange readings pass the contract so they can be stored with trace', () => {

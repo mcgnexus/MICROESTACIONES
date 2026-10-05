@@ -112,10 +112,18 @@ void runCycle() {
   if (quality != TIME_NO_REFERENCE) m.flags |= FLAG_TIME_VALID;
   const bool stamp_is_uptime = (quality == TIME_NO_REFERENCE);
 
-  if (!Store::push(m, stamp, quality)) {
-    Serial.printf("[almacen] no se pudo guardar la lectura: %s\n", Store::faultReason());
+  // Una lectura sin ningun canal valido (sensor caido en este ciclo) no es una
+  // medicion: no hay nada que guardar. El servidor ahora la confirmaria sin
+  // guardar, pero no tiene sentido encolarla.
+  if (hasAnyValue(m.flags)) {
+    if (!Store::push(m, stamp, quality)) {
+      Serial.printf("[almacen] no se pudo guardar la lectura: %s\n", Store::faultReason());
+    }
+    m.sequence = Store::lastSequence();
+  } else {
+    m.sequence = Store::lastSequence() + 1;
+    Serial.println("[almacen] lectura sin ningun canal valido: no se almacena");
   }
-  m.sequence = Store::lastSequence();
 
   printMeasurement(m);
 
@@ -155,10 +163,17 @@ void runCycle() {
         Serial.println("[hora] sincronizacion NTP fallida (hora estimada)");
       }
       for (int attempt = 0; attempt < 5 && Store::count() > 0; ++attempt) {
-        if (!WiFiSync::uploadBatch(kWifiHttpTimeoutMs)) {
-          Serial.println("[wifi] reintento de subida");
-          delay(500);
+        if (WiFiSync::uploadBatch(kWifiHttpTimeoutMs)) continue;
+        const int status = WiFiSync::lastUploadStatus();
+        // Un 4xx (salvo 408/429) no se arregla reintentando: el mismo cuerpo
+        // volvera a ser rechazado. Se deja para el proximo despertar.
+        if (status >= 400 && status < 500 && status != 408 && status != 429) {
+          Serial.printf("[wifi] servidor rechazo el lote (HTTP %d): no se reintenta en este despertar\n",
+                        status);
+          break;
         }
+        Serial.println("[wifi] reintento de subida");
+        delay(500);
       }
       WiFiSync::fetchConfig(kWifiHttpTimeoutMs);
       WiFiSync::disconnect();

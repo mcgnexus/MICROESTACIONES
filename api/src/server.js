@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { sql } from './db.js';
 import { randomToken, sha256, verifyPassword } from './security.js';
-import { measurementSchema } from './contracts.js';
+import { measurementSchema, hasAnyValue } from './contracts.js';
 import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies } from './auth.js';
 import { evaluateMeasurement, VFLAG } from './validation.js';
 import { evaluateMeasurementRules, evaluateSystemRules, releaseDirectives, pendingDirectiveIds, alertAge } from './alert-engine.js';
@@ -105,6 +105,13 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
   if (parsed.data.some((record) => record.device_id !== req.deviceId)) {
     return res.status(403).json({ error: 'device_identity_mismatch' });
   }
+  // Un registro sin ningun canal (sensor caido en ese ciclo) no se guarda, pero
+  // se confirma: si se rechazara, la estacion reenviaria el mismo lote para
+  // siempre y no subiria nada mas.
+  const emptyRecords = parsed.data.filter((record) => !hasAnyValue(record)).length;
+  if (emptyRecords > 0) {
+    console.warn(`[measurements] ${emptyRecords} registros sin valores omitidos (device ${req.deviceId})`);
+  }
 
   // Las directiva urgentes que ya estaban pendientes se liberan al final de este
   // envío; las que se creen ahora son para el siguiente despertar del equipo.
@@ -121,33 +128,35 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
 
     for (const record of parsed.data) {
       const observedAt = new Date(record.ts * 1000);
-      const evaluated = evaluateMeasurement(record);
-      const [inserted] = await tx`INSERT INTO measurements
-        (device_id, sequence, observed_at, time_quality, temperature_c, humidity_pct, pressure_pa, battery_mv,
-         flags, alert_level, lux, source, is_validated, validation_flags, raw_payload, invalidated_reason)
-        VALUES (${req.deviceId}, ${record.sequence}, ${observedAt}, ${record.quality},
-          ${evaluated.columns.temperature_c ?? null}, ${evaluated.columns.humidity_pct ?? null},
-          ${evaluated.columns.pressure_pa ?? null}, ${evaluated.columns.battery_mv ?? null},
-          ${record.flags}, ${record.alert}, ${evaluated.columns.lux ?? null}, ${record.source ?? 'wifi'},
-          ${evaluated.is_validated}, ${evaluated.validation_flags},
-          ${evaluated.raw_payload ? tx.json(evaluated.raw_payload) : null}, ${evaluated.invalidated_reason})
-        ON CONFLICT (device_id, sequence, observed_at) DO NOTHING RETURNING id`;
-      if (evaluated.columns.battery_mv != null) lastBattery = evaluated.columns.battery_mv;
+      // Registro sin ningún canal: no hay fila que crear, pero su secuencia sí
+      // se confirma más abajo para que el equipo la retire de su cola.
+      if (hasAnyValue(record)) {
+        const evaluated = evaluateMeasurement(record);
+        const [inserted] = await tx`INSERT INTO measurements
+          (device_id, sequence, observed_at, time_quality, temperature_c, humidity_pct, pressure_pa, battery_mv,
+           flags, alert_level, lux, source, is_validated, validation_flags, raw_payload, invalidated_reason)
+          VALUES (${req.deviceId}, ${record.sequence}, ${observedAt}, ${record.quality},
+            ${evaluated.columns.temperature_c ?? null}, ${evaluated.columns.humidity_pct ?? null},
+            ${evaluated.columns.pressure_pa ?? null}, ${evaluated.columns.battery_mv ?? null},
+            ${record.flags}, ${record.alert}, ${evaluated.columns.lux ?? null}, ${record.source ?? 'wifi'},
+            ${evaluated.is_validated}, ${evaluated.validation_flags},
+            ${evaluated.raw_payload ? tx.json(evaluated.raw_payload) : null}, ${evaluated.invalidated_reason})
+          ON CONFLICT (device_id, sequence, observed_at) DO NOTHING RETURNING id`;
+        if (evaluated.columns.battery_mv != null) lastBattery = evaluated.columns.battery_mv;
 
-      if (inserted) {
-        insertedAny = true;
-        if (record.alert > 0) {
-          const dedupeKey = createHash('sha256')
-            .update(`${req.deviceId}:${record.sequence}:${record.ts}:${record.alert}`).digest('hex');
-          const summary = record.alert === 1 ? 'Alerta prioritaria de la estación' : 'Aviso de la estación';
-          await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, observed_at)
-            VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${record.alert}, ${summary},
-              ${tx.json({ temp_c: record.temp_c ?? null, hum_pct: record.hum_pct ?? null, press_pa: record.press_pa ?? null, batt_mv: record.batt_mv ?? null })}, ${observedAt})
-            ON CONFLICT (dedupe_key) DO NOTHING`;
-        }
-        // Motor de avisos: la regla solo dispara si la condición se sostiene
-        // (min_duration_s) y se recupera con margen (recovery_margin).
         if (inserted) {
+          insertedAny = true;
+          if (record.alert > 0) {
+            const dedupeKey = createHash('sha256')
+              .update(`${req.deviceId}:${record.sequence}:${record.ts}:${record.alert}`).digest('hex');
+            const summary = record.alert === 1 ? 'Alerta prioritaria de la estación' : 'Aviso de la estación';
+            await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, observed_at)
+              VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${record.alert}, ${summary},
+                ${tx.json({ temp_c: record.temp_c ?? null, hum_pct: record.hum_pct ?? null, press_pa: record.press_pa ?? null, batt_mv: record.batt_mv ?? null })}, ${observedAt})
+              ON CONFLICT (dedupe_key) DO NOTHING`;
+          }
+          // Motor de avisos: la regla solo dispara si la condición se sostiene
+          // (min_duration_s) y se recupera con margen (recovery_margin).
           await evaluateMeasurementRules(tx, {
             deviceId: req.deviceId,
             measurementId: inserted.id,

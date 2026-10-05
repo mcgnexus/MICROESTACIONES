@@ -32,7 +32,7 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 
 ## API
 
-- `POST /api/measurements` — lote de hasta 32 lecturas, con `Authorization: Bearer <token>`. Valida los datos, persiste usando `(device_id, sequence, observed_at)` como clave idempotente y responde `{ "ack_through": n }`. La secuencia acepta el `uint32` persistente del firmware.
+- `POST /api/measurements` — lote de hasta 32 lecturas, con `Authorization: Bearer <token>`. Valida los datos, persiste usando `(device_id, sequence, observed_at)` como clave idempotente y responde `{ "ack_through": n }`. La secuencia acepta el `uint32` persistente del firmware. Un registro sin ningún canal (sensor caído en ese ciclo) se confirma igualmente sin crear fila, para que no bloquee el lote.
 - `GET /api/config` — configuración vigente del dispositivo, autenticada con el mismo token.
 - `POST /api/v1/forecasts` — ingesta autenticada de hasta 240 puntos de previsión, con `FORECAST_INGEST_TOKEN` del lado servidor.
 - `POST /api/auth/login`, `POST /api/auth/logout` — sesión privada del panel; cookie `HttpOnly`, `SameSite=Strict` y `Secure` en producción.

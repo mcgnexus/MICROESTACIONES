@@ -4,6 +4,7 @@
 //  2. Una pérdida de Wi-Fi recupera las muestras con su hora original.
 //  3. Un cambio remoto permanece pendiente hasta que la ESP32-C3 lo confirma.
 //  4. Un usuario no puede consultar ni borrar datos de otra estación.
+//  5. Un registro sin canales no bloquea el lote.
 //
 // Requieren la base de datos real y un servidor en un puerto libre. Todo lo que
 // se crea lleva el prefijo acp- y se borra al terminar.
@@ -384,6 +385,39 @@ try {
   });
   check('otro suscriptor tampoco toca una estación ajena', viewerWrite.status === 404,
     String(viewerWrite.status));
+
+  // ==========================================================================
+  section('5. Un registro sin canales no bloquea el lote');
+
+  // Un ciclo con el sensor caído no deja ningún canal válido: el equipo lo
+  // encola igual. Un lote con ese registro se confirma igualmente; si se
+  // rechazara, la estación reenviaría el mismo cuerpo para siempre.
+  const noChannels = { temp_c: undefined, hum_pct: undefined, press_pa: undefined, batt_mv: undefined };
+  const emptyFirst = [
+    reading(DEVICE_B, 200, now - 120, noChannels),
+    reading(DEVICE_B, 201, now - 60, { temp_c: 19.8 }),
+  ];
+  const emptyFirstSend = await call('/api/measurements', { method: 'POST', device: 'b', body: emptyFirst });
+  check('un lote con un registro sin canales se acepta',
+    emptyFirstSend.status === 200 && emptyFirstSend.body.ack_through === 201,
+    JSON.stringify(emptyFirstSend.body));
+
+  const storedEmpty = await sql`SELECT sequence FROM measurements
+    WHERE device_id = ${DEVICE_B} AND sequence = 200`;
+  check('el registro sin canales no crea fila', storedEmpty.length === 0, JSON.stringify(storedEmpty));
+
+  const storedFull = await sql`SELECT sequence FROM measurements
+    WHERE device_id = ${DEVICE_B} AND sequence = 201`;
+  check('la lectura válida del mismo lote sí se guarda', storedFull.length === 1, String(storedFull.length));
+
+  const onlyEmpty = [reading(DEVICE_B, 202, now - 30, noChannels)];
+  const onlyEmptySend = await call('/api/measurements', { method: 'POST', device: 'b', body: onlyEmpty });
+  check('un lote formado solo por registros vacíos se confirma igualmente',
+    onlyEmptySend.status === 200 && onlyEmptySend.body.ack_through === 202,
+    JSON.stringify(onlyEmptySend.body));
+  const counted = await sql`SELECT count(*)::int AS total FROM measurements
+    WHERE device_id = ${DEVICE_B} AND sequence >= 200`;
+  check('sin ningún canal no se guarda nada', counted[0].total === 1, JSON.stringify(counted[0]));
 } catch (error) {
   failures.push(`excepción: ${error.message}`);
   console.error('\n', error);

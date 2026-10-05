@@ -22,10 +22,13 @@ export const measurementSchema = z.object({
   alert: z.number().int().min(0).max(2),
 }).partial({
   temp_c: true, hum_pct: true, press_pa: true, batt_mv: true, lux: true, source: true, config_version: true,
-}).superRefine((record, ctx) => {
-  // Sin marca de valor presente no hay lectura que conservar.
-  if (record.temp_c === undefined && record.hum_pct === undefined
-      && record.press_pa === undefined && record.batt_mv === undefined && record.lux === undefined) {
-    ctx.addIssue({ code: 'custom', message: 'measurement_without_values' });
-  }
 }).strict();
+
+// Un registro sin ningun canal no tiene nada que guardar, pero rechazarlo aqui
+// haria que un unico registro vacio tumbara el lote entero: la estacion quedaria
+// bloqueada para siempre reenviando el mismo cuerpo. El endpoint lo descarta y
+// lo confirma igualmente para que el equipo saque la lectura de su cola.
+export function hasAnyValue(record) {
+  return record.temp_c !== undefined || record.hum_pct !== undefined
+    || record.press_pa !== undefined || record.batt_mv !== undefined || record.lux !== undefined;
+}

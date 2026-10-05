@@ -12,6 +12,7 @@
 namespace {
 
 uint32_t failure_counter = 0;
+int last_upload_status = 0;
 constexpr size_t kMaxPayloadBytes = 6000;
 volatile uint8_t last_disconnect_reason = 0;
 
@@ -178,6 +179,7 @@ bool isConnected() {
 }
 
 bool uploadBatch(uint32_t timeout_ms) {
+  last_upload_status = 0;
   if (!isConnected()) return false;
   if (!apiConfigured()) {
     Serial.println("[wifi] falta identidad, URL HTTPS, token o certificado raiz real de la API");
@@ -195,27 +197,49 @@ bool uploadBatch(uint32_t timeout_ms) {
   JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
   uint16_t n = 0;
+  uint32_t last_sent_sequence = 0;
+  uint32_t discard_through = 0;
+  uint16_t without_values = 0;
 
   for (uint16_t i = 0; i < available; i++) {
+    const StoredRecord& rec = batch[i];
+    // Un registro sin ningun canal valido (fallo del sensor en ese ciclo) viola
+    // el contrato del servidor y haria que rechazara el lote entero: no se
+    // envia. Si encima es lo primero de la cola, se descarta localmente.
+    if (!hasAnyValue(rec.flags)) {
+      without_values++;
+      if (n == 0) discard_through = rec.sequence;
+      continue;
+    }
     JsonObject o = arr.add<JsonObject>();
     o["device_id"] = DEVICE_ID;
-    o["sequence"] = batch[i].sequence;
-    o["ts"] = batch[i].ts;
-    o["quality"] = batch[i].quality;
-    if (flagSet(batch[i].flags, FLAG_TEMP_VALID)) o["temp_c"] = batch[i].temp_c_x100 / 100.0f;
-    if (flagSet(batch[i].flags, FLAG_HUM_VALID)) o["hum_pct"] = batch[i].hum_x100 / 100.0f;
-    if (flagSet(batch[i].flags, FLAG_PRESS_VALID)) o["press_pa"] = batch[i].pressure_pa;
-    if (flagSet(batch[i].flags, FLAG_BATTERY_VALID)) o["batt_mv"] = batch[i].battery_mv;
-    o["flags"] = batch[i].flags;
-    o["alert"] = batch[i].alert;
+    o["sequence"] = rec.sequence;
+    o["ts"] = rec.ts;
+    o["quality"] = rec.quality;
+    if (flagSet(rec.flags, FLAG_TEMP_VALID)) o["temp_c"] = rec.temp_c_x100 / 100.0f;
+    if (flagSet(rec.flags, FLAG_HUM_VALID)) o["hum_pct"] = rec.hum_x100 / 100.0f;
+    if (flagSet(rec.flags, FLAG_PRESS_VALID)) o["press_pa"] = rec.pressure_pa;
+    if (flagSet(rec.flags, FLAG_BATTERY_VALID)) o["batt_mv"] = rec.battery_mv;
+    o["flags"] = rec.flags;
+    o["alert"] = rec.alert;
     if (measureJson(doc) > kMaxPayloadBytes) {
       arr.remove(arr.size() - 1);
       break;
     }
     n++;
+    last_sent_sequence = rec.sequence;
   }
 
-  if (n == 0) return false;
+  if (n == 0) {
+    if (discard_through == 0) return false;
+    const uint32_t removed = Store::acknowledgeThrough(discard_through);
+    Serial.printf("[wifi] %u lecturas sin valores descartadas de la cola, liberadas %lu\n",
+                  without_values, (unsigned long)removed);
+    return removed > 0;
+  }
+  if (without_values > 0) {
+    Serial.printf("[wifi] %u lecturas sin valores se omiten en este lote\n", without_values);
+  }
 
   String payload;
   serializeJson(doc, payload);
@@ -249,6 +273,7 @@ bool uploadBatch(uint32_t timeout_ms) {
   Serial.printf("[wifi] subida: %u lecturas, %u bytes\n", n, (unsigned)payload.length());
   const uint32_t post_started = millis();
   const int code = http.POST(payload);
+  last_upload_status = code;
   const uint32_t post_ms = millis() - post_started;
   String response = (code > 0) ? http.getString() : String();
   char tls_msg[160] = {};
@@ -257,9 +282,14 @@ bool uploadBatch(uint32_t timeout_ms) {
 
   if (code < 200 || code >= 300) {
     failure_counter++;
-    Serial.printf("[wifi] envio fallo (HTTP %d: %s) tras %lu ms, tls=%d (%s), se conservan %u lecturas\n",
-                  code, http.errorToString(code).c_str(), (unsigned long)post_ms, tls_err, tls_msg,
-                  (unsigned)Store::count());
+    Serial.printf("[wifi] envio fallo (HTTP %d) tras %lu ms, tls=%d (%s), se conservan %u lecturas\n",
+                  code, (unsigned long)post_ms, tls_err, tls_msg, (unsigned)Store::count());
+    if (response.length() > 0) {
+      Serial.printf("[wifi] respuesta del servidor: %.*s\n",
+                    (int)((response.length() > 300) ? 300 : response.length()), response.c_str());
+    }
+    Serial.printf("[wifi] cuerpo enviado: %.*s\n",
+                  (int)((payload.length() > 300) ? 300 : payload.length()), payload.c_str());
     return false;
   }
   Serial.printf("[wifi] lote aceptado en %lu ms\n", (unsigned long)post_ms);
@@ -281,10 +311,10 @@ bool uploadBatch(uint32_t timeout_ms) {
   }
 
   const uint32_t acked_through = ack["ack_through"].as<uint32_t>();
-  if (acked_through != batch[n - 1].sequence) {
+  if (acked_through != last_sent_sequence) {
     failure_counter++;
     Serial.printf("[wifi] confirmacion inesperada (%lu; esperado %lu), se conservan las lecturas\n",
-                  (unsigned long)acked_through, (unsigned long)batch[n - 1].sequence);
+                  (unsigned long)acked_through, (unsigned long)last_sent_sequence);
     return false;
   }
   const uint32_t removed = Store::acknowledgeThrough(acked_through);
@@ -346,6 +376,11 @@ bool fetchConfig(uint32_t timeout_ms) {
 
 uint32_t failures() {
   return failure_counter;
+}
+
+// Ultimo codigo HTTP devuelto por la subida (0 si no hubo respuesta util).
+int lastUploadStatus() {
+  return last_upload_status;
 }
 
 }  // namespace WiFiSync
