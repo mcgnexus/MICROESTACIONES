@@ -26,6 +26,9 @@ const patchSchema = z.object({
   latitude: z.number().min(-90).max(90).nullable(),
   longitude: z.number().min(-180).max(180).nullable(),
   public_zone: z.string().max(200).nullable(),
+  aemet_municipality_code: z.string().regex(/^\d{5}$/, 'el código municipal AEMET debe tener 5 dígitos').nullable(),
+  aemet_station_id: z.string().regex(/^[A-Za-z0-9]{4,5}$/, 'indicativo de estación AEMET inválido').nullable(),
+  aemet_warning_area: z.string().regex(/^[A-Za-z0-9_-]{2,12}$/, 'código de área AEMET inválido').nullable(),
   altitude: z.number().int().min(-500).max(9000).nullable(),
   installation_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   sensors: sensorsSchema,
@@ -42,14 +45,14 @@ const createSchema = patchSchema.extend({
 
 // Fragmento reutilizable: en sql`` se inserta como SQL crudo, nunca como valor.
 const deviceCols = sql`id, name, owner, location_type, latitude, longitude, public_zone,
-  altitude, installation_date, sensors, firmware_version, publish_permission,
+  aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission,
   coverage_km, active, created_at, last_seen_at`;
 
 const deviceSelect = sql`SELECT ${deviceCols} FROM devices`;
 
 // Mismo listado calificado para el JOIN con device_status (firmware_version existe en ambas tablas).
 const deviceColsJoined = sql`d.id, d.name, d.owner, d.location_type, d.latitude, d.longitude, d.public_zone,
-  d.altitude, d.installation_date, d.sensors, d.firmware_version, d.publish_permission,
+  d.aemet_municipality_code, d.aemet_station_id, d.aemet_warning_area, d.altitude, d.installation_date, d.sensors, d.firmware_version, d.publish_permission,
   d.coverage_km, d.active, d.created_at, d.last_seen_at`;
 
 const stationSelect = sql`SELECT ${deviceColsJoined}, c.config,
@@ -93,6 +96,9 @@ export function stationPayload(row) {
     latitude: row.latitude,
     longitude: row.longitude,
     publicZone: row.publicZone,
+    aemetMunicipalityCode: row.aemetMunicipalityCode ?? null,
+    aemetStationId: row.aemetStationId ?? null,
+    aemetWarningArea: row.aemetWarningArea ?? null,
     altitude: row.altitude,
     installationDate: row.installationDate,
     sensors: row.sensors,
@@ -212,7 +218,9 @@ router.get('/:id/statistics', requireSubscriber, requireStationAccess, async (re
     : new Date(to.getTime() - 7 * 24 * 3600 * 1000);
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ error: 'invalid_range' });
   if (from >= to) return res.status(400).json({ error: 'invalid_range' });
-  res.json(await statisticsFor(req.stationId, { from, to }));
+  res.json(await statisticsFor(req.stationId, {
+    from, to, includeCommunicationAlerts: req.subscriber.role === 'admin',
+  }));
 });
 
 // Coste medido de la excepción de envío urgente sobre la batería de la estación.
@@ -250,9 +258,10 @@ router.post('/', requireSubscriber, requireRole('operator'), csrfGuard, async (r
   try {
     const row = await sql.begin(async (tx) => {
       const [created] = await tx`INSERT INTO devices (id, name, owner, location_type, latitude, longitude,
-          public_zone, altitude, installation_date, sensors, firmware_version, publish_permission, coverage_km, active)
+          public_zone, aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission, coverage_km, active)
         VALUES (${data.id}, ${data.name}, ${data.owner ?? null}, ${data.location_type ?? 'finca'},
           ${data.latitude ?? null}, ${data.longitude ?? null}, ${data.public_zone ?? null},
+          ${data.aemet_municipality_code ?? null}, ${data.aemet_station_id ?? null}, ${data.aemet_warning_area ?? null},
           ${data.altitude ?? null}, ${data.installation_date ?? null},
           ${tx.json({ temperature: true, humidity: true, pressure: true, battery: true, lux: false, ...(data.sensors || {}) })},
           ${data.firmware_version ?? null}, ${data.publish_permission ?? false},
@@ -294,6 +303,7 @@ router.patch('/:id', requireSubscriber, requireRole('operator'), csrfGuard, requ
 
   const patch = {};
   for (const key of ['name', 'owner', 'location_type', 'latitude', 'longitude', 'public_zone',
+    'aemet_municipality_code', 'aemet_station_id', 'aemet_warning_area',
     'altitude', 'installation_date', 'firmware_version', 'publish_permission', 'coverage_km', 'active']) {
     if (data[key] !== undefined) patch[key] = data[key];
   }

@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS devices (
   owner text,
   location_type text NOT NULL DEFAULT 'finca' CHECK (location_type IN ('urbano','finca','otro')),
   public_zone text,
+  aemet_municipality_code text,
+  aemet_station_id text,
+  aemet_warning_area text,
   altitude integer CHECK (altitude IS NULL OR altitude BETWEEN -500 AND 9000),
   installation_date date,
   sensors jsonb NOT NULL DEFAULT '{"temperature":true,"humidity":true,"pressure":true,"battery":true,"lux":false}'::jsonb,
@@ -235,6 +238,14 @@ CREATE TABLE IF NOT EXISTS external_forecasts (
   precipitation_mm real,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   UNIQUE (device_id, provider, forecast_for)
+);
+
+CREATE TABLE IF NOT EXISTS external_weather_snapshots (
+  device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  provider text NOT NULL CHECK (provider IN ('open_meteo','aemet')),
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  payload jsonb NOT NULL,
+  PRIMARY KEY (device_id, provider)
 );
 
 -- Trazabilidad de cambios sensibles (configuración, permisos, validaciones).

@@ -7,6 +7,9 @@ const upgrades = [
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner text`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS location_type text NOT NULL DEFAULT 'finca' CHECK (location_type IN ('urbano','finca','otro'))`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS public_zone text`,
+  `ALTER TABLE devices ADD COLUMN IF NOT EXISTS aemet_municipality_code text`,
+  `ALTER TABLE devices ADD COLUMN IF NOT EXISTS aemet_station_id text`,
+  `ALTER TABLE devices ADD COLUMN IF NOT EXISTS aemet_warning_area text`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS altitude integer CHECK (altitude IS NULL OR altitude BETWEEN -500 AND 9000)`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS installation_date date`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS sensors jsonb NOT NULL DEFAULT '{"temperature":true,"humidity":true,"pressure":true,"battery":true,"lux":false}'::jsonb`,
@@ -108,6 +111,13 @@ const upgrades = [
   `CREATE INDEX IF NOT EXISTS measurements_deleted_idx ON measurements(deleted_at) WHERE deleted_at IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS subscribers_role_idx ON subscribers(role)`,
   `CREATE INDEX IF NOT EXISTS alerts_delivery_idx ON alerts(delivery_status) WHERE delivery_status <> 'delivered'`,
+  `CREATE TABLE IF NOT EXISTS external_weather_snapshots (
+    device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    provider text NOT NULL CHECK (provider IN ('open_meteo','aemet')),
+    fetched_at timestamptz NOT NULL DEFAULT now(),
+    payload jsonb NOT NULL,
+    PRIMARY KEY (device_id, provider)
+  )`,
 
   // Estado operativo, historial de configuración y auditoría.
   `DO $$ BEGIN

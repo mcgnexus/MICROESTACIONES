@@ -15,6 +15,8 @@ import { csvCell } from './csv.js';
 import stationsRouter, { statusPayload } from './stations.js';
 import configsRouter from './configs.js';
 import alertsRouter from './alerts.js';
+import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
+import { weatherForDevice } from './weather.js';
 import adminRouter from './admin.js';
 import accountRouter from './account.js';
 
@@ -366,6 +368,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
     : [[], [], [], [], []];
 
   const latestByDevice = new Map(latestRows.map((row) => [row.deviceId, row]));
+  const weatherByDevice = new Map(await Promise.all(devices.map(async (device) => [device.id, await weatherForDevice(device)])));
   const historyByDevice = new Map();
   for (const row of historyRows) {
     if (!historyByDevice.has(row.deviceId)) historyByDevice.set(row.deviceId, []);
@@ -431,6 +434,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
       forecast_source: forecasts.length ? 'external_provider' : null,
       estimates: [],
       nearby,
+      weather: weatherByDevice.get(device.id),
     };
   });
   const alerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
@@ -439,6 +443,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
     FROM alerts a JOIN devices d ON d.id = a.device_id
     JOIN subscriber_devices sd ON sd.device_id = d.id
     WHERE sd.subscriber_id = ${req.subscriber.id}
+      ${req.subscriber.role === 'admin' ? sql`` : sql`AND ${NON_COMMUNICATION_ALERT}`}
     ORDER BY a.created_at DESC LIMIT 50`;
   // Cada aviso declara la antigüedad de la medida que lo originó y cuánto tardó
   // en llegar: con lotes de 30 min, no es lo mismo un aviso de ahora que de hace media hora.

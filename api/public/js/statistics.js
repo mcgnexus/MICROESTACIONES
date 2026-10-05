@@ -18,7 +18,7 @@ export async function renderStatisticsTab(content, stationId, station) {
   const coverage = data.coverage;
   const metricCards = Object.entries(data.metrics).map(([key, metric]) => `
     <div class="stat-card">
-      <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span aria-hidden="true">${METRIC_ICONS[metric.label]} </span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
+      <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span class="metric-icon" aria-hidden="true">${METRIC_ICONS[metric.label]} </span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
       <div class="stat-row">
         <span>Mín</span><strong>${numberText(metric.min, metric.digits ?? 1)}</strong>
         <span>Máx</span><strong>${numberText(metric.max, metric.digits ?? 1)}</strong>

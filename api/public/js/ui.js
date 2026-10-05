@@ -42,7 +42,7 @@ export const METRIC_ICONS = { Temperatura: '🌡️', Humedad: '💧', Presión:
 
 export function metric(label, value, unit = '') {
   const icon = METRIC_ICONS[label] || '';
-  return `<div class="metric"><span>${icon ? `<span aria-hidden="true">${icon}</span> ` : ''}${label}</span><strong>${value}</strong> <small>${unit}</small></div>`;
+  return `<div class="metric"><span>${icon ? `<span class="metric-icon" aria-hidden="true">${icon}</span> ` : ''}${label}</span><strong>${value}</strong> <small>${unit}</small></div>`;
 }
 
 export function fieldError(root, message) {
@@ -153,6 +153,34 @@ export function chartTrend(rows, key) {
   return { direction, change };
 }
 
+const CHART_SCALE = {
+  temperatureC: { minimumSpan: 10, step: 5 },
+  humidityPct: { minimumSpan: 20, step: 10 },
+  pressurePa: { minimumSpan: 5000, step: 1000 },
+  batteryMv: { minimumSpan: 500, step: 250 },
+};
+
+export function chartYDomain(key, min, max) {
+  const scale = CHART_SCALE[key] || { minimumSpan: 0, step: 1 };
+  const center = (min + max) / 2;
+  const span = Math.max(max - min, scale.minimumSpan);
+  const step = scale.step;
+  return {
+    low: Math.floor((center - span / 2) / step) * step,
+    high: Math.ceil((center + span / 2) / step) * step,
+  };
+}
+
+export function chartGapThreshold(rows) {
+  const times = (rows || []).map((row) => new Date(row.observedAt).getTime())
+    .filter(Number.isFinite).sort((a, b) => a - b);
+  const intervals = times.slice(1).map((time, index) => time - times[index]).filter((gap) => gap > 0).sort((a, b) => a - b);
+  if (!intervals.length) return Infinity;
+  // Lower quartile resists a majority of missed readings inflating the normal cadence.
+  const typicalInterval = intervals[Math.floor((intervals.length - 1) * 0.25)];
+  return typicalInterval * 2.5;
+}
+
 function chartTrendBadge(rows, key, digits) {
   const metric = TREND_METRICS[key];
   if (!metric) return '';
@@ -171,18 +199,15 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
   const allPoints = rows.filter((row) => row[key] != null);
   const points = sampleChartRows(rows, key);
   if (!allPoints.length) return `<div class="chart-box"><h3>${title}</h3><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
-  const width = 560, height = 135, left = 54, right = 12, top = 10, bottom = 26;
+  const width = 560, height = 200, left = 58, right = 14, top = 16, bottom = 34;
   const values = allPoints.map((row) => Number(row[key]));
   const min = exactStats?.min ?? Math.min(...values);
   const max = exactStats?.max ?? Math.max(...values);
   const average = exactStats?.avg ?? values.reduce((a, b) => a + b, 0) / values.length;
-  let low = min, high = max;
-  if (high === low) { high += 1; low -= 1; }
+  const { low, high } = chartYDomain(key, min, max);
   const timestamps = allPoints.map((row) => new Date(row.observedAt).getTime()).filter(Number.isFinite).sort((a, b) => a - b);
   const firstTime = timestamps[0] ?? 0, lastTime = timestamps.at(-1) ?? firstTime;
-  const intervals = timestamps.slice(1).map((time, i) => time - timestamps[i]).filter((gap) => gap > 0);
-  const medianInterval = intervals.length ? [...intervals].sort((a, b) => a - b)[Math.floor(intervals.length / 2)] : Infinity;
-  const gapThreshold = medianInterval * 2.5;
+  const gapThreshold = chartGapThreshold(allPoints);
   const xAt = (row) => left + ((lastTime === firstTime ? 0.5 : (new Date(row.observedAt).getTime() - firstTime) / (lastTime - firstTime))) * (width - left - right);
   const yAt = (row) => height - bottom - ((Number(row[key]) - low) / (high - low)) * (height - top - bottom);
   const coords = points.map((row) => ({ x: xAt(row), y: yAt(row), row }));
@@ -191,8 +216,8 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
   const ticks = [0, 1, 2].map((i) => {
     const fraction = i / 2;
     const y = top + fraction * (height - top - bottom);
-    const value = max - fraction * (max - min);
-    return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-gridline"/><text x="${left - 7}" y="${y + 3}" class="chart-axis-label" text-anchor="end">${numberText(value, digits)}</text>`;
+    const value = high - fraction * (high - low);
+    return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-gridline"/><text x="${left - 8}" y="${y + 4}" class="chart-axis-label" text-anchor="end">${numberText(value, digits)}</text>`;
   }).join('');
   const dateSpan = lastTime - firstTime;
   const timeLabels = [0, 1, 2, 3].map((i) => {
@@ -201,7 +226,7 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     const text = dateSpan > 36 * 60 * 60 * 1000
       ? new Intl.DateTimeFormat('es', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
       : new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' }).format(date);
-    return `<text x="${left + (width - left - right) * i / 3}" y="${height - 5}" class="chart-axis-label" text-anchor="${i === 0 ? 'start' : i === 3 ? 'end' : 'middle'}">${escapeText(text)}</text>`;
+    return `<text x="${left + (width - left - right) * i / 3}" y="${height - 7}" class="chart-axis-label" text-anchor="${i === 0 ? 'start' : i === 3 ? 'end' : 'middle'}">${escapeText(text)}</text>`;
   }).join('');
   const segments = [];
   let segment = [];
@@ -219,7 +244,7 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     const tabIndex = coords.length <= 40 || pointIndex === 0 || pointIndex === coords.length - 1 ? 0 : -1;
     return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.5" fill="${color}" pointer-events="none"/>`;
   }).join('');
-  return `<div class="chart-box"><div class="chart-heading"><h3>${TREND_METRICS[key]?.icon || ''} ${escapeText(title)} · ${escapeText(unit)}</h3>${chartTrendBadge(allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}">${ticks}${timeLabels}${paths}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${unit}</span><span>Máx. ${numberText(max, digits)} ${unit}</span><span>Prom. ${numberText(average, digits)} ${unit}</span></div></div>`;
+  return `<div class="chart-box"><div class="chart-heading"><h3>${TREND_METRICS[key]?.icon ? `<span class="chart-icon" aria-hidden="true">${TREND_METRICS[key].icon}</span> ` : ''}${escapeText(title)} · ${escapeText(unit)}</h3>${chartTrendBadge(allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}">${ticks}${timeLabels}${paths}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${unit}</span><span>Máx. ${numberText(max, digits)} ${unit}</span><span>Prom. ${numberText(average, digits)} ${unit}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {
@@ -230,7 +255,7 @@ if (typeof document !== 'undefined') {
     tip.textContent = target.dataset.chartTip;
     tip.hidden = false;
     tip.style.left = `${Math.max(0, Math.min(88, Number(target.dataset.chartX) / 560 * 100))}%`;
-    tip.style.top = `${Math.max(0, Math.min(75, Number(target.dataset.chartY) / 135 * 100))}%`;
+    tip.style.top = `${Math.max(0, Math.min(75, Number(target.dataset.chartY) / 200 * 100))}%`;
   };
   document.addEventListener('pointerover', (event) => {
     const target = event.target.closest?.('.chart-hit');
@@ -253,7 +278,7 @@ if (typeof document !== 'undefined') {
   });
 }
 
-export const chartSection = (history, summary = {}) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0, { min: summary.pressure_min, max: summary.pressure_max, avg: summary.pressure_avg })}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">Las flechas resumen la evolución de las lecturas en el periodo seleccionado; no son un pronóstico.</p>`;
+export const chartSection = (history, summary = {}) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0, { min: summary.pressure_min, max: summary.pressure_max, avg: summary.pressure_avg })}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">El eje Y usa una escala de referencia ampliada para que variaciones pequeñas no ocupen toda la gráfica. Los chips Mín./Máx. muestran los extremos medidos. Las flechas resumen el periodo; no son un pronóstico.</p>`;
 
 // ---- Diálogo de detalle ----------------------------------------------------
 export function openDialog(title, bodyHtml, actionsHtml = '') {

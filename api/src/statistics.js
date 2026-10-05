@@ -4,6 +4,7 @@
 // batería e illuminancia, con el periodo y la estación siempre citados.
 
 import { sql } from './db.js';
+import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 
 // La clave es la columna en la base de datos; `column` es como la devuelve el
 // cliente (camelCase) y `key` es como se expone en el informe.
@@ -106,7 +107,7 @@ export function coverageReport({ received, valid, invalid, intervalSeconds, from
 
 // ---- Consulta completa -----------------------------------------------------
 // from/to son ISO. Solo datos validados y no borrados.
-export async function statisticsFor(deviceId, { from, to }) {
+export async function statisticsFor(deviceId, { from, to, includeCommunicationAlerts = true }) {
   const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${deviceId}`;
   const config = configRow?.config ?? {};
 
@@ -126,7 +127,8 @@ export async function statisticsFor(deviceId, { from, to }) {
   const [alertCounts] = await sql`SELECT count(*)::integer AS total,
       count(*) FILTER (WHERE closed_at IS NULL)::integer AS open,
       count(*) FILTER (WHERE auto_resolved)::integer AS auto_resolved
-    FROM alerts WHERE device_id = ${deviceId} AND created_at >= ${from} AND created_at < ${to}`;
+    FROM alerts a WHERE device_id = ${deviceId} AND created_at >= ${from} AND created_at < ${to}
+      ${includeCommunicationAlerts ? sql`` : sql`AND ${NON_COMMUNICATION_ALERT}`}`;
 
   const metrics = {};
   for (const metric of STAT_METRICS) {

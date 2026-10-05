@@ -4,6 +4,7 @@ import { sql } from './db.js';
 import { requireSubscriber, requireRole, csrfGuard } from './auth.js';
 import { audit } from './audit.js';
 import { alertAge } from './alert-engine.js';
+import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 
 const router = Router();
 
@@ -35,6 +36,7 @@ router.get('/', requireSubscriber, async (req, res) => {
 
   const conditions = [sql`a.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`];
   if (req.subscriber.role === 'admin') conditions.length = 0;
+  else conditions.push(NON_COMMUNICATION_ALERT);
   if (status === 'open') conditions.push(sql`a.closed_at IS NULL`);
   if (status === 'closed') conditions.push(sql`a.closed_at IS NOT NULL`);
   if (channel) conditions.push(sql`a.channel = ${channel}`);
@@ -50,7 +52,8 @@ router.get('/', requireSubscriber, async (req, res) => {
     : sql`SELECT count(*) FILTER (WHERE a.closed_at IS NULL)::integer AS open,
           count(*) FILTER (WHERE a.closed_at IS NOT NULL)::integer AS closed
         FROM alerts a WHERE a.device_id IN
-          (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+          (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})
+          AND ${NON_COMMUNICATION_ALERT}`;
   const [counts] = await sql`${scopedAlerts}`;
   // Cada aviso lleva la antigüedad de su medida y el retraso de la entrega.
   res.json({ alerts: rows.map((row) => ({ ...row, ...alertAge(row) })), counts });
@@ -89,9 +92,11 @@ router.get('/rules', requireSubscriber, async (req, res) => {
   }
   const rows = deviceId
     ? await sql`SELECT r.*, d.name AS device_name FROM alert_rules r JOIN devices d ON d.id = r.device_id
-        WHERE r.device_id = ${deviceId} ORDER BY r.system DESC, r.metric, r.threshold`
+        WHERE r.device_id = ${deviceId} ${req.subscriber.role === 'admin' ? sql`` : sql`AND r.metric <> 'connectivity'`}
+        ORDER BY r.system DESC, r.metric, r.threshold`
     : await sql`SELECT r.*, d.name AS device_name FROM alert_rules r JOIN devices d ON d.id = r.device_id
         ${req.subscriber.role === 'admin' ? sql`` : sql`JOIN subscriber_devices sd ON sd.device_id = r.device_id AND sd.subscriber_id = ${req.subscriber.id}`}
+        ${req.subscriber.role === 'admin' ? sql`` : sql`WHERE r.metric <> 'connectivity'`}
         ORDER BY d.name, r.system DESC, r.metric, r.threshold`;
   res.json({ rules: rows });
 });
@@ -155,7 +160,7 @@ async function loadAlert(subscriber, alertId) {
   if (!/^\d{1,18}$/.test(alertId)) return null;
   const rows = await sql`SELECT a.* FROM alerts a
     ${subscriber.role === 'admin' ? sql`` : sql`JOIN subscriber_devices sd ON sd.device_id = a.device_id AND sd.subscriber_id = ${subscriber.id}`}
-    WHERE a.id = ${alertId}::bigint`;
+    WHERE a.id = ${alertId}::bigint ${subscriber.role === 'admin' ? sql`` : NON_COMMUNICATION_ALERT}`;
   return rows[0] ?? null;
 }
 

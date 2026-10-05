@@ -40,7 +40,9 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 - `GET /api/v1/alerts` — avisos asociados a las estaciones de la suscripción.
 - `GET /health` — comprobación de servicio y conexión a Neon.
 
-Los avisos de la estación se crean de forma idempotente al ingresar una lectura con nivel de alerta. Previsiones y estimaciones se almacenan/devuelven en campos distintos a las mediciones propias; este servicio no genera predicciones. La ruta de ingesta de previsiones queda lista para un adaptador del proveedor elegido; aún no se ha seleccionado ni conectado un proveedor.
+El panel consulta Open-Meteo para condiciones actuales estimadas y previsiones por hora/día de temperatura, lluvia y viento; cachea las respuestas durante 30 minutos. Las condiciones estimadas nunca se presentan como mediciones de la estación. Además, admite previsión municipal, observaciones de una estación convencional y avisos CAP oficiales de AEMET. Para activarlos, configura `AEMET_API_KEY` como secreto del servidor y completa en la ficha de la estación los códigos municipales, indicativo observador y área de avisos AEMET. Los avisos oficiales se muestran separados de los riesgos orientativos calculados desde la previsión y de los avisos generados por sensores.
+
+Los riesgos orientativos usan umbrales generales (helada, calor, lluvia y rachas) y no son alertas oficiales ni recomendaciones específicas de un cultivo o especie ganadera. Verifica los criterios locales antes de tomar decisiones agronómicas o veterinarias.
 
 La lista de estaciones cercanas incluye únicamente estaciones activas que han permitido compartir datos públicos agregados, vistas en las últimas dos horas y dentro del radio de cobertura configurado. La respuesta solo contiene nombre, última conexión y distancia; nunca entrega las coordenadas exactas de otra estación. El panel indica explícitamente si no hay tres estaciones representativas.
 

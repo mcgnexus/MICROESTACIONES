@@ -36,14 +36,18 @@ export async function renderStations(root) {
           <label>Emplazamiento<select name="location_type">
             <option value="finca">Finca</option><option value="urbano">Urbano</option><option value="otro">Otro</option>
           </select></label>
-          ${TEXT_FIELD('public_zone', 'Zona pública (para cobertura representativa)', 'maxlength="200"')}
+          ${TEXT_FIELD('public_zone', 'Localidad o zona de referencia', 'maxlength="200"')}
           <label>Latitud (privada)<input name="latitude" type="number" step="any" min="-90" max="90"></label>
           <label>Longitud (privada)<input name="longitude" type="number" step="any" min="-180" max="180"></label>
+          ${TEXT_FIELD('aemet_municipality_code', 'Código de municipio AEMET', 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="opcional"')}
+          ${TEXT_FIELD('aemet_station_id', 'Indicativo estación observadora AEMET', 'maxlength="5" placeholder="opcional"')}
+          ${TEXT_FIELD('aemet_warning_area', 'Área de avisos AEMET', 'maxlength="12" placeholder="opcional"')}
           ${TEXT_FIELD('altitude', 'Altitud (m)', 'type="number" step="1" min="-500" max="9000"')}
           ${TEXT_FIELD('installation_date', 'Fecha de instalación', 'type="date"')}
           ${TEXT_FIELD('firmware_version', 'Versión de firmware', 'maxlength="60"')}
           ${TEXT_FIELD('coverage_km', 'Cobertura (km)', 'type="number" step="0.1" min="0.1" max="500" placeholder="25"')}
         </div>
+        <p class="hint">Open-Meteo usa las coordenadas automáticamente. Para AEMET, añade el código municipal, el indicativo de la estación observadora más cercana y el área de avisos; la API key debe estar guardada como variable privada AEMET_API_KEY en el servidor.</p>
         <fieldset class="sensor-set"><legend>Sensores activos</legend>${SENSOR_KEYS
           .map(([key, label]) => `<label class="check"><input type="checkbox" name="sensor_${key}" checked> ${label}</label>`).join('')}</fieldset>
         <div class="form-grid">
@@ -114,6 +118,9 @@ export async function renderStations(root) {
       form.elements.latitude.value = station.latitude ?? '';
       form.elements.longitude.value = station.longitude ?? '';
       form.elements.public_zone.value = station.publicZone ?? '';
+      form.elements.aemet_municipality_code.value = station.aemetMunicipalityCode ?? '';
+      form.elements.aemet_station_id.value = station.aemetStationId ?? '';
+      form.elements.aemet_warning_area.value = station.aemetWarningArea ?? '';
       form.elements.altitude.value = station.altitude ?? '';
       form.elements.installation_date.value = station.installationDate ?? '';
       form.elements.firmware_version.value = station.firmwareVersion ?? '';
@@ -175,6 +182,9 @@ export async function renderStations(root) {
       latitude: num('latitude'),
       longitude: num('longitude'),
       public_zone: text('public_zone') || null,
+      aemet_municipality_code: text('aemet_municipality_code') || null,
+      aemet_station_id: text('aemet_station_id') || null,
+      aemet_warning_area: text('aemet_warning_area') || null,
       altitude: num('altitude'),
       installation_date: text('installation_date') || null,
       firmware_version: text('firmware_version') || null,

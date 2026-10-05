@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleChartRows, chartTrend, makeChart, metric } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric } from '../public/js/ui.js';
 
 test('chart sampling bounds dense data and keeps the endpoints and local extrema', () => {
   const rows = Array.from({ length: 2000 }, (_, index) => ({
@@ -41,4 +41,21 @@ test('metrics include an icon and graphs explain temperature trend with an arrow
   assert.match(chart, /chart-trend trend-sube/);
   assert.match(chart, /↑/);
   assert.match(chart, /calentamiento/);
+  assert.match(chart, /viewBox="0 0 560 200"/);
+});
+
+test('pressure chart uses a broader reference scale than its measured range', () => {
+  const domain = chartYDomain('pressurePa', 91310, 91557);
+  assert.ok(domain.high - domain.low >= 5000);
+  assert.ok(domain.low < 91310);
+  assert.ok(domain.high > 91557);
+});
+
+test('gap threshold follows normal cadence instead of a majority of missed samples', () => {
+  const rows = [0, 5, 10, 15, 135, 255].map((minutes) => ({
+    observedAt: new Date(minutes * 60 * 1000).toISOString(), temperatureC: minutes,
+  }));
+  assert.equal(chartGapThreshold(rows), 5 * 60 * 1000 * 2.5);
+  const svg = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C');
+  assert.equal((svg.match(/<polyline/g) || []).length, 3);
 });
