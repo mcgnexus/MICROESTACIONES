@@ -7,7 +7,8 @@ import { sql } from './db.js';
 import { randomToken, sha256, verifyPassword } from './security.js';
 import { measurementSchema } from './contracts.js';
 import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies } from './auth.js';
-import { evaluateMeasurement, evaluateRules, VFLAG } from './validation.js';
+import { evaluateMeasurement, VFLAG } from './validation.js';
+import { evaluateMeasurementRules, evaluateSystemRules, releaseDirectives, pendingDirectiveIds, alertAge } from './alert-engine.js';
 import { audit } from './audit.js';
 import stationsRouter, { statusPayload } from './stations.js';
 import configsRouter from './configs.js';
@@ -81,6 +82,23 @@ const batteryLevelFor = (batteryMv, config) => {
   return batteryMv <= critical ? 'critical' : batteryMv <= low ? 'low' : 'ok';
 };
 
+// El equipo declara la versión de configuración que tiene aplicada. Solo entonces
+// el cambio pasa de pendiente a aplicado. Una versión que no existe se ignora:
+// no se acepta nada que el equipo no pueda haber recibido.
+async function confirmConfigVersion(client, deviceId, version) {
+  const [row] = await client`SELECT version FROM device_config_versions
+    WHERE device_id = ${deviceId} AND version = ${version}`;
+  if (!row) return false;
+  const [applied] = await client`UPDATE device_config_versions
+    SET confirmed_version = ${version}, applied_at = coalesce(applied_at, now()),
+        requested_at = coalesce(requested_at, now())
+    WHERE device_id = ${deviceId} AND version = ${version} AND confirmed_version IS DISTINCT FROM ${version}
+    RETURNING version`;
+  await client`UPDATE device_status SET config_version = ${version}, updated_at = now()
+    WHERE device_id = ${deviceId}`;
+  return !!applied;
+}
+
 app.post('/api/measurements', requireDevice, async (req, res) => {
   const parsed = z.array(measurementSchema).min(1).max(32).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_measurements', details: parsed.error.issues });
@@ -88,14 +106,18 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
     return res.status(403).json({ error: 'device_identity_mismatch' });
   }
 
+  // Las directiva urgentes que ya estaban pendientes se liberan al final de este
+  // envío; las que se creen ahora son para el siguiente despertar del equipo.
   const ackThrough = await sql.begin(async (tx) => {
+    // Las directiva urgentes ya pendientes se liberan al final de este envío;
+    // las que se creen ahora son para el siguiente despertar del equipo.
+    const pendingDirectives = await pendingDirectiveIds(tx, req.deviceId);
     const [configRow] = await tx`SELECT config FROM device_configs WHERE device_id = ${req.deviceId}`;
     const config = configRow?.config ?? {};
-    const rules = await tx`SELECT id, metric, comparator, threshold, level, message, recipient, channel
-      FROM alert_rules WHERE device_id = ${req.deviceId} AND enabled`;
     let highest = null;
     let lastBattery = null;
     let insertedAny = false;
+    let appliedConfigVersion = null;
 
     for (const record of parsed.data) {
       const observedAt = new Date(record.ts * 1000);
@@ -123,19 +145,23 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
               ${tx.json({ temp_c: record.temp_c ?? null, hum_pct: record.hum_pct ?? null, press_pa: record.press_pa ?? null, batt_mv: record.batt_mv ?? null })}, ${observedAt})
             ON CONFLICT (dedupe_key) DO NOTHING`;
         }
-        // Reglas configuradas en servidor: el aviso conserva regla, valor y canal.
-        for (const { rule, value } of evaluateRules(record, rules)) {
-          const dedupeKey = `rule:${rule.id}:${record.sequence}:${record.ts}`;
-          const snapshot = { metric: rule.metric, value, threshold: rule.threshold, comparator: rule.comparator };
-          const isInstant = rule.channel === 'in_app';
-          await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, source,
-              observed_at, rule_id, rule_snapshot, recipient, channel, delivery_status, delivered_at)
-            VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${rule.level}, ${rule.message},
-              ${tx.json(snapshot)}, 'station_measurement', ${observedAt}, ${rule.id}, ${tx.json(snapshot)},
-              ${rule.recipient ?? null}, ${rule.channel},
-              ${isInstant ? 'delivered' : 'pending'}, ${isInstant ? new Date() : null})
-            ON CONFLICT (dedupe_key) DO NOTHING`;
+        // Motor de avisos: la regla solo dispara si la condición se sostiene
+        // (min_duration_s) y se recupera con margen (recovery_margin).
+        if (inserted) {
+          await evaluateMeasurementRules(tx, {
+            deviceId: req.deviceId,
+            measurementId: inserted.id,
+            values: record,
+            at: observedAt,
+            config,
+          });
         }
+      }
+      // Confirmación de la configuración: el equipo declara qué versión tiene
+      // aplicada. Hasta que lo dice, el cambio remoto sigue pendiente.
+      if (record.config_version != null) {
+        const confirmed = await confirmConfigVersion(tx, req.deviceId, record.config_version);
+        if (confirmed) appliedConfigVersion = record.config_version;
       }
       highest = record.sequence;
     }
@@ -150,15 +176,18 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
         battery_level = CASE WHEN ${lastBattery}::integer IS NULL THEN device_status.battery_level ELSE ${batteryLevel} END,
         updated_at = now()`;
     await tx`UPDATE devices SET last_seen_at = now() WHERE id = ${req.deviceId}`;
+    // Este envío ya ha dado la oportunidad de subir la medida crítica antes de tiempo.
+    await releaseDirectives(tx, req.deviceId, { batteryMv: lastBattery, ids: pendingDirectives });
     if (insertedAny) {
       await tx`UPDATE device_status s SET last_valid_data = (
           SELECT max(m.observed_at) FROM measurements m
           WHERE m.device_id = ${req.deviceId} AND m.is_validated AND m.deleted_at IS NULL)
         WHERE s.device_id = ${req.deviceId}`;
     }
-    return highest;
+    return { highest, appliedConfigVersion };
   });
-  res.json({ ack_through: ackThrough });
+  res.json({ ack_through: ackThrough.highest, ...(ackThrough.appliedConfigVersion
+    ? { applied_config_version: ackThrough.appliedConfigVersion } : {}) });
 });
 
 app.get('/api/config', requireDevice, async (req, res) => {
@@ -170,11 +199,35 @@ app.get('/api/config', requireDevice, async (req, res) => {
   await sql`UPDATE devices SET last_seen_at = now() WHERE id = ${req.deviceId}`;
   await sql`INSERT INTO device_status (device_id, last_contact) VALUES (${req.deviceId}, now())
     ON CONFLICT (device_id) DO UPDATE SET last_contact = now(), updated_at = now()`;
-  await sql`UPDATE device_config_versions SET requested_version = version
+  await sql`UPDATE device_config_versions SET requested_version = version, requested_at = now()
     WHERE device_id = ${req.deviceId}
       AND version = (SELECT max(version) FROM device_config_versions WHERE device_id = ${req.deviceId})
       AND requested_version IS DISTINCT FROM version`;
+  // Excepción urgente: si hay una directiva pendiente, el equipo debe intentar
+  // subir la medida crítica en este mismo despertar. El firmware actual todavía
+  // no la aplica; se mide su coste en batería antes de asumir el cambio.
+  const [pending] = await sql`SELECT id, reason, issued_at FROM urgent_directives
+    WHERE device_id = ${req.deviceId} AND released_at IS NULL ORDER BY issued_at LIMIT 1`;
+  if (pending) {
+    const config = row?.config ? JSON.parse(row.config) : {};
+    res.json({
+      ...config,
+      _urgent: { id: pending.id, reason: pending.reason, issued_at: pending.issued_at },
+    });
+    return;
+  }
   res.type('application/json').send(row?.config ?? '{}');
+});
+
+// Confirmación explícita de la configuración aplicada. Alternativa al campo
+// config_version del lote, para un equipo que no pueda modificar su payload:
+// una sola línea en el firmware tras aplicar la configuración.
+app.post('/api/config/confirm', requireDevice, async (req, res) => {
+  const version = Number.parseInt(String(req.query.version ?? req.body?.version ?? ''), 10);
+  if (!Number.isInteger(version) || version < 1) return res.status(400).json({ error: 'invalid_version' });
+  const confirmed = await sql.begin(async (tx) => confirmConfigVersion(tx, req.deviceId, version));
+  if (!confirmed) return res.status(404).json({ error: 'version_not_found' });
+  res.json({ version, state: 'aplicado', confirmed: true });
 });
 
 // A server-side provider adapter may push forecast data here; provider keys never reach the browser/device.
@@ -319,12 +372,14 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   }
   const alerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
       a.value, a.source, a.observed_at, a.created_at, a.recipient, a.channel, a.delivery_status,
-      a.closed_at, a.acknowledged_at, a.rule_snapshot
+      a.closed_at, a.acknowledged_at, a.rule_snapshot, a.auto_resolved
     FROM alerts a JOIN devices d ON d.id = a.device_id
     JOIN subscriber_devices sd ON sd.device_id = d.id
     WHERE sd.subscriber_id = ${req.subscriber.id}
     ORDER BY a.created_at DESC LIMIT 50`;
-  res.json({ period, devices: response, alerts });
+  // Cada aviso declara la antigüedad de la medida que lo originó y cuánto tardó
+  // en llegar: con lotes de 30 min, no es lo mismo un aviso de ahora que de hace media hora.
+  res.json({ period, devices: response, alerts: alerts.map((alert) => ({ ...alert, ...alertAge(alert) })) });
 });
 
 // Filtro común: rango de fechas + dispositivo, limitado siempre a las estaciones del suscriptor.
@@ -482,6 +537,47 @@ app.use('/api/v1/alerts', alertsRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1', accountRouter);
 
+// ---------------------------------------------------------------------------
+// Detectores de sistema (sin comunicación, batería baja)
+// ---------------------------------------------------------------------------
+// En un proceso largo se evalúan con un temporizador. En Vercel el código solo
+// vive durante una petición, así que la pasada se dispara desde las peticiones
+// reales, con anti-reintentos para no repetirla en cada llamada. Sin ninguna de
+// las dos, una estación que deja de enviar nunca generaría aviso.
+const SYSTEM_EVAL_MS = Math.max(30, Number(process.env.SYSTEM_EVAL_INTERVAL_S || 60)) * 1000;
+let systemPass = null;
+let lastSystemPass = 0;
+
+async function runSystemPass() {
+  if (systemPass) return systemPass;
+  systemPass = evaluateSystemRules()
+    .then((outcomes) => {
+      lastSystemPass = Date.now();
+      if (outcomes.length) console.log(`detectores: ${outcomes.map((o) => `${o.deviceId}/${o.change}`).join(', ')}`);
+      return outcomes;
+    })
+    .catch((error) => { console.error('pasada de detectores:', error.message); return []; })
+    .finally(() => { systemPass = null; });
+  return systemPass;
+}
+
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+if (!isServerless) {
+  const systemTimer = setInterval(runSystemPass, SYSTEM_EVAL_MS);
+  systemTimer.unref();
+  const systemKick = setTimeout(runSystemPass, 5000);
+  systemKick.unref();
+} else {
+  app.use((req, res, next) => {
+    // Solo con tráfico real del panel, y como mucho una vez por intervalo.
+    if (!req.path.startsWith('/api/v1/')) return next();
+    if (Date.now() - lastSystemPass < SYSTEM_EVAL_MS) return next();
+    runSystemPass().catch(() => {});
+    next();
+  });
+}
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
 app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { index: 'index.html', maxAge: '1h' }));
 app.get('*path', async (_req, res, next) => {
@@ -496,4 +592,9 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ error: 'internal_error' });
 });
 
-app.listen(port, () => console.log(`TECRURAL API listening on ${port}`));
+export { app };
+
+// En local el proceso escucha; en Vercel la función recibe (req, res).
+if (!isServerless) {
+  app.listen(port, () => console.log(`TECRURAL API listening on ${port}`));
+}

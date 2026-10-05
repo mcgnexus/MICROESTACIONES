@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { sql } from './db.js';
 import { requireSubscriber, requireRole, requireStationAccess, csrfGuard } from './auth.js';
 import { audit } from './audit.js';
+import { CONFIG_DEFAULTS } from './device-config.js';
+import { ensureSystemRules, batteryImpact } from './alert-engine.js';
+import { statisticsFor } from './statistics.js';
 
 const router = Router();
 
@@ -201,6 +204,42 @@ router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, as
   });
 });
 
+// Informe estadístico del periodo: solo datos validados y no borrados.
+router.get('/:id/statistics', requireSubscriber, requireStationAccess, async (req, res) => {
+  const to = req.query.to ? new Date(String(req.query.to)) : new Date();
+  const from = req.query.from
+    ? new Date(String(req.query.from))
+    : new Date(to.getTime() - 7 * 24 * 3600 * 1000);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ error: 'invalid_range' });
+  if (from >= to) return res.status(400).json({ error: 'invalid_range' });
+  res.json(await statisticsFor(req.stationId, { from, to }));
+});
+
+// Coste medido de la excepción de envío urgente sobre la batería de la estación.
+router.get('/:id/urgent-impact', requireSubscriber, requireStationAccess, async (req, res) => {
+  const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${req.stationId}`;
+  const config = configRow?.config ?? {};
+  const directives = await sql`SELECT id::text AS id, reason, issued_at, released_at,
+      battery_mv_before, battery_mv_after
+    FROM urgent_directives WHERE device_id = ${req.stationId} ORDER BY issued_at DESC LIMIT 100`;
+  const samples = await sql`SELECT observed_at, battery_mv FROM measurements
+    WHERE device_id = ${req.stationId} AND is_validated AND deleted_at IS NULL
+      AND battery_mv IS NOT NULL ORDER BY observed_at DESC LIMIT 500`;
+  const pending = directives.filter((directive) => !directive.releasedAt).length;
+  res.json({
+    deviceId: req.stationId,
+    pending,
+    impact: batteryImpact({
+      directives, samples, syncIntervalS: config.sync_interval_s ?? 1800,
+    }),
+    // Lo que costaría en retraso la excepción, medido con lo que ya hay hoy.
+    delay: {
+      syncIntervalS: config.sync_interval_s ?? null,
+      note: 'Con lotes cada sync_interval_s, un aviso urgente llega como muy tarde ese tiempo después de la medida.',
+    },
+  });
+});
+
 router.post('/', requireSubscriber, requireRole('operator'), csrfGuard, async (req, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_station', details: parsed.error.issues });
@@ -219,8 +258,16 @@ router.post('/', requireSubscriber, requireRole('operator'), csrfGuard, async (r
           ${data.firmware_version ?? null}, ${data.publish_permission ?? false},
           ${data.coverage_km ?? 25}, ${data.active ?? true})
         RETURNING ${deviceCols}`;
-      await tx`INSERT INTO device_configs (device_id) VALUES (${data.id}) ON CONFLICT DO NOTHING`;
+      // Una estación nueva nace con valores por defecto seguros (medir 6 min, enviar 30 min)
+      // y su versión 1, para que el control remoto tenga desde el principio un historial.
+      await tx`INSERT INTO device_configs (device_id, config) VALUES (${data.id}, ${tx.json(CONFIG_DEFAULTS)})
+        ON CONFLICT (device_id) DO NOTHING`;
+      await tx`INSERT INTO device_config_versions (device_id, version, config, changed_by, change_reason)
+        VALUES (${data.id}, 1, ${tx.json(CONFIG_DEFAULTS)}, ${req.subscriber.id}, 'configuración inicial')
+        ON CONFLICT (device_id, version) DO NOTHING`;
       await tx`INSERT INTO device_status (device_id) VALUES (${data.id}) ON CONFLICT DO NOTHING`;
+      // Detectores de sistema: sin comunicación y batería baja, listos desde el alta.
+      await ensureSystemRules(tx, data.id);
       // Toda estación nueva queda vinculada a quien la creó.
       await tx`INSERT INTO subscriber_devices (subscriber_id, device_id)
         VALUES (${req.subscriber.id}, ${data.id}) ON CONFLICT DO NOTHING`;

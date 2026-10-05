@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { sql } from './db.js';
 import { requireSubscriber, requireRole, csrfGuard } from './auth.js';
 import { audit } from './audit.js';
+import { alertAge } from './alert-engine.js';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ async function hasStationAccess(subscriber, deviceId) {
 }
 
 const ALERT_SELECT = sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
-  a.value, a.source, a.observed_at, a.created_at, a.acknowledged_at,
+  a.value, a.source, a.observed_at, a.created_at, a.acknowledged_at, a.auto_resolved,
   a.rule_id::text AS rule_id, a.rule_snapshot, a.recipient, a.channel, a.delivery_status,
   a.delivered_at, a.closed_at, a.closure_reason, s.email AS closed_by_email
   FROM alerts a
@@ -51,11 +52,14 @@ router.get('/', requireSubscriber, async (req, res) => {
         FROM alerts a WHERE a.device_id IN
           (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
   const [counts] = await sql`${scopedAlerts}`;
-  res.json({ alerts: rows, counts });
+  // Cada aviso lleva la antigüedad de su medida y el retraso de la entrega.
+  res.json({ alerts: rows.map((row) => ({ ...row, ...alertAge(row) })), counts });
 });
 
 // ---- Reglas de aviso -------------------------------------------------------
-
+// Una regla es verificable si declara qué mide, desde cuándo se sostiene la
+// condición (min_duration_s) y con cuánto margen se recupera (recovery_margin).
+// La excepción urgente pide al equipo subir la medida crítica en ese despertar.
 const ruleSchema = z.object({
   device_id: idSchema,
   metric: z.enum(['temperature', 'humidity', 'pressure', 'battery', 'lux']),
@@ -66,7 +70,17 @@ const ruleSchema = z.object({
   recipient: z.string().max(200).nullable().optional(),
   channel: z.enum(['email', 'sms', 'webhook', 'push', 'in_app']).default('in_app'),
   enabled: z.boolean().default(true),
-}).strict();
+  min_duration_s: z.number().int().min(0).max(86400).default(0),
+  recovery_margin: z.number().min(0).max(100000).default(0),
+  urgent: z.boolean().default(false),
+}).strict().superRefine((rule, ctx) => {
+  if (rule.urgent && rule.level !== 1) {
+    ctx.addIssue({ code: 'custom', path: ['urgent'], message: 'Una regla urgente debe ser de nivel prioritario' });
+  }
+  if (rule.metric === 'lux' && (rule.recovery_margin < 0 || rule.recovery_margin > 200000)) {
+    ctx.addIssue({ code: 'custom', path: ['recovery_margin'], message: 'Margen fuera de rango para lux' });
+  }
+});
 
 router.get('/rules', requireSubscriber, async (req, res) => {
   const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
@@ -75,10 +89,10 @@ router.get('/rules', requireSubscriber, async (req, res) => {
   }
   const rows = deviceId
     ? await sql`SELECT r.*, d.name AS device_name FROM alert_rules r JOIN devices d ON d.id = r.device_id
-        WHERE r.device_id = ${deviceId} ORDER BY r.metric, r.threshold`
+        WHERE r.device_id = ${deviceId} ORDER BY r.system DESC, r.metric, r.threshold`
     : await sql`SELECT r.*, d.name AS device_name FROM alert_rules r JOIN devices d ON d.id = r.device_id
         ${req.subscriber.role === 'admin' ? sql`` : sql`JOIN subscriber_devices sd ON sd.device_id = r.device_id AND sd.subscriber_id = ${req.subscriber.id}`}
-        ORDER BY d.name, r.metric, r.threshold`;
+        ORDER BY d.name, r.system DESC, r.metric, r.threshold`;
   res.json({ rules: rows });
 });
 
@@ -90,9 +104,11 @@ router.post('/rules', requireSubscriber, requireRole('operator'), csrfGuard, asy
     return res.status(404).json({ error: 'station_not_found' });
   }
   try {
-    const [rule] = await sql`INSERT INTO alert_rules (device_id, metric, comparator, threshold, level, message, recipient, channel, enabled)
+    const [rule] = await sql`INSERT INTO alert_rules (device_id, metric, comparator, threshold, level, message,
+        recipient, channel, enabled, min_duration_s, recovery_margin, urgent)
       VALUES (${data.device_id}, ${data.metric}, ${data.comparator}, ${data.threshold}, ${data.level},
-        ${data.message}, ${data.recipient ?? null}, ${data.channel}, ${data.enabled})
+        ${data.message}, ${data.recipient ?? null}, ${data.channel}, ${data.enabled},
+        ${data.min_duration_s}, ${data.recovery_margin}, ${data.urgent})
       RETURNING *`;
     await audit(sql, req, 'alert_rule.create', 'alert_rule', String(rule.id), null, data);
     res.status(201).json({ rule });
@@ -108,6 +124,8 @@ router.patch('/rules/:ruleId', requireSubscriber, requireRole('operator'), csrfG
   const [before] = await sql`SELECT * FROM alert_rules WHERE id = ${ruleId}`;
   if (!before) return res.status(404).json({ error: 'rule_not_found' });
   if (!(await hasStationAccess(req.subscriber, before.deviceId))) return res.status(404).json({ error: 'rule_not_found' });
+  // Los detectores de sistema los mantiene el servidor: no se editan a mano.
+  if (before.system) return res.status(409).json({ error: 'system_rule_readonly' });
 
   const patchSchema = ruleSchema.partial().omit({ device_id: true }).refine((obj) => Object.keys(obj).length > 0, { message: 'empty' });
   const parsed = patchSchema.safeParse(req.body);
@@ -125,6 +143,7 @@ router.delete('/rules/:ruleId', requireSubscriber, requireRole('operator'), csrf
   const [before] = await sql`SELECT * FROM alert_rules WHERE id = ${ruleId}`;
   if (!before) return res.status(404).json({ error: 'rule_not_found' });
   if (!(await hasStationAccess(req.subscriber, before.deviceId))) return res.status(404).json({ error: 'rule_not_found' });
+  if (before.system) return res.status(409).json({ error: 'system_rule_readonly' });
   await sql`DELETE FROM alert_rules WHERE id = ${ruleId}`;
   await audit(sql, req, 'alert_rule.delete', 'alert_rule', String(ruleId), before, null);
   res.status(204).end();

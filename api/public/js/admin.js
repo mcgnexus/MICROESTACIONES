@@ -162,7 +162,7 @@ export async function renderAdmin(root) {
     } catch (error_) {
       error(`No se pudo completar la acción: ${error_.message}`);
     }
-  });
+  }
 
   await load();
 }

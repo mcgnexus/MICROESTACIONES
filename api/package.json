@@ -9,7 +9,8 @@
     "migrate": "node src/migrate.js",
     "create-user": "node src/create-user.js",
     "provision-device": "node src/provision-device.js",
-    "test": "node --test"
+    "test": "node --test",
+    "acceptance": "node acceptance.mjs"
   },
   "engines": { "node": ">=20" },
   "dependencies": {

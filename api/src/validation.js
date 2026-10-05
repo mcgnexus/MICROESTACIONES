@@ -69,28 +69,12 @@ export function evaluateMeasurement(record) {
   };
 }
 
-const RULE_METRICS = {
+// La evaluación de reglas de aviso vive en alert-engine.js: allí están la
+// duración mínima, la recuperación con margen y los detectores de sistema.
+export const RULE_METRIC_KEYS = {
   temperature: 'temp_c',
   humidity: 'hum_pct',
   pressure: 'press_pa',
   battery: 'batt_mv',
   lux: 'lux',
 };
-
-const COMPARATORS = {
-  gt: (value, threshold) => value > threshold,
-  gte: (value, threshold) => value >= threshold,
-  lt: (value, threshold) => value < threshold,
-  lte: (value, threshold) => value <= threshold,
-};
-
-// Evalúa las reglas de aviso habilitadas contra una medición recibida.
-export function evaluateRules(record, rules) {
-  const triggered = [];
-  for (const rule of rules) {
-    const value = record[RULE_METRICS[rule.metric]];
-    if (value == null || !Number.isFinite(Number(value))) continue;
-    if (COMPARATORS[rule.comparator](Number(value), rule.threshold)) triggered.push({ rule, value: Number(value) });
-  }
-  return triggered;
-}

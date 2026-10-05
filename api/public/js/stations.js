@@ -5,7 +5,9 @@ import {
 import { renderStationCard } from './panel.js';
 import { mountMeasurements } from './measurements.js';
 import { renderConfigTab } from './config.js';
+import { renderRemoteControl } from './device-config.js';
 import { renderStationAlertsTab } from './alerts.js';
+import { renderStatisticsTab } from './statistics.js';
 
 const SENSOR_KEYS = [['temperature', 'Temperatura'], ['humidity', 'Humedad'], ['pressure', 'Presión'], ['battery', 'Batería'], ['lux', 'Lux']];
 
@@ -159,7 +161,7 @@ export async function renderStations(root) {
         $('[data-error]', root).textContent = `No se pudo desactivar: ${error.message}`;
       }
     }
-  });
+  }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -206,6 +208,7 @@ const TABS = [
   ['config', 'Configuración'],
   ['mediciones', 'Mediciones'],
   ['avisos', 'Avisos'],
+  ['estadisticas', 'Estadísticas'],
 ];
 
 async function renderResumen(content, stationId) {
@@ -274,6 +277,12 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
   const activeTab = TABS.some(([key]) => key === tab) ? tab : 'resumen';
   const link = (key) => `#/estaciones/${encodeURIComponent(station.id)}/${key}`;
 
+  // El control remoto es una pantalla propia con su propia cabecera.
+  if (tab === 'remoto') {
+    await renderRemoteControl(root, station.id, station);
+    return;
+  }
+
   root.innerHTML = `
     <div class="page-heading">
       <div>
@@ -285,6 +294,7 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
         ${station.active ? connectivityBadge(status.connectivity) : '<span class="badge badge-muted">Desactivada</span>'}
         <span class="badge badge-muted">Config v${status.configVersion ?? 0}</span>
         <span class="badge badge-muted">${batteryLabel(status.batteryLevel)}</span>
+        <a class="button-link" href="#/estaciones/${encodeURIComponent(station.id)}/remoto">Control remoto</a>
       </div>
     </div>
     <nav class="tabs">${TABS.map(([key, label]) =>
@@ -298,6 +308,6 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
   else if (activeTab === 'mediciones') {
     content.innerHTML = '<section class="panel"></section>';
     mountMeasurements($('section', content), { fixedStation: station.id });
-  }
+  } else if (activeTab === 'estadisticas') await renderStatisticsTab(content, station.id, station);
   else await renderStationAlertsTab(content, station.id);
 }

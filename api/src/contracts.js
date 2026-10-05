@@ -13,12 +13,15 @@ export const measurementSchema = z.object({
   batt_mv: z.number().int().min(0).max(65535),
   // Canal opcional: solo lo envía la estación cuando el sensor de lux está instalado.
   lux: z.number().finite().min(0).max(10000000),
-  // Origen de la transmisión; el firmware actual no lo envía y por defecto es Wi-Fi.
+  // Fuente de la transmisión; el firmware actual no lo envía y por defecto es Wi-Fi.
   source: z.enum(['wifi', 'lora']),
+  // Versión de configuración que el equipo tiene aplicada. Es lo que convierte
+  // un cambio remoto en "aplicado": sin este campo la versión sigue pendiente.
+  config_version: z.number().int().min(1).max(100000),
   flags: z.number().int().min(0).max(255),
   alert: z.number().int().min(0).max(2),
 }).partial({
-  temp_c: true, hum_pct: true, press_pa: true, batt_mv: true, lux: true, source: true,
+  temp_c: true, hum_pct: true, press_pa: true, batt_mv: true, lux: true, source: true, config_version: true,
 }).superRefine((record, ctx) => {
   // Sin marca de valor presente no hay lectura que conservar.
   if (record.temp_c === undefined && record.hum_pct === undefined

@@ -51,6 +51,49 @@ const upgrades = [
   `ALTER TABLE alerts ADD COLUMN IF NOT EXISTS closed_at timestamptz`,
   `ALTER TABLE alerts ADD COLUMN IF NOT EXISTS closed_by bigint REFERENCES subscribers(id)`,
   `ALTER TABLE alerts ADD COLUMN IF NOT EXISTS closure_reason text`,
+  `ALTER TABLE alerts ADD COLUMN IF NOT EXISTS auto_resolved boolean NOT NULL DEFAULT false`,
+
+  // Motor de avisos verificable: duración mínima, margen de recuperación y
+  // excepción urgente. El estado de la condición persiste entre lotes.
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS min_duration_s integer NOT NULL DEFAULT 0 CHECK (min_duration_s >= 0)`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS recovery_margin double precision NOT NULL DEFAULT 0 CHECK (recovery_margin >= 0)`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS urgent boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS system boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS condition_active boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS condition_since timestamptz`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS active_alert_id bigint`,
+  `ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_check`,
+  `ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_check
+     CHECK (metric IN ('temperature','humidity','pressure','battery','lux','connectivity'))`,
+  `CREATE INDEX IF NOT EXISTS alert_rules_device_idx ON alert_rules(device_id)`,
+  `CREATE INDEX IF NOT EXISTS alerts_open_idx ON alerts(device_id, level) WHERE closed_at IS NULL`,
+
+  // Peticiones de envío urgente y su medición de coste en batería.
+  `DO $$ BEGIN
+     CREATE TABLE urgent_directives (
+       id bigserial PRIMARY KEY,
+       device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       rule_id bigint REFERENCES alert_rules(id) ON DELETE SET NULL,
+       reason text NOT NULL,
+       issued_at timestamptz NOT NULL DEFAULT now(),
+       released_at timestamptz,
+       battery_mv_before integer,
+       battery_mv_after integer
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS urgent_directives_device_idx ON urgent_directives(device_id, issued_at DESC)`,
+
+  // Detectores de sistema: sin comunicación y batería baja.
+  `INSERT INTO alert_rules (device_id, metric, comparator, threshold, level, message, channel, enabled,
+       system, min_duration_s, recovery_margin)
+     SELECT d.id, 'connectivity', 'gt', 1800, 1, 'Estación sin comunicación', 'in_app', true, true, 0, 60
+     FROM devices d WHERE NOT EXISTS (
+       SELECT 1 FROM alert_rules r WHERE r.device_id = d.id AND r.metric = 'connectivity')`,
+  `INSERT INTO alert_rules (device_id, metric, comparator, threshold, level, message, channel, enabled,
+       system, min_duration_s, recovery_margin)
+     SELECT d.id, 'battery', 'lt', 3400, 2, 'Batería por debajo del umbral configurado', 'in_app', true, true, 0, 100
+     FROM devices d WHERE NOT EXISTS (
+       SELECT 1 FROM alert_rules r WHERE r.device_id = d.id AND r.metric = 'battery' AND r.system)`,
   `DO $$ BEGIN
      ALTER TABLE alerts ADD CONSTRAINT alerts_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES alert_rules(id);
    EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
@@ -83,6 +126,9 @@ const upgrades = [
      );
    EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
   `CREATE INDEX IF NOT EXISTS device_config_versions_device_idx ON device_config_versions(device_id, version DESC)`,
+  // Momento en que el equipo pidió la configuración: separa "solicitado" de "recibido".
+  `ALTER TABLE device_config_versions ADD COLUMN IF NOT EXISTS requested_at timestamptz`,
+  `UPDATE device_config_versions SET requested_at = created_at WHERE requested_version IS NOT NULL AND requested_at IS NULL`,
   `DO $$ BEGIN
      CREATE TABLE device_status (
        device_id text PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
@@ -155,17 +201,28 @@ const seeds = [
      AND NOT EXISTS (SELECT 1 FROM subscribers WHERE role = 'admin')`,
 ];
 
+// Ejecuta una sentencia intentando siempre dejar la lista utilizable:
+// schema.sql se parte por ';', que no puede aparecer en comentarios ni literales.
+async function runStatements(label, statements) {
+  for (const statement of statements) {
+    try {
+      await sql.unsafe(statement);
+    } catch (error) {
+      const head = statement.replace(/\s+/g, ' ').slice(0, 160);
+      throw new Error(`${label}: ${error.message}\n  sentencia: ${head}`);
+    }
+  }
+}
+
 try {
   const schema = await readFile(new URL('./schema.sql', import.meta.url), 'utf8');
-  for (const statement of schema.split(';').map((part) => part.trim()).filter(Boolean)) {
-    await sql.unsafe(statement);
-  }
+  await runStatements('schema.sql', schema.split(';').map((part) => part.trim()).filter(Boolean));
   // El ESP32 almacena secuencias uint32 monótonas.
   await sql`ALTER TABLE measurements ALTER COLUMN sequence TYPE bigint`;
   await sql`ALTER TABLE measurements DROP CONSTRAINT IF EXISTS measurements_sequence_check`;
   await sql`ALTER TABLE measurements ADD CONSTRAINT measurements_sequence_check CHECK (sequence BETWEEN 0 AND 4294967295)`;
-  for (const statement of upgrades) await sql.unsafe(statement);
-  for (const statement of seeds) await sql.unsafe(statement);
+  await runStatements('upgrades', upgrades);
+  await runStatements('seeds', seeds);
   console.log('Neon schema is up to date');
 } finally {
   await sql.end();

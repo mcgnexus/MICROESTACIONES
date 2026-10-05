@@ -5,15 +5,35 @@ import {
 
 const DELIVERY_LABELS = { pending: 'pendiente', sent: 'enviado', delivered: 'entregado', failed: 'fallido', bounced: 'rebotado' };
 
+// Antigüedad de la medida: con lotes de 30 min un aviso no es "de ahora".
+export function ageText(seconds) {
+  if (seconds == null) return 'sin fecha de medida';
+  if (seconds < 90) return `medida de hace ${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `medida de hace ${minutes} min`;
+  return `medida de hace ${Math.round(minutes / 60)} h`;
+}
+
+export function durationText(seconds) {
+  const value = Number(seconds) || 0;
+  if (value === 0) return 'inmediata';
+  if (value < 60) return `${value} s`;
+  if (value < 3600) return `${Math.round(value / 60)} min`;
+  return `${Number((value / 3600).toFixed(1))} h`;
+}
+
 function alertRow(alert, editable) {
   const status = alert.closedAt
-    ? `<span class="badge badge-muted">Cerrado ${dateText(alert.closedAt)}${alert.closureReason ? ` · ${escapeText(alert.closureReason)}` : ''}</span>`
+    ? `<span class="badge badge-muted">${alert.autoResolved ? 'Recuperado' : 'Cerrado'} ${dateText(alert.closedAt)}${alert.closureReason ? ` · ${escapeText(alert.closureReason)}` : ''}</span>`
     : '<span class="badge badge-warn">Abierto</span>';
   const ack = alert.acknowledgedAt
     ? `<span class="badge badge-valid">Reconocido ${dateText(alert.acknowledgedAt)}</span>`
     : '<span class="badge badge-invalid">Sin reconocer</span>';
   const ruleInfo = alert.ruleId
-    ? `<span class="source-tag">Regla ${escapeText(METRIC_LABELS[alert.ruleSnapshot?.metric] || alert.ruleSnapshot?.metric || '')} ${escapeText(COMPARATOR_LABELS[alert.ruleSnapshot?.comparator] || '')} ${escapeText(alert.ruleSnapshot?.threshold ?? '')}</span>`
+    ? `<span class="source-tag">Regla ${escapeText(METRIC_LABELS[alert.ruleSnapshot?.metric] || alert.ruleSnapshot?.metric || '')} ${escapeText(COMPARATOR_LABELS[alert.ruleSnapshot?.comparator] || '')} ${escapeText(alert.ruleSnapshot?.threshold ?? '')}`
+      + `${alert.ruleSnapshot?.min_duration_s ? ` · exige ${durationText(alert.ruleSnapshot.min_duration_s)}` : ''}`
+      + `${alert.ruleSnapshot?.margin ? ` · margen ${escapeText(String(alert.ruleSnapshot.margin))}` : ''}`
+      + `${alert.ruleSnapshot?.urgent ? ' · urgente' : ''}</span>`
     : '';
   const actions = editable ? [
     !alert.acknowledgedAt && !alert.closedAt ? `<button type="button" data-ack="${escapeText(alert.id)}">Reconocer</button>` : '',
@@ -23,7 +43,11 @@ function alertRow(alert, editable) {
   return `<tr>
     <td>${alert.level === 1 ? 'Prioritario' : 'Aviso'}</td>
     <td><strong>${escapeText(alert.message)}</strong>${ruleInfo ? `<br>${ruleInfo}` : ''}
-      <div class="alert-detail">${dateText(alert.observedAt)} · recibido ${dateText(alert.createdAt)}</div></td>
+      <div class="alert-detail">
+        <span class="badge ${alert.ageSeconds > 1800 ? 'badge-warn' : 'badge-muted'}">${ageText(alert.ageSeconds)}</span>
+        ${alert.ingestDelaySeconds != null ? ` · tardó ${durationText(alert.ingestDelaySeconds)} en llegar` : ''}
+        · recibido ${dateText(alert.createdAt)}
+      </div></td>
     <td>${escapeText(alert.deviceName)}</td>
     <td>${escapeText(JSON.stringify(alert.value))}</td>
     <td>${escapeText(alert.source || '—')}</td>
@@ -35,18 +59,22 @@ function alertRow(alert, editable) {
 }
 
 function ruleRow(rule, editable) {
-  const actions = editable ? [
+  const actions = editable && !rule.system ? [
     `<button type="button" data-toggle-rule="${rule.id}" data-next="${rule.enabled ? 'false' : 'true'}">${rule.enabled ? 'Desactivar' : 'Activar'}</button>`,
     `<button type="button" class="danger" data-delete-rule="${rule.id}">Eliminar</button>`,
   ].join(' ') : '';
-  return `<tr>
-    <td>${escapeText(METRIC_LABELS[rule.metric] || rule.metric)}</td>
+  const state = rule.conditionActive
+    ? `<span class="badge badge-warn" title="Desde ${dateText(rule.conditionSince)}">Condición activa</span>`
+    : '<span class="badge badge-muted">Inactiva</span>';
+  return `<tr${rule.system ? ' class="row-system"' : ''}>
+    <td>${escapeText(METRIC_LABELS[rule.metric] || rule.metric)}${rule.system ? ' <span class="badge badge-muted">sistema</span>' : ''}</td>
     <td>${escapeText(COMPARATOR_LABELS[rule.comparator] || rule.comparator)} ${numberText(rule.threshold)}</td>
-    <td>${escapeText(ALERT_LEVELS[rule.level] || rule.level)}</td>
+    <td>${escapeText(durationText(rule.minDurationS))}</td>
+    <td>${numberText(rule.recoveryMargin)}</td>
+    <td>${rule.urgent ? '<span class="badge badge-invalid">urgente</span>' : '—'}</td>
     <td>${escapeText(rule.message)}</td>
-    <td>${escapeText(rule.recipient || '—')}</td>
-    <td>${escapeText(CHANNEL_LABELS[rule.channel] || rule.channel)}</td>
-    <td>${rule.enabled ? '<span class="badge badge-valid">Activa</span>' : '<span class="badge badge-muted">Inactiva</span>'}</td>
+    <td>${escapeText(rule.recipient || '—')}<br><small>${escapeText(CHANNEL_LABELS[rule.channel] || rule.channel)}</small></td>
+    <td>${rule.enabled ? state : '<span class="badge badge-muted">Desactivada</span>'}</td>
     <td class="row-actions">${actions}</td>
   </tr>`;
 }
@@ -75,17 +103,23 @@ function rulesSection(rules, stationId, editable) {
   return `<section class="panel">
     <div class="section-heading"><div><p class="eyebrow">REGLAS</p><h2>Umbrales de aviso</h2></div></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Métrica</th><th>Condición</th><th>Nivel</th><th>Mensaje</th><th>Destinatario</th><th>Canal</th><th>Estado</th><th></th></tr></thead>
-      <tbody>${rules.map((rule) => ruleRow(rule, editable)).join('') || '<tr><td colspan="8">Sin reglas definidas.</td></tr>'}</tbody>
+      <thead><tr><th>Métrica</th><th>Condición</th><th>Exige</th><th>Margen</th><th>Urgente</th><th>Mensaje</th><th>Destinatario</th><th>Estado</th><th></th></tr></thead>
+      <tbody>${rules.map((rule) => ruleRow(rule, editable)).join('') || '<tr><td colspan="9">Sin reglas definidas.</td></tr>'}</tbody>
     </table></div>
+    <p class="hint">Una regla solo avisa si la condición se sostiene durante el tiempo indicado y no vuelve
+      a la normalidad hasta pasar el margen: así no se repite el mismo aviso por valores límites.
+      Las reglas de sistema (sin comunicación y batería baja) los mantiene el servidor.</p>
     ${editable ? `<form data-rule-form class="rule-form">
       <label>Métrica<select name="metric">${Object.entries(METRIC_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label>
       <label>Condición<select name="comparator">${Object.entries(COMPARATOR_LABELS).map(([key, label]) => `<option value="${key}">${escapeText(label)}</option>`).join('')}</select></label>
       <label>Umbral<input type="number" step="any" name="threshold" required></label>
       <label>Nivel<select name="level"><option value="2">Aviso</option><option value="1">Prioritario</option></select></label>
+      <label>Se sostiene (s)<input type="number" name="min_duration_s" min="0" max="86400" step="60" value="0"></label>
+      <label>Margen de recuperación<input type="number" name="recovery_margin" min="0" step="any" value="0"></label>
       <label>Mensaje<input name="message" required maxlength="200"></label>
       <label>Destinatario<input name="recipient" maxlength="200" placeholder="correo o teléfono"></label>
       <label>Canal<select name="channel">${Object.entries(CHANNEL_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'in_app' ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="check"><input type="checkbox" name="urgent"> Urgente: pedir envío inmediato</label>
       <button type="submit">Crear regla</button>
     </form>` : ''}
   </section>`;
@@ -122,24 +156,32 @@ function wireActions(content, stationId, reload) {
     ruleForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = new FormData(ruleForm);
-      const body = {
-        device_id: stationId,
-        metric: form.get('metric'),
-        comparator: form.get('comparator'),
-        threshold: Number(form.get('threshold')),
-        level: Number(form.get('level')),
-        message: form.get('message'),
-        channel: form.get('channel'),
-      };
-      if (form.get('recipient')) body.recipient = form.get('recipient');
       try {
-        await api('/api/v1/alerts/rules', { method: 'POST', body: JSON.stringify(body) });
+        await api('/api/v1/alerts/rules', { method: 'POST', body: JSON.stringify(ruleBody(form, stationId)) });
         await reload();
       } catch (err) {
         $('[data-alert-error]', content).textContent = `No se pudo crear la regla: ${err.message}`;
       }
     });
   }
+}
+
+// Cuerpo de una regla nueva: incluye la duración mínima, el margen y si es urgente.
+function ruleBody(form, deviceId) {
+  const body = {
+    device_id: deviceId,
+    metric: form.get('metric'),
+    comparator: form.get('comparator'),
+    threshold: Number(form.get('threshold')),
+    level: Number(form.get('level')),
+    message: form.get('message'),
+    channel: form.get('channel'),
+    min_duration_s: Number(form.get('min_duration_s') || 0),
+    recovery_margin: Number(form.get('recovery_margin') || 0),
+    urgent: form.get('urgent') === 'on',
+  };
+  if (form.get('recipient')) body.recipient = form.get('recipient');
+  return body;
 }
 
 // ---- Centro de avisos (todas las estaciones) --------------------------------
@@ -221,18 +263,8 @@ export async function renderAlertsCenter(root) {
     const form = new FormData(event.target);
     const device = $('[data-filter="device"]', root).value || stations[0]?.id;
     if (!device) return;
-    const body = {
-      device_id: device,
-      metric: form.get('metric'),
-      comparator: form.get('comparator'),
-      threshold: Number(form.get('threshold')),
-      level: Number(form.get('level')),
-      message: form.get('message'),
-      channel: form.get('channel'),
-    };
-    if (form.get('recipient')) body.recipient = form.get('recipient');
     try {
-      await api('/api/v1/alerts/rules', { method: 'POST', body: JSON.stringify(body) });
+      await api('/api/v1/alerts/rules', { method: 'POST', body: JSON.stringify(ruleBody(form, device)) });
       await load();
     } catch (error) {
       $('[data-alert-error]', root).textContent = `No se pudo crear la regla: ${error.message}`;

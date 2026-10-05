@@ -91,10 +91,13 @@ CREATE TABLE IF NOT EXISTS measurements (
 CREATE INDEX IF NOT EXISTS measurements_device_time_idx ON measurements(device_id, observed_at DESC);
 
 -- Umbrales de medición: la regla que originó un aviso.
+-- min_duration_s exige que la condición se sostenga, recovery_margin evita el
+-- baile alrededor del umbral y urgent marca la excepción de envío inmediato.
+-- condition_* guardan el estado de la condición entre lotes (una por regla).
 CREATE TABLE IF NOT EXISTS alert_rules (
   id bigserial PRIMARY KEY,
   device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-  metric text NOT NULL CHECK (metric IN ('temperature','humidity','pressure','battery','lux')),
+  metric text NOT NULL CHECK (metric IN ('temperature','humidity','pressure','battery','lux','connectivity')),
   comparator text NOT NULL CHECK (comparator IN ('gt','gte','lt','lte')),
   threshold double precision NOT NULL,
   level smallint NOT NULL CHECK (level BETWEEN 1 AND 2),
@@ -102,9 +105,19 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   recipient text,
   channel text NOT NULL DEFAULT 'in_app' CHECK (channel IN ('email','sms','webhook','push','in_app')),
   enabled boolean NOT NULL DEFAULT true,
+  min_duration_s integer NOT NULL DEFAULT 0 CHECK (min_duration_s >= 0),
+  recovery_margin double precision NOT NULL DEFAULT 0 CHECK (recovery_margin >= 0),
+  urgent boolean NOT NULL DEFAULT false,
+  -- Los detectores de sistema (sin comunicación, batería baja) son reglas
+  -- sembradas que el servidor evalúa en su pasada periódica.
+  system boolean NOT NULL DEFAULT false,
+  condition_active boolean NOT NULL DEFAULT false,
+  condition_since timestamptz,
+  active_alert_id bigint,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (device_id, metric, comparator, threshold)
 );
+CREATE INDEX IF NOT EXISTS alert_rules_device_idx ON alert_rules(device_id);
 
 CREATE TABLE IF NOT EXISTS alerts (
   id bigserial PRIMARY KEY,
@@ -127,9 +140,27 @@ CREATE TABLE IF NOT EXISTS alerts (
   delivered_at timestamptz,
   closed_at timestamptz,
   closed_by bigint REFERENCES subscribers(id),
-  closure_reason text
+  closure_reason text,
+  -- Cerrado por el motor al recuperarse la condición, sin intervención humana.
+  auto_resolved boolean NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS alerts_device_time_idx ON alerts(device_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS alerts_open_idx ON alerts(device_id, level) WHERE closed_at IS NULL;
+
+-- Excepción urgente: el servidor pide al equipo que suba la medida crítica en
+-- este despertar. Se libera cuando llega el siguiente envío, y sirve para medir
+-- el coste real en batería antes de asumirlo.
+CREATE TABLE IF NOT EXISTS urgent_directives (
+  id bigserial PRIMARY KEY,
+  device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  rule_id bigint REFERENCES alert_rules(id) ON DELETE SET NULL,
+  reason text NOT NULL,
+  issued_at timestamptz NOT NULL DEFAULT now(),
+  released_at timestamptz,
+  battery_mv_before integer,
+  battery_mv_after integer
+);
+CREATE INDEX IF NOT EXISTS urgent_directives_device_idx ON urgent_directives(device_id, issued_at DESC);
 
 CREATE TABLE IF NOT EXISTS device_configs (
   device_id text PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
@@ -144,6 +175,7 @@ CREATE TABLE IF NOT EXISTS device_config_versions (
   version integer NOT NULL CHECK (version > 0),
   config jsonb NOT NULL,
   requested_version integer,
+  requested_at timestamptz,
   confirmed_version integer,
   changed_by bigint REFERENCES subscribers(id),
   change_reason text,
