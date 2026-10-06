@@ -63,6 +63,55 @@ test('comparadores de límite inferior', () => {
   assert.equal(evaluateRule(recovering, { value: 3350, at: at('2026-01-01T10:00:00Z') }).action, 'recover');
 });
 
+test('el cooldown evita repetir el mismo aviso', () => {
+  const rule = { ...baseRule, cooldownS: 7200, lastAlertAt: at('2026-01-01T08:00:00Z') };
+  // Dentro de las 2 horas no se vuelve a abrir.
+  assert.equal(evaluateRule(rule, { value: 31, at: at('2026-01-01T09:00:00Z') }).action, 'cooldown');
+  // Pasado el cooldown, la condición se evalúa con normalidad.
+  assert.equal(evaluateRule(rule, { value: 31, at: at('2026-01-01T11:00:00Z') }).action, 'open');
+});
+
+test('la recuperación admite umbral propio y debe sostenerse', () => {
+  const rule = {
+    ...baseRule, comparator: 'lt', threshold: 2, recoveryThreshold: 3.5, recoveryDurationS: 900,
+    conditionActive: true, activeAlertOpen: true, activeAlertId: 5,
+  };
+  // A 3 °C sigue por debajo del umbral de recuperación (3,5): se mantiene.
+  assert.equal(evaluateRule(rule, { value: 3, at: at('2026-01-01T06:00:00Z') }).action, 'hold');
+  // A 4 °C empieza a contar el tiempo de recuperación.
+  const first = evaluateRule(rule, { value: 4, at: at('2026-01-01T06:00:00Z') });
+  assert.equal(first.action, 'recovering');
+  assert.equal(first.recoverySince.toISOString(), '2026-01-01T06:00:00.000Z');
+  // A los 10 min todavía no se cierra.
+  assert.equal(evaluateRule({ ...rule, recoverySince: at('2026-01-01T06:00:00Z') },
+    { value: 4, at: at('2026-01-01T06:10:00Z') }).action, 'recovering');
+  // A los 15 min se cierra solo.
+  assert.equal(evaluateRule({ ...rule, recoverySince: at('2026-01-01T06:00:00Z') },
+    { value: 4, at: at('2026-01-01T06:15:01Z') }).action, 'recover');
+});
+
+test('si vuelve a helar durante la recuperación, el reloj se reinicia', () => {
+  const rule = {
+    ...baseRule, comparator: 'lt', threshold: 2, recoveryThreshold: 3.5, recoveryDurationS: 900,
+    activeAlertOpen: true, activeAlertId: 5, recoverySince: at('2026-01-01T06:00:00Z'),
+  };
+  const hold = evaluateRule(rule, { value: 1.5, at: at('2026-01-01T06:05:00Z') });
+  assert.equal(hold.action, 'hold');
+  assert.equal(hold.recoverySince, null);
+});
+
+test('la fila de la base de datos conserva cooldown y recuperación explícita', () => {
+  const rule = ruleFromRow({
+    id: 9, device_id: 'd', metric: 'temperature', comparator: 'lt', threshold: 2, level: 1,
+    category: 'frost', cooldown_s: 7200, recovery_threshold: 3.5, recovery_duration_s: 900,
+    active_alert_id: null,
+  });
+  assert.equal(rule.category, 'frost');
+  assert.equal(rule.cooldownS, 7200);
+  assert.equal(rule.recoveryThreshold, 3.5);
+  assert.equal(rule.recoveryDurationS, 900);
+});
+
 test('la nivelación de batería distingue crítica de baja', () => {
   assert.equal(severityFor(3000, { battery_critical_mv: 3200, battery_low_mv: 3400 }), 1);
   assert.equal(severityFor(3300, { battery_critical_mv: 3200, battery_low_mv: 3400 }), 2);

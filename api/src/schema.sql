@@ -54,6 +54,79 @@ CREATE TABLE IF NOT EXISTS subscriber_devices (
   PRIMARY KEY (subscriber_id, device_id)
 );
 
+-- Finca: agrupa estaciones bajo un nombre que el cliente reconoce. La relación
+-- finca-estación permite saber a qué finca pertenece cada aviso.
+CREATE TABLE IF NOT EXISTS farms (
+  id bigserial PRIMARY KEY,
+  subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  municipality text,
+  latitude double precision,
+  longitude double precision,
+  crop text,
+  livestock text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((latitude IS NULL AND longitude IS NULL) OR
+         (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180))
+);
+
+CREATE TABLE IF NOT EXISTS farm_devices (
+  farm_id bigint NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
+  device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  PRIMARY KEY (farm_id, device_id)
+);
+
+-- Destinatario de avisos: un contacto por canal y suscriptor. `opted_in_at`
+-- concede el envío y `opted_out_at` lo revoca. `verified_at` confirma que la
+-- dirección es del propio interesado (OTP).
+CREATE TABLE IF NOT EXISTS subscriber_contacts (
+  id bigserial PRIMARY KEY,
+  subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+  channel text NOT NULL CHECK (channel IN ('whatsapp','email')),
+  address text NOT NULL,
+  verified_at timestamptz,
+  opted_in_at timestamptz,
+  opted_out_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (subscriber_id, channel)
+);
+
+-- Código de verificación de un contacto. Solo se guarda el hash y el código viaja
+-- una vez por el canal. Caduca y limita intentos para no servir de oráculo.
+CREATE TABLE IF NOT EXISTS contact_verifications (
+  id bigserial PRIMARY KEY,
+  contact_id bigint NOT NULL REFERENCES subscriber_contacts(id) ON DELETE CASCADE,
+  code_hash text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  consumed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS contact_verifications_contact_idx ON contact_verifications(contact_id, created_at DESC);
+
+-- Preferencias de alertas por usuario: qué categorías recibe, por qué canales,
+-- horario silencioso y umbrales propios. Sin fila, se aplican los valores por defecto.
+CREATE TABLE IF NOT EXISTS alert_preferences (
+  subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+  receive_frost boolean NOT NULL DEFAULT true,
+  receive_heat boolean NOT NULL DEFAULT true,
+  receive_storm boolean NOT NULL DEFAULT true,
+  receive_wind boolean NOT NULL DEFAULT true,
+  receive_humidity boolean NOT NULL DEFAULT true,
+  receive_general boolean NOT NULL DEFAULT true,
+  channel_whatsapp boolean NOT NULL DEFAULT true,
+  channel_email boolean NOT NULL DEFAULT true,
+  quiet_start time,
+  quiet_end time,
+  zone text,
+  crop text,
+  custom_thresholds jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((quiet_start IS NULL AND quiet_end IS NULL) OR (quiet_start IS NOT NULL AND quiet_end IS NOT NULL))
+);
+
 CREATE TABLE IF NOT EXISTS web_sessions (
   token_hash text PRIMARY KEY,
   subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
@@ -69,6 +142,29 @@ CREATE TABLE IF NOT EXISTS login_rate_limits (
   updated_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS login_rate_limits_updated_idx ON login_rate_limits(updated_at);
+
+-- Captación pública: una finca pide alertas sin tener cuenta todavía. El consentimiento
+-- se guarda explícito y con fecha, y la cuenta se crea después, cuando el piloto avanza.
+CREATE TABLE IF NOT EXISTS farm_leads (
+  id bigserial PRIMARY KEY,
+  name text NOT NULL,
+  phone text NOT NULL,
+  email text,
+  activity text NOT NULL DEFAULT 'agricultura' CHECK (activity IN ('agricultura','ganaderia','mixta','otra')),
+  zone text,
+  crop_or_livestock text,
+  interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general')),
+  notes text,
+  admin_notes text,
+  consent boolean NOT NULL DEFAULT false,
+  consent_at timestamptz,
+  status text NOT NULL DEFAULT 'nuevo'
+    CHECK (status IN ('nuevo','contactado','interesado','piloto_activo','cliente','descartado')),
+  source text NOT NULL DEFAULT 'web',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS farm_leads_status_idx ON farm_leads(status, created_at DESC);
 
 -- Cada fila conserva lo que el equipo transmitió: instante de medida (observed_at)
 -- e instante de recepción (received_at) son distintos para reconstruir lotes tardíos.
@@ -114,17 +210,27 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   level smallint NOT NULL CHECK (level BETWEEN 1 AND 2),
   message text NOT NULL,
   recipient text,
-  channel text NOT NULL DEFAULT 'in_app' CHECK (channel IN ('email','sms','webhook','push','in_app')),
+  channel text NOT NULL DEFAULT 'in_app' CHECK (channel IN ('email','sms','webhook','push','in_app','whatsapp')),
   enabled boolean NOT NULL DEFAULT true,
   min_duration_s integer NOT NULL DEFAULT 0 CHECK (min_duration_s >= 0),
   recovery_margin double precision NOT NULL DEFAULT 0 CHECK (recovery_margin >= 0),
   urgent boolean NOT NULL DEFAULT false,
+  -- Categoría del aviso: permite filtrar por preferencias del suscriptor.
+  category text NOT NULL DEFAULT 'general'
+    CHECK (category IN ('frost','heat','storm','wind','humidity','general')),
+  -- Cooldown: tras un aviso, no se repite hasta que pase este tiempo.
+  cooldown_s integer NOT NULL DEFAULT 0 CHECK (cooldown_s >= 0),
+  -- Recuperación explícita: umbral propio y tiempo que debe sostenerse para cerrar.
+  recovery_threshold double precision,
+  recovery_duration_s integer NOT NULL DEFAULT 0 CHECK (recovery_duration_s >= 0),
   -- Los detectores de sistema (sin comunicación, batería baja) son reglas
   -- sembradas que el servidor evalúa en su pasada periódica.
   system boolean NOT NULL DEFAULT false,
   condition_active boolean NOT NULL DEFAULT false,
   condition_since timestamptz,
+  recovery_since timestamptz,
   active_alert_id bigint,
+  last_alert_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (device_id, metric, comparator, threshold)
 );
@@ -139,6 +245,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   message text NOT NULL,
   value jsonb NOT NULL DEFAULT '{}'::jsonb,
   source text NOT NULL DEFAULT 'station_measurement' CHECK (source IN ('station_measurement','external_forecast','estimate')),
+  category text NOT NULL DEFAULT 'general'
+    CHECK (category IN ('frost','heat','storm','wind','humidity','general')),
   observed_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   acknowledged_at timestamptz,
@@ -146,7 +254,7 @@ CREATE TABLE IF NOT EXISTS alerts (
   rule_id bigint REFERENCES alert_rules(id) ON DELETE SET NULL,
   rule_snapshot jsonb,
   recipient text,
-  channel text NOT NULL DEFAULT 'in_app' CHECK (channel IN ('email','sms','webhook','push','in_app')),
+  channel text NOT NULL DEFAULT 'in_app' CHECK (channel IN ('email','sms','webhook','push','in_app','whatsapp')),
   delivery_status text NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending','sent','delivered','failed','bounced')),
   delivered_at timestamptz,
   closed_at timestamptz,
@@ -263,3 +371,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 CREATE INDEX IF NOT EXISTS audit_logs_actor_idx ON audit_logs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, target_id, created_at DESC);
+
+-- Cola de entrega de avisos y códigos. El aviso se guarda aunque falle el envío:
+-- la fila conserva el intento, el proveedor y el error para poder reintentarlo.
+CREATE TABLE IF NOT EXISTS notification_outbox (
+  id bigserial PRIMARY KEY,
+  kind text NOT NULL CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice')),
+  alert_id bigint REFERENCES alerts(id) ON DELETE CASCADE,
+  contact_verification_id bigint REFERENCES contact_verifications(id) ON DELETE CASCADE,
+  subscriber_id bigint REFERENCES subscribers(id) ON DELETE SET NULL,
+  channel text NOT NULL CHECK (channel IN ('whatsapp','email')),
+  address text NOT NULL,
+  subject text,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','delivered','failed','manual')),
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  last_error text,
+  provider_message_id text,
+  sent_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS notification_outbox_due_idx ON notification_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS notification_outbox_alert_idx ON notification_outbox(alert_id);

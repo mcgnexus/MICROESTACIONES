@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { sql } from './db.js';
 import { requireSubscriber, requireRole, csrfGuard } from './auth.js';
 import { audit } from './audit.js';
+import { hashPassword, randomToken } from './security.js';
+import { dispatchOutbox, sendWhatsApp, sendEmail } from './notify.js';
+import { LEAD_STATUSES } from './leads.js';
+import { runRetention } from './retention.js';
 
 const router = Router();
 
@@ -164,6 +168,144 @@ router.patch('/pilot-requests/:subscriberId/:requestId', csrfGuard, async (req, 
   await sql`UPDATE subscribers SET pilot_requests = ${sql.json(next)} WHERE id = ${subscriberId}`;
   await audit(sql, req, 'pilot_request.decide', 'subscriber', String(subscriberId), request, updated);
   res.json({ request: updated });
+});
+
+// ---- Captación pública de fincas ------------------------------------------
+
+router.get('/leads', async (req, res) => {
+  const status = LEAD_STATUSES.includes(req.query.status) ? req.query.status : null;
+  const rows = await sql`SELECT id::text AS id, name, phone, email, activity, zone, crop_or_livestock,
+      interest, notes, admin_notes, consent, consent_at, status, source, created_at, updated_at
+    FROM farm_leads
+    ${status ? sql`WHERE status = ${status}` : sql``}
+    ORDER BY created_at DESC LIMIT 500`;
+  res.json({ leads: rows });
+});
+
+const leadPatchSchema = z.object({
+  status: z.enum(LEAD_STATUSES).optional(),
+  admin_notes: z.string().max(1000).optional(),
+}).strict().refine((obj) => Object.keys(obj).length > 0, { message: 'empty_patch' });
+
+router.patch('/leads/:id', csrfGuard, async (req, res) => {
+  const leadId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(leadId) || leadId < 1) return res.status(400).json({ error: 'invalid_id' });
+  const parsed = leadPatchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const [before] = await sql`SELECT id::text AS id, status, admin_notes FROM farm_leads WHERE id = ${leadId}`;
+  if (!before) return res.status(404).json({ error: 'lead_not_found' });
+  const patch = {};
+  if (parsed.data.status !== undefined) patch.status = parsed.data.status;
+  if (parsed.data.admin_notes !== undefined) patch.admin_notes = parsed.data.admin_notes;
+  const [row] = await sql`UPDATE farm_leads SET ${sql(patch)}, updated_at = now()
+    WHERE id = ${leadId} RETURNING id::text AS id, status, admin_notes, updated_at`;
+  await audit(sql, req, 'lead.update', 'farm_lead', before.id, before, row);
+  res.json({ lead: row });
+});
+
+// Activación guiada: convierte una solicitud en un suscriptor real. La contraseña
+// temporal se devuelve una sola vez (como el token de aprovisionamiento) y no se
+// vuelve a mostrar; el cliente debe cambiarla o usarla tal cual.
+const activateSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  plan: z.enum(['free', 'pro', 'enterprise']).optional(),
+}).strict();
+
+router.post('/leads/:id/activate', csrfGuard, async (req, res) => {
+  const leadId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(leadId) || leadId < 1) return res.status(400).json({ error: 'invalid_id' });
+  const parsed = activateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const [lead] = await sql`SELECT id::text AS id, name, phone, status FROM farm_leads WHERE id = ${leadId}`;
+  if (!lead) return res.status(404).json({ error: 'lead_not_found' });
+  const [existing] = await sql`SELECT id FROM subscribers WHERE email = ${parsed.data.email}`;
+  if (existing) return res.status(409).json({ error: 'email_already_registered' });
+
+  const temporaryPassword = randomToken().slice(0, 16);
+  const passwordHash = await hashPassword(temporaryPassword);
+  const subscriber = await sql.begin(async (tx) => {
+    const [created] = await tx`INSERT INTO subscribers (email, password_hash, plan, communication_consent, consent_at)
+      VALUES (${parsed.data.email}, ${passwordHash}, ${parsed.data.plan ?? 'pro'}, true, now())
+      RETURNING id, email, role, plan`;
+    await tx`UPDATE farm_leads SET status = 'piloto_activo', updated_at = now() WHERE id = ${leadId}`;
+    return created;
+  });
+  await audit(sql, req, 'lead.activate', 'farm_lead', lead.id, { status: lead.status }, { subscriber_id: subscriber.id });
+  res.status(201).json({
+    subscriber: { id: subscriber.id, email: subscriber.email, role: subscriber.role, plan: subscriber.plan },
+    temporaryPassword,
+  });
+});
+
+// Envío de prueba: comprueba que el canal del suscriptor está bien configurado.
+router.post('/subscribers/:id/test-message', csrfGuard, async (req, res) => {
+  const subscriberId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(subscriberId) || subscriberId < 1) return res.status(400).json({ error: 'invalid_id' });
+  const contacts = await sql`SELECT channel, address FROM subscriber_contacts
+    WHERE subscriber_id = ${subscriberId}
+    ORDER BY CASE channel WHEN 'whatsapp' THEN 0 ELSE 1 END LIMIT 1`;
+  if (!contacts.length) return res.status(404).json({ error: 'contact_not_found' });
+  const contact = contacts[0];
+  const text = 'Prueba de TecRural: si recibes este mensaje, tus alertas de finca llegarán por este canal.';
+  const result = contact.channel === 'whatsapp'
+    ? await sendWhatsApp(contact.address, text)
+    : await sendEmail(contact.address, 'Prueba de TecRural', text);
+  await audit(sql, req, 'contact.test', 'subscriber', String(subscriberId),
+    null, { channel: contact.channel, ok: result.ok, error: result.error ?? null });
+  res.json({ channel: contact.channel, address: contact.address, ...result });
+});
+
+// ---- Cola de entrega de avisos --------------------------------------------
+
+const OUTBOX_STATUSES = ['pending', 'sending', 'sent', 'delivered', 'failed', 'manual'];
+
+router.get('/outbox', async (req, res) => {
+  const status = OUTBOX_STATUSES.includes(req.query.status) ? req.query.status : null;
+  const rows = await sql`SELECT id::text AS id, kind, alert_id::text AS alert_id, subscriber_id,
+      channel, address, subject, body, status, attempts, next_attempt_at, last_error,
+      provider_message_id, sent_at, created_at
+    FROM notification_outbox
+    ${status ? sql`WHERE status = ${status}` : sql``}
+    ORDER BY created_at DESC LIMIT 200`;
+  res.json({ outbox: rows });
+});
+
+router.post('/outbox/dispatch', csrfGuard, async (req, res) => {
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '50', 10) || 50, 1), 200);
+  const result = await dispatchOutbox({ limit });
+  await audit(sql, req, 'outbox.dispatch', 'notification_outbox', null, null, result);
+  res.json(result);
+});
+
+// Marca de forma manual un envío de la bandeja (por ejemplo, un WhatsApp enviado a mano).
+const outboxPatchSchema = z.object({ status: z.enum(['sent', 'failed', 'pending', 'manual']) }).strict();
+
+router.patch('/outbox/:id', csrfGuard, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'invalid_id' });
+  const parsed = outboxPatchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const [before] = await sql`SELECT id::text AS id, status, alert_id FROM notification_outbox WHERE id = ${id}`;
+  if (!before) return res.status(404).json({ error: 'outbox_not_found' });
+  const status = parsed.data.status;
+  const [row] = await sql`UPDATE notification_outbox SET status = ${status},
+      sent_at = CASE WHEN ${status} = 'sent' THEN now() ELSE sent_at END,
+      last_error = CASE WHEN ${status} = 'sent' THEN null ELSE last_error END,
+      updated_at = now()
+    WHERE id = ${id} RETURNING id::text AS id, status, sent_at`;
+  if (status === 'sent' && before.alertId) {
+    await sql`UPDATE alerts SET delivery_status = 'delivered', delivered_at = now() WHERE id = ${before.alertId}`;
+  }
+  await audit(sql, req, 'outbox.update', 'notification_outbox', before.id, { status: before.status }, { status });
+  res.json({ outbox: row });
+});
+
+// ---- Retención de datos ---------------------------------------------------
+
+router.post('/maintenance/retention', csrfGuard, async (req, res) => {
+  const result = await runRetention(sql);
+  await audit(sql, req, 'retention.run', 'system', null, null, result);
+  res.json(result);
 });
 
 // ---- Auditoría -------------------------------------------------------------

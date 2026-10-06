@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "migrate": "node src/migrate.js",
+    "retention": "node src/retention-cli.js",
     "create-user": "node src/create-user.js",
     "provision-device": "node src/provision-device.js",
     "test": "node --test",

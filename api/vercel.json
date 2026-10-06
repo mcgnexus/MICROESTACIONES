@@ -17,6 +17,8 @@
     }
   ],
   "rewrites": [
+    { "source": "/robots.txt", "destination": "/api/index" },
+    { "source": "/sitemap.xml", "destination": "/api/index" },
     { "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)", "destination": "/api/index" }
   ]
 }

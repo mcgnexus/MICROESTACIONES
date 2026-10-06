@@ -1,9 +1,11 @@
 import {
-  $, api, escapeText, dateText, numberText, pressureText, canEdit,
+  $, api, escapeText, dateText, numberText, pressureText, canEdit, session,
   METRIC_LABELS, COMPARATOR_LABELS, CHANNEL_LABELS, ALERT_LEVELS,
 } from './ui.js';
+import { renderAlertsList } from './alert-copy.js';
 
 const DELIVERY_LABELS = { pending: 'pendiente', sent: 'enviado', delivered: 'entregado', failed: 'fallido', bounced: 'rebotado' };
+const CATEGORY_LABELS = { frost: 'Heladas', heat: 'Calor', storm: 'Tormentas', wind: 'Viento', humidity: 'Humedad', general: 'General' };
 
 // Antigüedad de la medida: con lotes de 30 min un aviso no es "de ahora".
 export function ageText(seconds) {
@@ -73,7 +75,7 @@ function ruleRow(rule, editable) {
     ? `<span class="badge badge-warn" title="Desde ${dateText(rule.conditionSince)}">Condición activa</span>`
     : '<span class="badge badge-muted">Inactiva</span>';
   return `<tr${rule.system ? ' class="row-system"' : ''}>
-    <td>${escapeText(METRIC_LABELS[rule.metric] || rule.metric)}${rule.system ? ' <span class="badge badge-muted">sistema</span>' : ''}</td>
+    <td>${escapeText(METRIC_LABELS[rule.metric] || rule.metric)}${rule.system ? ' <span class="badge badge-muted">sistema</span>' : ''}${rule.category && rule.category !== 'general' ? `<br><small>${escapeText(CATEGORY_LABELS[rule.category] || rule.category)}</small>` : ''}</td>
     <td>${escapeText(COMPARATOR_LABELS[rule.comparator] || rule.comparator)} ${threshold}</td>
     <td>${escapeText(durationText(rule.minDurationS))}</td>
     <td>${margin}</td>
@@ -120,11 +122,15 @@ function rulesSection(rules, stationId, editable) {
       <label>Condición<select name="comparator">${Object.entries(COMPARATOR_LABELS).map(([key, label]) => `<option value="${key}">${escapeText(label)}</option>`).join('')}</select></label>
       <label data-threshold-label>Umbral<input type="number" step="any" name="threshold" required></label>
       <label>Nivel<select name="level"><option value="2">Aviso</option><option value="1">Prioritario</option></select></label>
+      <label>Categoría<select name="category">${Object.entries(CATEGORY_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'general' ? 'selected' : ''}>${escapeText(label)}</option>`).join('')}</select></label>
       <label>Se sostiene (s)<input type="number" name="min_duration_s" min="0" max="86400" step="60" value="0"></label>
       <label data-margin-label>Margen de recuperación<input type="number" name="recovery_margin" min="0" step="any" value="0"></label>
+      <label>Recuperación a (valor)<input type="number" step="any" name="recovery_threshold" placeholder="opcional"></label>
+      <label>Recuperación sostenida (s)<input type="number" name="recovery_duration_s" min="0" max="86400" step="60" value="0"></label>
+      <label>No repetir (s)<input type="number" name="cooldown_s" min="0" max="604800" step="60" value="0"></label>
       <label>Mensaje<input name="message" required maxlength="200"></label>
       <label>Destinatario<input name="recipient" maxlength="200" placeholder="correo o teléfono"></label>
-      <label>Canal<select name="channel">${Object.entries(CHANNEL_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'in_app' ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label>Canal<select name="channel">${Object.entries(CHANNEL_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'in_app' ? 'selected' : ''}>${escapeText(label)}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" name="urgent"> Urgente: pedir envío inmediato</label>
       <button type="submit">Crear regla</button>
     </form>` : ''}
@@ -191,10 +197,14 @@ function ruleBody(form, deviceId) {
     level: Number(form.get('level')),
     message: form.get('message'),
     channel: form.get('channel'),
+    category: form.get('category') || 'general',
     min_duration_s: Number(form.get('min_duration_s') || 0),
     recovery_margin: Number(form.get('recovery_margin') || 0) * unitScale,
+    recovery_duration_s: Number(form.get('recovery_duration_s') || 0),
+    cooldown_s: Number(form.get('cooldown_s') || 0),
     urgent: form.get('urgent') === 'on',
   };
+  if (form.get('recovery_threshold')) body.recovery_threshold = Number(form.get('recovery_threshold')) * unitScale;
   if (form.get('recipient')) body.recipient = form.get('recipient');
   return body;
 }
@@ -217,10 +227,7 @@ export async function renderAlertsCenter(root) {
       </div>
       <p class="error" data-alert-error role="alert"></p>
       <p class="coverage" data-counts></p>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Nivel</th><th>Aviso</th><th>Estación</th><th>Dato</th><th>Fuente</th><th>Destinatario</th><th>Estado</th><th></th></tr></thead>
-        <tbody data-rows></tbody>
-      </table></div>
+      <div data-rows></div>
     </section>
     <section class="panel" data-rules></section>`;
 
@@ -237,9 +244,8 @@ export async function renderAlertsCenter(root) {
     if (device) params.set('device_id', device);
     try {
       const data = await api(`/api/v1/alerts?${params}`);
-      $('[data-rows]', root).innerHTML = data.alerts.map((alert) => alertRow(alert, editable)).join('')
-        || '<tr><td colspan="8">Sin avisos para estos filtros.</td></tr>';
-      $('[data-counts]', root).textContent = `${data.counts.open} abiertos · ${data.counts.closed} cerrados`;
+      $('[data-rows]', root).innerHTML = renderAlertsList(data.alerts, session.me?.farms || [], { technical: editable });
+      $('[data-counts]', root).textContent = `${data.counts.open} activas · ${data.counts.closed} cerradas`;
       $('[data-rules]', root).innerHTML = rulesSection(
         (await api('/api/v1/alerts/rules')).rules || [], device || stations[0]?.id, editable);
     } catch (error) {

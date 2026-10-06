@@ -91,13 +91,29 @@ export function connectivityBadge(connectivity) {
 const BATTERY = { ok: 'Correcta', low: 'Baja', critical: 'Crítica', unknown: 'Sin dato' };
 export const batteryLabel = (level) => BATTERY[level] || 'Sin dato';
 
+// Soporte telefónico público (llega en /api/v1/public-config al arrancar).
+export function supportText() {
+  const phone = session.support?.supportPhone;
+  if (!phone) return '';
+  const tel = String(phone).replace(/[^\d+]/g, '');
+  return `¿Prefieres hablar? Llámanos al <a href="tel:${escapeText(tel)}">${escapeText(phone)}</a>.`;
+}
+
+export function renderSupport(root = document) {
+  const html = supportText();
+  root.querySelectorAll?.('[data-support]').forEach((element) => {
+    element.innerHTML = html;
+    element.classList.toggle('hidden', !html);
+  });
+}
+
 export const roleLabel = (role) => ({ admin: 'Administrador', operator: 'Operador', viewer: 'Observador' }[role] || role);
 export const planLabel = (plan) => ({ free: 'Gratis', pro: 'Pro', enterprise: 'Empresa' }[plan] || plan);
 export const locationLabel = (type) => ({ urbano: 'Urbano', finca: 'Finca', otro: 'Otro' }[type] || type || '—');
 
 export const METRIC_LABELS = { temperature: 'Temperatura', humidity: 'Humedad', pressure: 'Presión', battery: 'Batería', lux: 'Lux' };
 export const COMPARATOR_LABELS = { gt: '>', gte: '≥', lt: '<', lte: '≤' };
-export const CHANNEL_LABELS = { email: 'Correo', sms: 'SMS', webhook: 'Webhook', push: 'Push', in_app: 'En pantalla' };
+export const CHANNEL_LABELS = { email: 'Correo', sms: 'SMS', webhook: 'Webhook', push: 'Push', in_app: 'En pantalla', whatsapp: 'WhatsApp' };
 export const ALERT_LEVELS = { 1: 'Prioritario', 2: 'Aviso' };
 
 // ---- Gráficas (solo mediciones validadas: el filtro lo hace el servidor) ---

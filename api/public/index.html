@@ -5,26 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#153b2b">
   <meta name="application-name" content="TecRural">
-  <meta name="description" content="Panel de estaciones meteorológicas rurales TecRural">
+  <title>Alertas meteorológicas para fincas en Huéscar | TecRural</title>
+  <meta name="description" content="Microestaciones para agricultores y ganaderos de Huéscar. Recibe alertas locales de heladas, calor, viento y episodios meteorológicos por WhatsApp.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="__SITE_URL__/">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="TecRural">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <title>TecRural · Estaciones</title>
+  <meta name="geo.region" content="ES-GR">
+  <meta name="geo.placename" content="Huéscar">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TecRural">
+  <meta property="og:locale" content="es_ES">
+  <meta property="og:title" content="Alertas meteorológicas para fincas en Huéscar | TecRural">
+  <meta property="og:description" content="Microestaciones para agricultores y ganaderos de Huéscar. Recibe alertas locales de heladas, calor, viento y episodios meteorológicos por WhatsApp.">
+  <meta property="og:url" content="__SITE_URL__/">
+  <meta property="og:image" content="__SITE_URL__/pwa-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="TecRural, alertas meteorológicas para fincas">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Alertas meteorológicas para fincas en Huéscar | TecRural">
+  <meta name="twitter:description" content="Microestaciones para agricultores y ganaderos de Huéscar. Alertas locales por WhatsApp.">
+  <meta name="twitter:image" content="__SITE_URL__/pwa-512.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/png" href="/tecrural-icon.png">
   <link rel="apple-touch-icon" sizes="192x192" href="/pwa-192.png">
   <link rel="stylesheet" href="/app.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "LocalBusiness",
+        "@id": "__SITE_URL__/#tecrural",
+        "name": "TecRural",
+        "description": "Microestaciones y alertas meteorológicas locales para fincas de Huéscar (Granada).",
+        "url": "__SITE_URL__/",
+        "image": "__SITE_URL__/pwa-512.png",
+        "areaServed": { "@type": "City", "name": "Huéscar", "address": { "@type": "PostalAddress", "addressRegion": "Granada", "addressCountry": "ES" } },
+        "knowsAbout": ["heladas", "estrés térmico del ganado", "microclimas", "agricultura", "ganadería"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          { "@type": "Question", "name": "¿En qué se diferencia el casco urbano de la vega de Huéscar?", "acceptedAnswer": { "@type": "Answer", "text": "El casco urbano y la vega pueden estar a pocos kilómetros y tener varios grados de diferencia. La vega y los cauces acumulan humedad y frío, y el casco no representa necesariamente una parcela." } },
+          { "@type": "Question", "name": "¿Cómo avisáis de una helada?", "acceptedAnswer": { "@type": "Answer", "text": "Medimos la temperatura en tu zona y enviamos un aviso preventivo por WhatsApp cuando el riesgo de helada empieza, no cuando ya está helando." } },
+          { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
+          { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
+          { "@type": "Question", "name": "¿Necesito crear una cuenta para pedirlo?", "acceptedAnswer": { "@type": "Answer", "text": "No. Dejas tus datos en el formulario y te contactamos. La cuenta se crea después, cuando la estación se asocia o el piloto avanza." } }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Saltar al contenido</a>
   <header class="topbar">
-    <a class="brand" href="#/panel"><img src="/tecrural-icon.png" alt="" width="42" height="42"><span class="brand-copy">TECRURAL<span>INNOVACIÓN CON RAÍCES</span></span></a>
+    <a class="brand" href="#/"><img src="/tecrural-icon.png" alt="" width="42" height="42"><span class="brand-copy">TECRURAL<span>INNOVACIÓN CON RAÍCES</span></span></a>
     <nav id="main-nav" class="topnav hidden" aria-label="Secciones">
       <a href="#/panel" data-nav="panel">Panel</a>
       <a href="#/estaciones" data-nav="stations">Estaciones</a>
       <a href="#/avisos" data-nav="alerts">Avisos</a>
       <a href="#/admin" data-nav="admin" class="admin-only hidden">Administración</a>
       <a href="#/cuenta" data-nav="account">Cuenta</a>
+    </nav>
+    <nav id="public-nav" class="topnav" aria-label="Página pública">
+      <a href="#/zonas">Zonas</a>
+      <a href="#/alertas">Alertas</a>
+      <a href="#/como-funciona">Cómo funciona</a>
+      <a href="#/solicitar-piloto">Solicitar piloto</a>
+      <a href="#/entrar">Entrar</a>
     </nav>
     <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>.</p>
     <div class="topbar-right">
@@ -34,7 +86,103 @@
     </div>
   </header>
   <main id="main-content" tabindex="-1">
-    <section id="login-view" class="login-card">
+    <section id="landing-view">
+      <div class="landing-hero">
+        <p class="eyebrow">ALERTAS PARA TU FINCA</p>
+        <h1>El tiempo de tu finca no siempre es el tiempo del municipio.</h1>
+        <p class="landing-lead">TecRural mide temperatura, humedad y condiciones locales en diferentes zonas de Huéscar y te avisa cuando existe riesgo meteorológico para tu cultivo o ganado.</p>
+        <a class="cta" href="#solicitar-piloto">Solicitar piloto</a>
+        <p class="landing-login">¿Ya eres cliente o piloto? <a href="#/entrar">Inicia sesión</a></p>
+        <p class="landing-support hidden" data-support></p>
+      </div>
+
+      <section class="landing-section lead-block panel" data-lead-embed data-lead-title="Solicita tu piloto"></section>
+
+      <section id="el-problema" class="landing-section">
+        <p class="eyebrow">EL PROBLEMA</p>
+        <h2>La referencia del municipio no siempre representa tu parcela</h2>
+        <p>AEMET da una referencia valiosa, pero puede quedar lejos de tu explotación:</p>
+        <ul class="problem-list">
+          <li>Puede estar a varios kilómetros de distancia.</li>
+          <li>Puede estar a otra altitud.</li>
+          <li>Puede estar junto a un pantano.</li>
+          <li>Los cultivos de la vega tienen condiciones diferentes.</li>
+          <li>Los cauces generan humedad y temperaturas particulares.</li>
+          <li>El casco urbano no representa necesariamente una parcela.</li>
+        </ul>
+        <a class="cta secondary" href="#solicitar-piloto">Solicitar piloto</a>
+      </section>
+
+      <section id="zonas" class="landing-section">
+        <p class="eyebrow">TRES ZONAS</p>
+        <h2>Así cambian las condiciones dentro del mismo término</h2>
+        <p class="hint" id="zonas-source">Ejemplo ilustrativo con tres puntos de medición, sin coordenadas exactas.</p>
+        <div id="zonas-table">
+          <div class="table-wrap">
+            <table class="comparison-table">
+            <thead><tr><th>Zona</th><th>Temperatura</th><th>Humedad</th><th>Diferencia</th><th>Última lectura</th></tr></thead>
+            <tbody>
+              <tr><td>Casco urbano</td><td>3,1 °C</td><td>82 %</td><td>referencia</td><td>hace 12 min</td></tr>
+              <tr><td>Zona de cultivo 1 · vega</td><td>-0,4 °C</td><td>91 %</td><td>3,5 °C menos</td><td>hace 9 min</td></tr>
+              <tr><td>Zona de cultivo 2 · alto</td><td>-1,8 °C</td><td>88 %</td><td>4,9 °C menos</td><td>hace 15 min</td></tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <p class="hint">Esa diferencia entre zonas es la que separa una helada de ninguna helada.</p>
+        <a class="cta secondary" href="#solicitar-piloto">Solicitar piloto</a>
+      </section>
+
+      <section class="landing-section lead-block panel" data-lead-embed data-lead-title="Solicita tu piloto"></section>
+
+      <section id="alertas" class="landing-section">
+        <p class="eyebrow">QUÉ RECIBES</p>
+        <h2>Alertas claras, sin gráficas ni tecnicismos</h2>
+        <div class="alert-examples">
+          <article class="alert-example tone-alert"><strong>Riesgo de helada</strong><p>“Riesgo de helada entre las 04:00 y las 07:00”.</p></article>
+          <article class="alert-example tone-warn"><strong>Temperatura elevada</strong><p>“Temperatura elevada durante varias horas”.</p></article>
+          <article class="alert-example tone-warn"><strong>Aviso oficial de AEMET</strong><p>“Aviso oficial de AEMET para la zona”, identificado como oficial.</p></article>
+          <article class="alert-example tone-muted"><strong>Viento</strong><p>“Racha de viento elevada”, si se instala anemómetro.</p></article>
+        </div>
+        <p class="hint">Las alertas propias son orientativas, no avisos oficiales. Sobre tormentas, hoy mostramos <strong>avisos oficiales y riesgo meteorológico estimado</strong>: detectarlas con precisión local necesitaría pluviómetro, anemómetro y datos de rayos, que todavía no instalamos.</p>
+        <a class="cta secondary" href="#solicitar-piloto">Solicitar piloto</a>
+      </section>
+
+      <section id="como-funciona" class="landing-section">
+        <p class="eyebrow">CÓMO FUNCIONA</p>
+        <h2>De la finca a tu WhatsApp en cinco pasos</h2>
+        <ol class="landing-steps">
+          <li><strong>1. Instalamos una microestación</strong><span>En tu finca o zona, con la energía y conectividad que necesite.</span></li>
+          <li><strong>2. Mide las condiciones locales</strong><span>Temperatura, humedad, presión y batería, de forma continua.</span></li>
+          <li><strong>3. Comparamos con referencias externas</strong><span>AEMET y modelos meteorológicos, siempre identificados por su fuente.</span></li>
+          <li><strong>4. Detectamos situaciones de riesgo</strong><span>Helada, calor, caída de la estación o batería baja.</span></li>
+          <li><strong>5. Enviamos el aviso por WhatsApp</strong><span>Un mensaje claro con lo que pasa y qué conviene mirar.</span></li>
+        </ol>
+      </section>
+
+      <section id="microclimas" class="landing-section">
+        <p class="eyebrow">MICROCLIMAS</p>
+        <h2>El microclima de Huéscar, finca a finca</h2>
+        <p>Huéscar está en el altiplano de Granada, por encima de los 900 metros, con noches frías incluso en primavera. Dentro del mismo término hay <strong>microclimas</strong> muy distintos: el casco urbano, la vega junto a los cauces y las zonas altas de cultivo.</p>
+        <p>La diferencia entre el casco urbano y la vega se nota sobre todo de madrugada: el aire frío y húmedo se acumula en las zonas bajas y junto al agua. Una <strong>estación meteorológica para agricultura</strong> colocada en la parcela mide lo que de verdad afecta a tu cultivo, no la media del municipio.</p>
+        <p>Por eso trabajamos con <strong>datos meteorológicos de fincas</strong>: temperatura y humedad de cada zona, con avisos de <strong>heladas en Granada</strong> y de <strong>estrés térmico del ganado</strong>.</p>
+      </section>
+
+      <section id="preguntas" class="landing-section">
+        <p class="eyebrow">PREGUNTAS FRECUENTES</p>
+        <h2>Dudas habituales</h2>
+        <div class="faq">
+          <details><summary>¿En qué se diferencia el casco urbano de la vega de Huéscar?</summary><p>Pueden estar a pocos kilómetros y tener varios grados de diferencia. La vega y los cauces acumulan humedad y frío, y el casco urbano no representa necesariamente una parcela.</p></details>
+          <details><summary>¿Cómo me avisáis de una helada?</summary><p>Medimos la temperatura en tu zona y enviamos un aviso preventivo por WhatsApp cuando el riesgo empieza, no cuando ya está helando.</p></details>
+          <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos.</p></details>
+          <details><summary>¿Sirve también para ganadería?</summary><p>Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación.</p></details>
+          <details><summary>¿Necesito crear una cuenta para pedirlo?</summary><p>No. Dejas tus datos en el formulario y te contactamos. La cuenta se crea después, cuando la estación se asocia o el piloto avanza.</p></details>
+        </div>
+      </section>
+
+      <section id="solicitar-piloto" class="landing-section lead-block panel final" data-lead-embed data-lead-title="Solicita tu piloto en tu finca"></section>
+    </section>
+    <section id="login-view" class="login-card hidden">
       <p class="eyebrow">PANEL PRIVADO · SUSCRIPTORES</p>
       <h1>Datos de tu estación</h1>
       <p>Inicia sesión para consultar mediciones, estado y avisos.</p>
@@ -44,9 +192,22 @@
         <button type="submit">Entrar</button>
         <p id="login-error" class="error" role="alert"></p>
       </form>
+      <p class="landing-login"><a href="#/">Volver a la página principal</a></p>
     </section>
     <section id="view-root" class="hidden" aria-live="polite"></section>
   </main>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p><strong>TecRural</strong> · Microestaciones y alertas meteorológicas para fincas en Huéscar (Granada).</p>
+      <p class="footer-links">
+        <a href="/contacto">Contacto</a>
+        <a href="/privacidad">Política de privacidad</a>
+        <a href="/cookies">Política de cookies</a>
+        <a href="/aviso-legal">Aviso legal</a>
+      </p>
+      <p class="footer-support" data-support></p>
+    </div>
+  </footer>
   <nav id="mobile-nav" class="mobile-tab-bar hidden" aria-label="Navegación móvil">
     <a href="#/panel" data-mobile-nav="panel"><span aria-hidden="true">⌂</span>Panel</a>
     <a href="#/estaciones" data-mobile-nav="stations"><span aria-hidden="true">◉</span>Estaciones</a>
@@ -54,7 +215,7 @@
     <a href="#/cuenta" data-mobile-nav="account"><span aria-hidden="true">●</span>Cuenta</a>
   </nav>
   <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
-  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
+  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias. Las alertas propias son orientativas, no avisos oficiales.</p>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

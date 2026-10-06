@@ -5,6 +5,16 @@ import { mountAdminStatistics } from './admin-statistics.js';
 
 const ROLES = ['admin', 'operator', 'viewer'];
 const PLANS = ['free', 'pro', 'enterprise'];
+const LEAD_STATUSES = ['nuevo', 'contactado', 'interesado', 'piloto_activo', 'cliente', 'descartado'];
+const LEAD_STATUS_LABELS = {
+  nuevo: 'Nuevo', contactado: 'Contactado', interesado: 'Interesado',
+  piloto_activo: 'Piloto activo', cliente: 'Cliente', descartado: 'Descartado',
+};
+const ACTIVITY_LABELS = { agricultura: 'Agricultura', ganaderia: 'Ganadería', mixta: 'Agricultura y ganadería', otra: 'Otra' };
+const INTEREST_LABELS = {
+  heladas: 'Heladas', calor: 'Golpes de calor', tormentas: 'Tormentas',
+  viento: 'Viento', humedad: 'Humedad', general: 'Información general',
+};
 
 function subscriberRow(row) {
   return `<tr>
@@ -20,6 +30,41 @@ function subscriberRow(row) {
     <td>${row.stationCount} · ${row.sessionCount} sesiones</td>
     <td class="row-actions">
       <button type="button" data-access="${row.id}" data-email="${escapeText(row.email)}">Accesos</button>
+      <button type="button" class="quiet" data-test="${row.id}">Probar aviso</button>
+    </td>
+  </tr>`;
+}
+
+function manualRow(row) {
+  const digits = String(row.address || '').replace(/[^\d]/g, '');
+  const text = row.body || row.subject || '';
+  const link = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
+  return `<tr>
+    <td>${dateText(row.createdAt)}</td>
+    <td>${escapeText(row.address)}</td>
+    <td><details><summary>Ver mensaje</summary><pre>${escapeText(text)}</pre></details></td>
+    <td class="row-actions">
+      ${link ? `<a class="button-link" href="${escapeText(link)}" target="_blank" rel="noopener noreferrer">Abrir WhatsApp</a>` : ''}
+      <button type="button" data-outbox-sent="${escapeText(row.id)}">Marcar enviado</button>
+    </td>
+  </tr>`;
+}
+
+function leadRow(lead) {
+  const contact = [lead.phone, lead.email].filter(Boolean).join(' · ');
+  const detail = [
+    ACTIVITY_LABELS[lead.activity] || lead.activity,
+    lead.cropOrLivestock,
+    INTEREST_LABELS[lead.interest] || lead.interest,
+  ].filter(Boolean).join(' · ');
+  return `<tr>
+    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div></td>
+    <td>${escapeText(lead.zone || '—')}<div class="alert-detail">${escapeText(detail || '—')}</div></td>
+    <td>${dateText(lead.createdAt)}</td>
+    <td><select data-lead-status="${lead.id}">${LEAD_STATUSES.map((status) =>
+      `<option value="${status}" ${lead.status === status ? 'selected' : ''}>${LEAD_STATUS_LABELS[status]}</option>`).join('')}</select></td>
+    <td class="row-actions">
+      <button type="button" data-activate="${lead.id}" data-email="${escapeText(lead.email || '')}">Crear cuenta</button>
     </td>
   </tr>`;
 }
@@ -56,6 +101,21 @@ export async function renderAdmin(root) {
       <div class="table-wrap"><table>
         <thead><tr><th>Usuario</th><th>Rol</th><th>Plan</th><th>Estado</th><th>Consentimiento</th><th>Acceso</th><th></th></tr></thead>
         <tbody data-subscribers></tbody>
+      </table></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">WHATSAPP MANUAL</p><h2>Envíos pendientes de enviar a mano</h2></div></div>
+      <p class="hint">Durante el piloto no se envía WhatsApp automáticamente. Abre el enlace, envía el mensaje desde tu teléfono y márcalo como enviado.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Fecha</th><th>Destino</th><th>Mensaje</th><th></th></tr></thead>
+        <tbody data-manual></tbody>
+      </table></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">SOLICITUDES WEB</p><h2>Fincas que piden alertas</h2></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Contacto</th><th>Finca</th><th>Fecha</th><th>Estado</th><th></th></tr></thead>
+        <tbody data-leads></tbody>
       </table></div>
     </section>
     <section class="panel hidden" data-access-panel>
@@ -104,12 +164,18 @@ export async function renderAdmin(root) {
   async function load() {
     error('');
     try {
-      const [{ subscribers }, { requests }, audit] = await Promise.all([
+      const [{ subscribers }, { requests }, { leads }, { outbox }, audit] = await Promise.all([
         api('/api/v1/admin/subscribers'),
         api('/api/v1/admin/pilot-requests'),
+        api('/api/v1/admin/leads'),
+        api('/api/v1/admin/outbox?status=manual'),
         api('/api/v1/admin/audit?limit=100'),
       ]);
       $('[data-subscribers]', root).innerHTML = subscribers.map(subscriberRow).join('');
+      $('[data-manual]', root).innerHTML = outbox.map(manualRow).join('')
+        || '<tr><td colspan="4">No hay envíos manuales pendientes.</td></tr>';
+      $('[data-leads]', root).innerHTML = leads.map(leadRow).join('')
+        || '<tr><td colspan="5">Sin solicitudes web.</td></tr>';
       $('[data-pilots]', root).innerHTML = requests.map(pilotRow).join('')
         || '<tr><td colspan="6">Sin solicitudes de piloto.</td></tr>';
       $('[data-audit]', root).innerHTML = audit.entries.map((entry) => `<tr>
@@ -140,6 +206,14 @@ export async function renderAdmin(root) {
     if (el.dataset.role) await patchSubscriber(el.dataset.role, { role: el.value });
     else if (el.dataset.plan) await patchSubscriber(el.dataset.plan, { plan: el.value });
     else if (el.dataset.active) await patchSubscriber(el.dataset.active, { active: el.checked });
+    else if (el.dataset.leadStatus) {
+      try {
+        await api(`/api/v1/admin/leads/${el.dataset.leadStatus}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }) });
+        await load();
+      } catch (error_) {
+        error(`No se pudo actualizar la solicitud: ${error_.message}`);
+      }
+    }
   };
 
   root.onclick = async (event) => {
@@ -154,6 +228,22 @@ export async function renderAdmin(root) {
       } else if (button.dataset.revoke) {
         await api(`/api/v1/admin/subscribers/${button.dataset.subscriber}/access/${encodeURIComponent(button.dataset.revoke)}`, { method: 'DELETE' });
         await loadAccess(button.dataset.subscriber);
+      } else if (button.dataset.activate) {
+        const email = window.prompt('Correo del nuevo suscriptor:', button.dataset.email || '') || '';
+        if (!email) return;
+        const result = await api(`/api/v1/admin/leads/${button.dataset.activate}/activate`, {
+          method: 'POST', body: JSON.stringify({ email }),
+        });
+        window.alert(`Suscriptor creado: ${result.subscriber.email}\nContraseña temporal (se muestra una sola vez): ${result.temporaryPassword}`);
+        await load();
+      } else if (button.dataset.test) {
+        const result = await api(`/api/v1/admin/subscribers/${button.dataset.test}/test-message`, { method: 'POST' });
+        window.alert(result.ok
+          ? `Prueba enviada por ${result.channel} a ${result.address}.`
+          : `No se pudo enviar la prueba: ${result.error}`);
+      } else if (button.dataset.outboxSent) {
+        await api(`/api/v1/admin/outbox/${button.dataset.outboxSent}`, { method: 'PATCH', body: JSON.stringify({ status: 'sent' }) });
+        await load();
       } else if (button.dataset.approve || button.dataset.reject) {
         const [subscriberId, requestId] = (button.dataset.approve || button.dataset.reject).split('/');
         const status = button.dataset.approve ? 'approved' : 'rejected';

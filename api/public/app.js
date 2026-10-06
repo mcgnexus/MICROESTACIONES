@@ -1,14 +1,17 @@
-import { $, api, session, setUnauthorizedHandler, roleLabel } from './js/ui.js';
+import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport } from './js/ui.js';
 import { renderPanel } from './js/panel.js';
 import { renderStations, renderStationDetail } from './js/stations.js';
 import { renderAlertsCenter } from './js/alerts.js';
 import { renderAdmin } from './js/admin.js';
 import { renderAccount } from './js/account.js';
+import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, initLanding } from './js/landing.js';
 
+const landingView = $('#landing-view');
 const loginView = $('#login-view');
 const viewRoot = $('#view-root');
 const logoutButton = $('#logout');
 const mainNav = $('#main-nav');
+const publicNav = $('#public-nav');
 const mobileNav = $('#mobile-nav');
 const sessionChip = $('#session-chip');
 const installButton = $('#install-app');
@@ -40,21 +43,39 @@ installButton.addEventListener('click', async () => {
 
 window.addEventListener('appinstalled', () => installButton.classList.add('hidden'));
 
+function showLanding() {
+  viewTeardown();
+  viewTeardown = () => {};
+  session.me = null;
+  landingView.classList.remove('hidden');
+  loginView.classList.add('hidden');
+  viewRoot.classList.add('hidden');
+  mainNav.classList.add('hidden');
+  publicNav.classList.remove('hidden');
+  mobileNav.classList.add('hidden');
+  logoutButton.classList.add('hidden');
+  sessionChip.classList.add('hidden');
+}
+
 function showLogin() {
   viewTeardown();
   viewTeardown = () => {};
   session.me = null;
+  landingView.classList.add('hidden');
   loginView.classList.remove('hidden');
   viewRoot.classList.add('hidden');
   mainNav.classList.add('hidden');
+  publicNav.classList.add('hidden');
   mobileNav.classList.add('hidden');
   logoutButton.classList.add('hidden');
   sessionChip.classList.add('hidden');
 }
 
 function showApp() {
+  landingView.classList.add('hidden');
   loginView.classList.add('hidden');
   viewRoot.classList.remove('hidden');
+  publicNav.classList.add('hidden');
   mainNav.classList.remove('hidden');
   mobileNav.classList.remove('hidden');
   logoutButton.classList.remove('hidden');
@@ -69,8 +90,9 @@ async function loadMe() {
 }
 
 function currentRoute() {
-  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
-  return { section: parts[0] || 'panel', id: parts[1] ? decodeURIComponent(parts[1]) : null, tab: parts[2] || null };
+  const raw = location.hash.replace(/^#\/?/, '');
+  const parts = raw.split('/').filter(Boolean);
+  return { section: parts[0] || 'landing', id: parts[1] ? decodeURIComponent(parts[1]) : null, tab: parts[2] || null };
 }
 
 function highlightNav(section) {
@@ -85,9 +107,18 @@ function highlightNav(section) {
 }
 
 async function route() {
-  if (!session.me) { showLogin(); return; }
-  showApp();
   const { section, id, tab } = currentRoute();
+  if (!session.me) {
+    // La portada y las páginas públicas no piden sesión. Solo el panel y el
+    // resto de secciones privadas muestran el login.
+    if (section === 'entrar' || PRIVATE_SECTIONS.has(section)) { showLogin(); return; }
+    showLanding();
+    if (PUBLIC_SECTIONS.has(section)) scrollToPublicSection(section);
+    return;
+  }
+  // Con sesión, la portada lleva directo al panel.
+  if (section === 'landing' || section === 'entrar') { location.hash = '#/panel'; return; }
+  showApp();
   highlightNav(section);
   viewTeardown();
   viewTeardown = () => {};
@@ -118,7 +149,7 @@ $('#login-form').addEventListener('submit', async (event) => {
   try {
     await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: form.get('email'), password: form.get('password') }) });
     await loadMe();
-    if (!location.hash || location.hash === '#') location.hash = '#/panel';
+    if (!location.hash || location.hash === '#' || location.hash === '#/entrar') location.hash = '#/panel';
     else await route();
   } catch {
     $('#login-error').textContent = 'No se pudo iniciar sesión. Revisa tus credenciales.';
@@ -127,15 +158,24 @@ $('#login-form').addEventListener('submit', async (event) => {
 
 logoutButton.addEventListener('click', async () => {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
-  showLogin();
+  if (location.hash && location.hash !== '#/') location.hash = '#/';
+  else showLanding();
 });
 
-window.addEventListener('hashchange', () => { if (session.me) route(); });
+window.addEventListener('hashchange', () => route());
 
-try {
-  await loadMe();
-  if (!location.hash || location.hash === '#') location.hash = '#/panel';
-  else await route();
-} catch {
-  showLogin();
-}
+// Rutas "bonitas" (sin hash) que sirve el mismo index.html: se traducen a la
+// ruta hash equivalente para que /panel, /zonas, etc. abran la sección correcta.
+const PATH_ROUTES = {
+  '/panel': '#/panel', '/estaciones': '#/estaciones', '/avisos': '#/avisos', '/cuenta': '#/cuenta',
+  '/como-funciona': '#/como-funciona', '/zonas': '#/zonas', '/alertas': '#/alertas',
+  '/solicitar-piloto': '#/solicitar-piloto', '/entrar': '#/entrar',
+};
+const pathRoute = PATH_ROUTES[location.pathname.replace(/\/+$/, '') || '/'];
+if (pathRoute && !location.hash) history.replaceState(null, '', `/${pathRoute}`);
+
+try { session.support = await api('/api/v1/public-config'); } catch { session.support = null; }
+renderSupport();
+initLanding();
+try { await loadMe(); } catch { session.me = null; }
+await route();

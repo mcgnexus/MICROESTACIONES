@@ -5,6 +5,7 @@ import { requireSubscriber, requireRole, csrfGuard } from './auth.js';
 import { audit } from './audit.js';
 import { alertAge } from './alert-engine.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
+import { renderAlertMessage, sendWhatsApp, sendEmail } from './notify.js';
 
 const router = Router();
 
@@ -18,7 +19,7 @@ async function hasStationAccess(subscriber, deviceId) {
 }
 
 const ALERT_SELECT = sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
-  a.value, a.source, a.observed_at, a.created_at, a.acknowledged_at, a.auto_resolved,
+  a.value, a.source, a.category, a.observed_at, a.created_at, a.acknowledged_at, a.auto_resolved,
   a.rule_id::text AS rule_id, a.rule_snapshot, a.recipient, a.channel, a.delivery_status,
   a.delivered_at, a.closed_at, a.closure_reason, s.email AS closed_by_email
   FROM alerts a
@@ -27,7 +28,7 @@ const ALERT_SELECT = sql`SELECT a.id::text AS id, a.device_id, d.name AS device_
 
 router.get('/', requireSubscriber, async (req, res) => {
   const status = ['open', 'closed', 'all'].includes(req.query.status) ? req.query.status : 'open';
-  const channel = ['email', 'sms', 'webhook', 'push', 'in_app'].includes(req.query.channel) ? req.query.channel : null;
+  const channel = ['email', 'sms', 'webhook', 'push', 'in_app', 'whatsapp'].includes(req.query.channel) ? req.query.channel : null;
   const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '100', 10) || 100, 1), 500);
   if (deviceId && !(await hasStationAccess(req.subscriber, deviceId))) {
@@ -71,10 +72,14 @@ const ruleSchema = z.object({
   level: z.union([z.literal(1), z.literal(2)]),
   message: z.string().min(1).max(200),
   recipient: z.string().max(200).nullable().optional(),
-  channel: z.enum(['email', 'sms', 'webhook', 'push', 'in_app']).default('in_app'),
+  channel: z.enum(['email', 'sms', 'webhook', 'push', 'in_app', 'whatsapp']).default('in_app'),
+  category: z.enum(['frost', 'heat', 'storm', 'wind', 'humidity', 'general']).default('general'),
   enabled: z.boolean().default(true),
   min_duration_s: z.number().int().min(0).max(86400).default(0),
   recovery_margin: z.number().min(0).max(100000).default(0),
+  recovery_threshold: z.number().finite().nullable().optional(),
+  recovery_duration_s: z.number().int().min(0).max(86400).default(0),
+  cooldown_s: z.number().int().min(0).max(604800).default(0),
   urgent: z.boolean().default(false),
 }).strict().superRefine((rule, ctx) => {
   if (rule.urgent && rule.level !== 1) {
@@ -110,10 +115,12 @@ router.post('/rules', requireSubscriber, requireRole('operator'), csrfGuard, asy
   }
   try {
     const [rule] = await sql`INSERT INTO alert_rules (device_id, metric, comparator, threshold, level, message,
-        recipient, channel, enabled, min_duration_s, recovery_margin, urgent)
+        recipient, channel, category, enabled, min_duration_s, recovery_margin, recovery_threshold,
+        recovery_duration_s, cooldown_s, urgent)
       VALUES (${data.device_id}, ${data.metric}, ${data.comparator}, ${data.threshold}, ${data.level},
-        ${data.message}, ${data.recipient ?? null}, ${data.channel}, ${data.enabled},
-        ${data.min_duration_s}, ${data.recovery_margin}, ${data.urgent})
+        ${data.message}, ${data.recipient ?? null}, ${data.channel}, ${data.category}, ${data.enabled},
+        ${data.min_duration_s}, ${data.recovery_margin}, ${data.recovery_threshold ?? null},
+        ${data.recovery_duration_s}, ${data.cooldown_s}, ${data.urgent})
       RETURNING *`;
     await audit(sql, req, 'alert_rule.create', 'alert_rule', String(rule.id), null, data);
     res.status(201).json({ rule });
@@ -198,6 +205,36 @@ router.post('/:id/reopen', requireSubscriber, requireRole('operator'), csrfGuard
   await sql`UPDATE alerts SET closed_at = null, closed_by = null, closure_reason = null WHERE id = ${alert.id}`;
   await audit(sql, req, 'alert.reopen', 'alert', String(alert.id), { closed: true }, null);
   res.json({ reopened: true });
+});
+
+// Envío de prueba de una alerta concreta a la dirección que indique administración.
+// No usa la cola ni afecta a la entrega real: sirve para comprobar el canal.
+const testSchema = z.object({
+  channel: z.enum(['whatsapp', 'email']),
+  address: z.string().min(3).max(254),
+}).strict();
+
+router.post('/:id/test', requireSubscriber, requireRole('admin'), csrfGuard, async (req, res) => {
+  const parsed = testSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const alert = await loadAlert(req.subscriber, req.params.id);
+  if (!alert) return res.status(404).json({ error: 'alert_not_found' });
+  const [device] = await sql`SELECT d.name,
+      (SELECT f.name FROM farm_devices fd JOIN farms f ON f.id = fd.farm_id
+        WHERE fd.device_id = d.id ORDER BY f.name LIMIT 1) AS farm_name
+    FROM devices d WHERE d.id = ${alert.deviceId}`;
+  const value = typeof alert.value === 'number' ? alert.value : alert.value?.value;
+  const { subject, body } = renderAlertMessage({
+    farmName: device?.farmName ?? null, deviceName: device?.name ?? null,
+    metric: alert.ruleSnapshot?.metric, value, message: alert.message, level: alert.level,
+    observedAt: alert.observedAt,
+  });
+  const result = parsed.data.channel === 'whatsapp'
+    ? await sendWhatsApp(parsed.data.address, body)
+    : await sendEmail(parsed.data.address, subject, body);
+  await audit(sql, req, 'alert.test', 'alert', String(alert.id),
+    null, { channel: parsed.data.channel, ok: result.ok, error: result.error ?? null });
+  res.json({ channel: parsed.data.channel, address: parsed.data.address, ...result });
 });
 
 export default router;

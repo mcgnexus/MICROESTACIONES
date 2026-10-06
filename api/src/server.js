@@ -19,6 +19,11 @@ import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 import { weatherForDevice } from './weather.js';
 import adminRouter from './admin.js';
 import accountRouter from './account.js';
+import contactsRouter from './contacts.js';
+import farmsRouter from './farms.js';
+import publicRouter from './public.js';
+import { leadSchema, isHoneypot, leadRateLimitKeys, leadColumns } from './leads.js';
+import { dispatchOutbox, enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -27,6 +32,7 @@ const cookieSecure = process.env.COOKIE_SECURE !== 'false';
 app.disable('x-powered-by');
 if (process.env.TRUST_PROXY === 'true' || process.env.VERCEL) app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb', strict: true }));
+app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Referrer-Policy', 'same-origin');
@@ -39,6 +45,14 @@ app.use((req, res, next) => {
 app.get('/health', async (_req, res) => {
   await sql`SELECT 1`;
   res.json({ status: 'ok' });
+});
+
+// Datos públicos de contacto para la landing y el panel (no expone secretos).
+app.get('/api/v1/public-config', (_req, res) => {
+  res.json({
+    supportPhone: process.env.SUPPORT_PHONE || null,
+    supportWhatsapp: process.env.SUPPORT_WHATSAPP || null,
+  });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -63,6 +77,65 @@ app.post('/api/auth/logout', async (req, res) => {
   if (token) await sql`DELETE FROM web_sessions WHERE token_hash = ${sha256(token)}`;
   res.setHeader('Set-Cookie', 'tr_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + (cookieSecure ? '; Secure' : ''));
   res.status(204).end();
+});
+
+// Captación pública de fincas: el CTA principal de la web llega aquí sin sesión.
+// Se limita por IP y teléfono, y el campo trampa descarta envíos automáticos sin
+// delatar el filtro. El consentimiento es obligatorio en el contrato.
+app.post('/api/v1/leads', async (req, res) => {
+  const parsed = leadSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  if (isHoneypot(parsed.data)) return res.status(201).json({ received: true });
+  const keys = leadRateLimitKeys(req.ip || req.socket.remoteAddress, parsed.data.phone);
+  if (await consumeLoginAttempt(sql, keys, 5)) return res.status(429).json({ error: 'too_many_requests' });
+  const lead = leadColumns(parsed.data);
+  await sql`INSERT INTO farm_leads (name, phone, email, activity, zone, crop_or_livestock, interest,
+      notes, consent, consent_at, source)
+    VALUES (${lead.name}, ${lead.phone}, ${lead.email}, ${lead.activity}, ${lead.zone},
+      ${lead.crop_or_livestock}, ${lead.interest}, ${lead.notes}, true, now(), ${lead.source})`;
+  // La confirmación y el aviso interno se encolan sin bloquear la respuesta: el
+  // lead ya está guardado aunque el proveedor de email todavía no esté listo.
+  enqueueLeadMessages(sql, parsed.data).catch((error) => console.error('aviso de lead:', error.message));
+  res.status(201).json({ received: true });
+});
+
+// ---------------------------------------------------------------------------
+// Webhook de WhatsApp: da de baja a quien responde BAJA/STOP.
+// ---------------------------------------------------------------------------
+const WHATSAPP_WEBHOOK_TOKEN = process.env.WHATSAPP_WEBHOOK_TOKEN || null;
+
+app.get('/api/v1/whatsapp/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && WHATSAPP_WEBHOOK_TOKEN && token === WHATSAPP_WEBHOOK_TOKEN) {
+    return res.type('text/plain').send(String(challenge ?? ''));
+  }
+  return res.status(403).end();
+});
+
+app.post('/api/v1/whatsapp/webhook', async (req, res) => {
+  const provided = req.get('x-webhook-token') || req.query.token;
+  if (WHATSAPP_WEBHOOK_TOKEN && provided !== WHATSAPP_WEBHOOK_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const body = req.body || {};
+  const messages = [];
+  for (const entry of body.entry || []) { // formato Meta
+    for (const change of entry.changes || []) {
+      for (const message of change.value?.messages || []) {
+        messages.push({ from: message.from, text: message.text?.body });
+      }
+    }
+  }
+  if (body.From) { // formato Twilio (urlencoded)
+    messages.push({ from: String(body.From).replace('whatsapp:', ''), text: body.Body });
+  }
+  const results = [];
+  for (const message of messages) {
+    if (message.text) results.push(await handleInboundWhatsApp(sql, message.from, message.text));
+  }
+  res.json({ received: messages.length, results });
 });
 
 // ---------------------------------------------------------------------------
@@ -613,6 +686,9 @@ app.use('/api/v1/stations', stationsRouter);
 app.use('/api/v1/stations', configsRouter);
 app.use('/api/v1/alerts', alertsRouter);
 app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1/contacts', contactsRouter);
+app.use('/api/v1/farms', farmsRouter);
+app.use('/api/v1/public', publicRouter);
 app.use('/api/v1', accountRouter);
 
 // ---------------------------------------------------------------------------
@@ -658,11 +734,90 @@ if (process.env.SYSTEM_EVAL_DISABLED !== 'true') {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Entrega de avisos y códigos (WhatsApp, email)
+// ---------------------------------------------------------------------------
+// La cola se procesa igual que los detectores: temporizador en proceso largo y
+// pasada ligada a peticiones reales en Vercel, con anti-reintentos por intervalo.
+const OUTBOX_EVAL_MS = Math.max(30, Number(process.env.OUTBOX_EVAL_INTERVAL_S || 60)) * 1000;
+let outboxPass = null;
+let lastOutboxPass = 0;
+
+async function runOutboxPass() {
+  if (outboxPass) return outboxPass;
+  outboxPass = dispatchOutbox()
+    .then((result) => {
+      lastOutboxPass = Date.now();
+      if (result.processed) console.log(`entrega: ${result.sent} enviados, ${result.failed} fallidos`);
+      return result;
+    })
+    .catch((error) => { console.error('pasada de entrega:', error.message); return { processed: 0, sent: 0, failed: 0 }; })
+    .finally(() => { outboxPass = null; });
+  return outboxPass;
+}
+
+if (process.env.OUTBOX_DISPATCH_DISABLED !== 'true') {
+  if (!isServerless) {
+    const outboxTimer = setInterval(runOutboxPass, OUTBOX_EVAL_MS);
+    outboxTimer.unref();
+    const outboxKick = setTimeout(runOutboxPass, 8000);
+    outboxKick.unref();
+  } else {
+    app.use((req, res, next) => {
+      if (!req.path.startsWith('/api/v1/')) return next();
+      if (Date.now() - lastOutboxPass < OUTBOX_EVAL_MS) return next();
+      runOutboxPass().catch(() => {});
+      next();
+    });
+  }
+}
+
+const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const siteUrl = (process.env.PUBLIC_SITE_URL || 'https://tecrural-microestacion.vercel.app').replace(/\/+$/, '');
+const renderPage = async (file) => (await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8'))
+  .replaceAll('__SITE_URL__', siteUrl)
+  .replaceAll('__SUPPORT_PHONE__', process.env.SUPPORT_PHONE || '')
+  .replaceAll('__SUPPORT_WHATSAPP__', process.env.SUPPORT_WHATSAPP || '');
+
+// SEO: robots y sitemap con el dominio real del despliegue.
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain').send(
+    `User-agent: *\nAllow: /\nDisallow: /panel\nDisallow: /admin\nDisallow: /cuenta\nDisallow: /api/\n\nSitemap: ${siteUrl}/sitemap.xml\n`);
+});
+
+app.get('/sitemap.xml', (_req, res) => {
+  const pages = ['/', '/como-funciona', '/zonas', '/solicitar-piloto', '/privacidad', '/aviso-legal', '/cookies', '/contacto'];
+  const urls = pages.map((path) => `  <url><loc>${siteUrl}${path}</loc><changefreq>weekly</changefreq></url>`).join('\n');
+  res.type('application/xml').send(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`);
+});
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
-app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { index: 'index.html', maxAge: 0 }));
-app.get('*path', async (_req, res, next) => {
-  try { res.type('html').send(await readFile(new URL('../public/index.html', import.meta.url))); }
-  catch (error) { next(error); }
+app.use(express.static(publicDir, { index: false, maxAge: 0 }));
+
+// Rutas de la SPA (misma página) y páginas estáticas, con el dominio inyectado.
+const SPA_ROUTES = new Set(['/', '/panel', '/estaciones', '/avisos', '/admin', '/cuenta',
+  '/como-funciona', '/zonas', '/alertas', '/solicitar-piloto', '/entrar']);
+const STATIC_PAGES = {
+  '/privacidad': 'privacidad.html',
+  '/aviso-legal': 'aviso-legal.html',
+  '/cookies': 'cookies.html',
+  '/contacto': 'contacto.html',
+};
+
+app.get('*path', async (req, res, next) => {
+  const path = req.path.replace(/\/+$/, '') || '/';
+  try {
+    if (STATIC_PAGES[path]) {
+      res.type('html').send(await renderPage(STATIC_PAGES[path]));
+      return;
+    }
+    if (SPA_ROUTES.has(path)) {
+      res.type('html').send(await renderPage('index.html'));
+      return;
+    }
+    res.status(404).type('html').send(await renderPage('404.html'));
+  } catch (error) { next(error); }
 });
 
 app.use((error, _req, res, _next) => {

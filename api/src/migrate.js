@@ -68,6 +68,13 @@ const upgrades = [
   `ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_check`,
   `ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_check
      CHECK (metric IN ('temperature','humidity','pressure','battery','lux','connectivity'))`,
+  // El canal WhatsApp se suma a los canales de aviso existentes.
+  `ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_channel_check`,
+  `ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_channel_check
+     CHECK (channel IN ('email','sms','webhook','push','in_app','whatsapp'))`,
+  `ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_channel_check`,
+  `ALTER TABLE alerts ADD CONSTRAINT alerts_channel_check
+     CHECK (channel IN ('email','sms','webhook','push','in_app','whatsapp'))`,
   `CREATE INDEX IF NOT EXISTS alert_rules_device_idx ON alert_rules(device_id)`,
   `CREATE INDEX IF NOT EXISTS alerts_open_idx ON alerts(device_id, level) WHERE closed_at IS NULL`,
 
@@ -106,6 +113,202 @@ const upgrades = [
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS communication_consent boolean NOT NULL DEFAULT false`,
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS consent_at timestamptz`,
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS pilot_requests jsonb NOT NULL DEFAULT '[]'::jsonb`,
+
+  // Captación pública de fincas: alta sin cuenta, revisada por administración.
+  `DO $$ BEGIN
+     CREATE TABLE farm_leads (
+       id bigserial PRIMARY KEY,
+       name text NOT NULL,
+       phone text NOT NULL,
+       email text,
+       activity text NOT NULL DEFAULT 'agricultura' CHECK (activity IN ('agricultura','ganaderia','mixta','otra')),
+       zone text,
+       crop_or_livestock text,
+       interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general')),
+       notes text,
+       admin_notes text,
+       consent boolean NOT NULL DEFAULT false,
+       consent_at timestamptz,
+       status text NOT NULL DEFAULT 'nuevo'
+         CHECK (status IN ('nuevo','contactado','interesado','piloto_activo','cliente','descartado')),
+       source text NOT NULL DEFAULT 'web',
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS farm_leads_status_idx ON farm_leads(status, created_at DESC)`,
+
+  // Migración de la solicitud antigua (municipality/farm_type/crop, estados en inglés)
+  // al modelo de leads actual, conservando los datos ya recibidos.
+  `ALTER TABLE farm_leads ADD COLUMN IF NOT EXISTS email text`,
+  `ALTER TABLE farm_leads ADD COLUMN IF NOT EXISTS interest text`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'farm_leads' AND column_name = 'municipality')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'farm_leads' AND column_name = 'zone') THEN
+       ALTER TABLE farm_leads RENAME COLUMN municipality TO zone;
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'farm_leads' AND column_name = 'farm_type')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'farm_leads' AND column_name = 'activity') THEN
+       ALTER TABLE farm_leads RENAME COLUMN farm_type TO activity;
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'farm_leads' AND column_name = 'crop')
+        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'farm_leads' AND column_name = 'crop_or_livestock') THEN
+       ALTER TABLE farm_leads RENAME COLUMN crop TO crop_or_livestock;
+     END IF;
+   END $$`,
+  `ALTER TABLE farm_leads DROP CONSTRAINT IF EXISTS farm_leads_farm_type_check`,
+  `ALTER TABLE farm_leads DROP CONSTRAINT IF EXISTS farm_leads_activity_check`,
+  `ALTER TABLE farm_leads DROP CONSTRAINT IF EXISTS farm_leads_status_check`,
+  `ALTER TABLE farm_leads DROP CONSTRAINT IF EXISTS farm_leads_interest_check`,
+  `UPDATE farm_leads SET activity = 'otra' WHERE activity = 'otro'`,
+  `UPDATE farm_leads SET status = 'nuevo' WHERE status = 'new'`,
+  `UPDATE farm_leads SET status = 'contactado' WHERE status = 'contacted'`,
+  `UPDATE farm_leads SET status = 'piloto_activo' WHERE status = 'activated'`,
+  `UPDATE farm_leads SET status = 'descartado' WHERE status = 'rejected'`,
+  `ALTER TABLE farm_leads ALTER COLUMN status SET DEFAULT 'nuevo'`,
+  `DO $$ BEGIN
+     ALTER TABLE farm_leads ADD CONSTRAINT farm_leads_activity_check
+       CHECK (activity IN ('agricultura','ganaderia','mixta','otra'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN
+     ALTER TABLE farm_leads ADD CONSTRAINT farm_leads_status_check
+       CHECK (status IN ('nuevo','contactado','interesado','piloto_activo','cliente','descartado'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN
+     ALTER TABLE farm_leads ADD CONSTRAINT farm_leads_interest_check
+       CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+
+  // Finca, estaciones asociadas y destinatarios de avisos.
+  `DO $$ BEGIN
+     CREATE TABLE farms (
+       id bigserial PRIMARY KEY,
+       subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+       name text NOT NULL,
+       municipality text,
+       latitude double precision,
+       longitude double precision,
+       crop text,
+       livestock text,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now(),
+       CHECK ((latitude IS NULL AND longitude IS NULL) OR
+              (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180))
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `DO $$ BEGIN
+     CREATE TABLE farm_devices (
+       farm_id bigint NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
+       device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       PRIMARY KEY (farm_id, device_id)
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `DO $$ BEGIN
+     CREATE TABLE subscriber_contacts (
+       id bigserial PRIMARY KEY,
+       subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+       channel text NOT NULL CHECK (channel IN ('whatsapp','email')),
+       address text NOT NULL,
+       verified_at timestamptz,
+       opted_in_at timestamptz,
+       opted_out_at timestamptz,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now(),
+       UNIQUE (subscriber_id, channel)
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `DO $$ BEGIN
+     CREATE TABLE contact_verifications (
+       id bigserial PRIMARY KEY,
+       contact_id bigint NOT NULL REFERENCES subscriber_contacts(id) ON DELETE CASCADE,
+       code_hash text NOT NULL,
+       expires_at timestamptz NOT NULL,
+       attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+       consumed_at timestamptz,
+       created_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS contact_verifications_contact_idx ON contact_verifications(contact_id, created_at DESC)`,
+  `DO $$ BEGIN
+     CREATE TABLE notification_outbox (
+       id bigserial PRIMARY KEY,
+       kind text NOT NULL CHECK (kind IN ('alert','contact_verification')),
+       alert_id bigint REFERENCES alerts(id) ON DELETE CASCADE,
+       contact_verification_id bigint REFERENCES contact_verifications(id) ON DELETE CASCADE,
+       subscriber_id bigint REFERENCES subscribers(id) ON DELETE SET NULL,
+       channel text NOT NULL CHECK (channel IN ('whatsapp','email')),
+       address text NOT NULL,
+       subject text,
+       body text NOT NULL,
+       status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','delivered','failed')),
+       attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+       next_attempt_at timestamptz NOT NULL DEFAULT now(),
+       last_error text,
+       provider_message_id text,
+       sent_at timestamptz,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_due_idx ON notification_outbox(status, next_attempt_at)`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_alert_idx ON notification_outbox(alert_id)`,
+  // La cola de entrega también admite la confirmación al visitante y el aviso interno.
+  `ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_kind_check`,
+  `DO $$ BEGIN
+     ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_kind_check
+       CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  // Modo piloto: el WhatsApp se envía a mano, así que el envío queda en 'manual'.
+  `ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_status_check`,
+  `DO $$ BEGIN
+     ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_status_check
+       CHECK (status IN ('pending','sending','sent','delivered','failed','manual'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+
+  // Diseño de alertas: categoría, cooldown, recuperación explícita y último aviso.
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'general'`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS cooldown_s integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS recovery_threshold double precision`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS recovery_duration_s integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS recovery_since timestamptz`,
+  `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS last_alert_at timestamptz`,
+  `ALTER TABLE alerts ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'general'`,
+  `ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_category_check`,
+  `DO $$ BEGIN
+     ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_category_check
+       CHECK (category IN ('frost','heat','storm','wind','humidity','general'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_category_check`,
+  `DO $$ BEGIN
+     ALTER TABLE alerts ADD CONSTRAINT alerts_category_check
+       CHECK (category IN ('frost','heat','storm','wind','humidity','general'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+
+  // Preferencias de alertas por usuario.
+  `DO $$ BEGIN
+     CREATE TABLE alert_preferences (
+       subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+       receive_frost boolean NOT NULL DEFAULT true,
+       receive_heat boolean NOT NULL DEFAULT true,
+       receive_storm boolean NOT NULL DEFAULT true,
+       receive_wind boolean NOT NULL DEFAULT true,
+       receive_humidity boolean NOT NULL DEFAULT true,
+       receive_general boolean NOT NULL DEFAULT true,
+       channel_whatsapp boolean NOT NULL DEFAULT true,
+       channel_email boolean NOT NULL DEFAULT true,
+       quiet_start time,
+       quiet_end time,
+       zone text,
+       crop text,
+       custom_thresholds jsonb NOT NULL DEFAULT '{}'::jsonb,
+       updated_at timestamptz NOT NULL DEFAULT now(),
+       CHECK ((quiet_start IS NULL AND quiet_end IS NULL) OR (quiet_start IS NOT NULL AND quiet_end IS NOT NULL))
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
 
   `CREATE INDEX IF NOT EXISTS measurements_validated_idx ON measurements(device_id, observed_at DESC) WHERE is_validated = true`,
   `CREATE INDEX IF NOT EXISTS measurements_deleted_idx ON measurements(deleted_at) WHERE deleted_at IS NOT NULL`,

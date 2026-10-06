@@ -7,6 +7,7 @@
 // con el mismo motor, pero en la pasada periódica del servidor.
 
 import { sql } from './db.js';
+import { enqueueAlertNotifications } from './notify.js';
 
 export const METRIC_KEYS = {
   temperature: 'temp_c',
@@ -38,25 +39,62 @@ export const hits = (comparator, value, threshold) => COMPARATORS[comparator](va
 export const recoveryHit = (comparator, value, threshold, margin) =>
   RECOVERY[comparator](value, threshold, Number(margin) || 0);
 
+// ¿La medida ya está en el lado seguro? Si la regla declara un umbral de
+// recuperación explícito, manda ese (p. ej. resolver helada a 3,5 °C); si no,
+// se usa el umbral con el margen.
+export function recoverySatisfied(rule, value) {
+  if (rule.recoveryThreshold != null && Number.isFinite(Number(rule.recoveryThreshold))) {
+    const target = Number(rule.recoveryThreshold);
+    switch (rule.comparator) {
+      case 'gt': return value <= target;
+      case 'gte': return value < target;
+      case 'lt': return value >= target;
+      case 'lte': return value > target;
+      default: return false;
+    }
+  }
+  // Sin umbral explícito: la medida está a salvo cuando ya NO está dentro de la
+  // zona de histéresis (recoveryHit describe "sigue dentro").
+  return !recoveryHit(rule.comparator, value, Number(rule.threshold), Number(rule.recoveryMargin) || 0);
+}
+
 // Máquina de estados de una regla frente a una muestra.
-// Devuelve: idle | pending | open | hold | recover
+// Devuelve: idle | start | pending | cooldown | open | hold | recovering | recover
 export function evaluateRule(rule, sample) {
   const { value, at } = sample;
   const moment = at instanceof Date ? at : new Date(at);
   if (value == null || !Number.isFinite(Number(value))) return { action: 'idle', at: moment };
   const measured = Number(value);
   const threshold = Number(rule.threshold);
-  const margin = Number(rule.recoveryMargin ?? 0) || 0;
   const minDuration = Number(rule.minDurationS ?? 0) || 0;
+  const recoveryDuration = Number(rule.recoveryDurationS ?? 0) || 0;
+  const cooldown = Number(rule.cooldownS ?? 0) || 0;
 
+  // Aviso abierto: se cierra solo cuando la medida vuelve al lado seguro y, si
+  // la regla lo exige, se mantiene ahí durante recovery_duration_s.
   if (rule.activeAlertOpen) {
-    if (recoveryHit(rule.comparator, measured, threshold, margin)) {
-      return { action: 'hold', at: moment, value: measured, alertId: rule.activeAlertId };
+    if (!recoverySatisfied(rule, measured)) {
+      return { action: 'hold', at: moment, value: measured, alertId: rule.activeAlertId, recoverySince: null };
     }
-    return { action: 'recover', at: moment, value: measured, alertId: rule.activeAlertId };
+    if (recoveryDuration <= 0) return { action: 'recover', at: moment, value: measured, alertId: rule.activeAlertId };
+    const since = rule.recoverySince ? new Date(rule.recoverySince) : moment;
+    const elapsed = (moment.getTime() - since.getTime()) / 1000;
+    if (elapsed >= recoveryDuration) return { action: 'recover', at: moment, value: measured, alertId: rule.activeAlertId };
+    return { action: 'recovering', at: moment, value: measured, alertId: rule.activeAlertId, recoverySince: since };
   }
 
   if (!hits(rule.comparator, measured, threshold)) return { action: 'idle', at: moment, value: measured };
+
+  // Cooldown: tras un aviso previo no se repite hasta que pase el tiempo indicado.
+  if (cooldown > 0 && rule.lastAlertAt) {
+    const last = new Date(rule.lastAlertAt).getTime();
+    if (Number.isFinite(last) && moment.getTime() - last < cooldown * 1000) {
+      return {
+        action: 'cooldown', at: moment, value: measured,
+        conditionSince: rule.conditionSince ? new Date(rule.conditionSince) : moment,
+      };
+    }
+  }
 
   // Sin duración mínima, la primera medida que incumple ya abre el aviso.
   if (!rule.conditionActive) {
@@ -131,10 +169,16 @@ export function ruleFromRow(row) {
     enabled: pick('enabled', 'enabled', true),
     urgent: !!pick('urgent', 'urgent', false),
     system: !!pick('system', 'system', false),
+    category: pick('category', 'category', 'general'),
     minDurationS: Number(pick('minDurationS', 'min_duration_s', 0)),
     recoveryMargin: Number(pick('recoveryMargin', 'recovery_margin', 0)),
+    recoveryThreshold: pick('recoveryThreshold', 'recovery_threshold'),
+    recoveryDurationS: Number(pick('recoveryDurationS', 'recovery_duration_s', 0)),
+    cooldownS: Number(pick('cooldownS', 'cooldown_s', 0)),
     conditionActive: !!pick('conditionActive', 'condition_active', false),
     conditionSince: pick('conditionSince', 'condition_since'),
+    recoverySince: pick('recoverySince', 'recovery_since'),
+    lastAlertAt: pick('lastAlertAt', 'last_alert_at'),
     activeAlertId: pick('activeAlertId', 'active_alert_id'),
     activeAlertOpen: !!pick('activeAlertId', 'active_alert_id', false),
   };
@@ -168,20 +212,32 @@ async function openAlert(tx, { deviceId, measurementId, rule, value, at, config,
   // Clave estable por condición: dos pasadas con la misma condición no crean dos avisos.
   const onset = new Date(conditionSince ?? at).getTime();
   const dedupeKey = `rule:${rule.id}:${onset}`;
+  const category = rule.category ?? 'general';
   const snapshot = {
     metric: rule.metric, comparator: rule.comparator, threshold: Number(rule.threshold),
     value, margin: rule.recoveryMargin, min_duration_s: rule.minDurationS,
-    urgent: !!rule.urgent, condition_since: new Date(conditionSince ?? at).toISOString(),
+    category, urgent: !!rule.urgent, condition_since: new Date(conditionSince ?? at).toISOString(),
   };
   const isInstant = rule.channel === 'in_app';
   const [alert] = await tx`INSERT INTO alerts
-    (device_id, measurement_id, dedupe_key, level, message, value, source, observed_at,
+    (device_id, measurement_id, dedupe_key, level, message, value, source, category, observed_at,
      rule_id, rule_snapshot, recipient, channel, delivery_status, delivered_at, auto_resolved)
     VALUES (${deviceId}, ${measurementId}, ${dedupeKey}, ${level}, ${message}, ${tx.json({ value })},
-      'station_measurement', ${at}, ${rule.id}, ${tx.json(snapshot)}, ${rule.recipient ?? null},
+      'station_measurement', ${category}, ${at}, ${rule.id}, ${tx.json(snapshot)}, ${rule.recipient ?? null},
       ${rule.channel}, ${isInstant ? 'delivered' : 'pending'}, ${isInstant ? new Date() : null}, false)
     ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`;
-  if (alert) return alert;
+  if (alert) {
+    // Se encola para los destinatarios verificados. Sin ninguno, un aviso de un
+    // canal externo queda como fallido en vez de simular una entrega.
+    const recipients = await enqueueAlertNotifications(tx, {
+      alertId: alert.id, deviceId, metric: rule.metric, value, message, level,
+      category, observedAt: at,
+    });
+    if (!isInstant && recipients === 0) {
+      await tx`UPDATE alerts SET delivery_status = 'failed' WHERE id = ${alert.id}`;
+    }
+    return alert;
+  }
   // La condición ya tenía aviso (pasada duplicada): se reutiliza su identificador.
   const [existing] = await tx`SELECT id FROM alerts WHERE dedupe_key = ${dedupeKey}`;
   return existing ?? null;
@@ -200,23 +256,33 @@ export async function evaluateMeasurementRules(tx, { deviceId, measurementId, va
       await tx`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.at} WHERE id = ${rule.id}`;
     } else if (outcome.action === 'pending') {
       await tx`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.conditionSince} WHERE id = ${rule.id}`;
+    } else if (outcome.action === 'cooldown') {
+      // Sigue la condición pero el aviso se calla hasta que pase el cooldown.
+      await tx`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.conditionSince} WHERE id = ${rule.id}`;
     } else if (outcome.action === 'idle') {
       if (rule.conditionActive) {
-        await tx`UPDATE alert_rules SET condition_active = false, condition_since = NULL WHERE id = ${rule.id}`;
+        await tx`UPDATE alert_rules SET condition_active = false, condition_since = NULL, recovery_since = NULL WHERE id = ${rule.id}`;
       }
-} else if (outcome.action === 'open') {
+    } else if (outcome.action === 'open') {
       const alert = await openAlert(tx, {
         deviceId, measurementId, rule, value: outcome.value, at: outcome.at,
         config, conditionSince: outcome.conditionSince,
       });
       await tx`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.conditionSince},
-          active_alert_id = ${alert?.id ?? null} WHERE id = ${rule.id}`;
+          active_alert_id = ${alert?.id ?? null}, last_alert_at = now(), recovery_since = NULL WHERE id = ${rule.id}`;
       if (alert && rule.urgent) {
         await issueUrgentDirective(tx, { deviceId, ruleId: rule.id, reason: rule.message, batteryMv: values.batt_mv ?? null });
       }
       if (alert) opened.push({ alert, rule });
     } else if (outcome.action === 'hold') {
-      // La histéresis mantiene el aviso: no hay nada que hacer.
+      // La condición sigue: si había empezado a recuperarse, se reinicia el reloj.
+      if (rule.recoverySince) {
+        await tx`UPDATE alert_rules SET recovery_since = NULL WHERE id = ${rule.id}`;
+      }
+    } else if (outcome.action === 'recovering') {
+      if (!rule.recoverySince) {
+        await tx`UPDATE alert_rules SET recovery_since = ${outcome.recoverySince} WHERE id = ${rule.id}`;
+      }
     } else if (outcome.action === 'recover') {
       if (outcome.alertId) {
         await tx`UPDATE alerts SET closed_at = now(), closed_by = NULL,
@@ -225,7 +291,7 @@ export async function evaluateMeasurementRules(tx, { deviceId, measurementId, va
         recovered.push(Number(outcome.alertId));
       }
       await tx`UPDATE alert_rules SET condition_active = false, condition_since = NULL,
-          active_alert_id = NULL WHERE id = ${rule.id}`;
+          active_alert_id = NULL, recovery_since = NULL WHERE id = ${rule.id}`;
     }
   }
   return { opened, recovered };
@@ -315,15 +381,23 @@ async function applySystemRule(row, { deviceId, value, at, config, threshold }) 
   if (outcome.action === 'start' || outcome.action === 'pending') {
     await client`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.at} WHERE id = ${rule.id}`;
     changes.push(outcome.action);
+  } else if (outcome.action === 'cooldown') {
+    await client`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.conditionSince} WHERE id = ${rule.id}`;
   } else if (outcome.action === 'idle' && rule.conditionActive) {
-    await client`UPDATE alert_rules SET condition_active = false, condition_since = NULL WHERE id = ${rule.id}`;
+    await client`UPDATE alert_rules SET condition_active = false, condition_since = NULL, recovery_since = NULL WHERE id = ${rule.id}`;
+  } else if (outcome.action === 'hold' && rule.recoverySince) {
+    await client`UPDATE alert_rules SET recovery_since = NULL WHERE id = ${rule.id}`;
+  } else if (outcome.action === 'recovering') {
+    if (!rule.recoverySince) {
+      await client`UPDATE alert_rules SET recovery_since = ${outcome.recoverySince} WHERE id = ${rule.id}`;
+    }
   } else if (outcome.action === 'open') {
     const alert = await openAlert(client, {
       deviceId, measurementId: null, rule, value, at, config,
       conditionSince: outcome.conditionSince,
     });
     await client`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.conditionSince},
-        active_alert_id = ${alert?.id ?? null} WHERE id = ${rule.id}`;
+        active_alert_id = ${alert?.id ?? null}, last_alert_at = now(), recovery_since = NULL WHERE id = ${rule.id}`;
     if (alert) changes.push('opened');
   } else if (outcome.action === 'recover') {
     if (outcome.alertId) {
@@ -333,7 +407,7 @@ async function applySystemRule(row, { deviceId, value, at, config, threshold }) 
       changes.push('recovered');
     }
     await client`UPDATE alert_rules SET condition_active = false, condition_since = NULL,
-        active_alert_id = NULL WHERE id = ${rule.id}`;
+        active_alert_id = NULL, recovery_since = NULL WHERE id = ${rule.id}`;
   }
   return changes.map((change) => ({ deviceId, ruleId: rule.id, change }));
 }

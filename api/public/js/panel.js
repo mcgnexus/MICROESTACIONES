@@ -1,8 +1,10 @@
 import {
   $, api, escapeText, dateText, dayText, numberText, pressureMbar, pressureText, chartTrend,
-  chartSection, connectivityBadge, openDialog, makeChart, trendWindowRows,
+  chartSection, connectivityBadge, openDialog, makeChart, trendWindowRows, session, renderSupport, isAdmin,
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
+import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
+import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison } from './farm-cards.js';
 
 const REFRESH_MS = 15 * 60 * 1000;
 
@@ -444,43 +446,155 @@ function renderAlertRow(alert) {
   </div>`;
 }
 
-function focusMainCard(root) {
-  const card = root.querySelector('.dashboard-station-card');
-  if (!card) return;
-  requestAnimationFrame(() => {
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    card.classList.add('dashboard-station-card--focus');
-    setTimeout(() => card.classList.remove('dashboard-station-card--focus'), 1800);
-  });
+function renderOpenAlert(alert) {
+  const tone = alert.level === 1 ? 'alert' : 'warn';
+  return `<article class="plain-alert tone-${tone}">
+    <div class="plain-alert-head"><strong>${escapeText(alert.message)}</strong>
+      <span class="overview-tag tone-${tone}">${alert.level === 1 ? 'Prioritario' : 'Aviso'}</span></div>
+    <p class="plain-alert-meta">${escapeText(alert.deviceName)} · ${dateText(alert.observedAt)}</p>
+  </article>`;
 }
 
-export async function renderPanel(root) {
+// Panel sencillo para el agricultor: estado, alertas, próximo riesgo, zonas,
+// histórico y, al final, el detalle técnico. El administrador usa el completo.
+async function renderSimplePanel(root) {
   root.innerHTML = `
     <div class="page-heading">
-      <div><p class="eyebrow">PANEL DE SUSCRIPTOR</p><h1>Estado de las estaciones</h1></div>
-      <label class="period-label">Periodo de gráficas y resúmenes
+      <div><p class="eyebrow">TU FINCA</p><h1>Resumen de un vistazo</h1></div>
+      <label class="period-label">Periodo del histórico
         <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
       </label>
     </div>
     <p class="error" data-error role="alert"></p>
-    <div id="panel-stations" class="station-list"></div>
-    <section class="panel" id="panel-measurements"></section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Avisos recientes</h2></div>
+      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Ahora mismo</h2></div>
+        <a class="link" href="#/avisos">Todas las alertas</a></div>
+      <div id="simple-state"></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">ALERTAS ACTIVAS</p><h2>Lo que requiere tu atención</h2></div>
         <a class="link" href="#/avisos">Centro de avisos</a></div>
-      <div id="panel-alerts" class="alerts"></div>
-    </section>`;
+      <div id="simple-alerts" class="plain-alerts"></div>
+      <p class="hint">Las alertas son orientativas, no avisos oficiales. Comprueba siempre la situación en tu finca.</p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">PRÓXIMO RIESGO</p><h2>Qué puede pasar</h2></div></div>
+      <div id="simple-next"></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">ZONAS</p><h2>Comparación entre zonas</h2></div></div>
+      <div id="simple-zones"></div>
+      <p class="hint">Sin coordenadas exactas: solo lecturas y diferencias entre tus puntos de medición.</p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Últimos avisos</h2></div>
+        <a class="link" href="#/avisos">Ver todos</a></div>
+      <div id="simple-history" class="alerts"></div>
+    </section>
+    <p class="support-line hidden" data-support></p>
+    <details class="technical-details">
+      <summary>Ver detalles técnicos de las estaciones</summary>
+      <div id="simple-stations" class="station-list"></div>
+      <section class="panel" id="simple-measurements"></section>
+    </details>`;
 
   resetStationDetails();
+  renderSupport(root);
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) $('[data-error]', root).textContent = '';
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
+      $('#simple-state', root).innerHTML = renderStateCards(data.devices);
+      const open = data.alerts.filter((alert) => !alert.closedAt);
+      $('#simple-alerts', root).innerHTML = open.length
+        ? open.map(renderOpenAlert).join('')
+        : '<p class="ok">No hay alertas abiertas. Todo tranquilo.</p>';
+      $('#simple-next', root).innerHTML = renderNextRisk(nextRisk(data.devices, data.alerts));
+      $('#simple-zones', root).innerHTML = renderZoneComparison(data.devices);
+      $('#simple-history', root).innerHTML = data.alerts.length
+        ? data.alerts.map(renderAlertRow).join('')
+        : '<p class="empty">No hay avisos recientes.</p>';
+      $('#simple-stations', root).innerHTML = data.devices.length
+        ? data.devices.map(renderStationCard).join('')
+        : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
+      return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
+    } catch (error) {
+      if (error.message === 'authentication_required' || error.message === 'session_expired') return [];
+      $('[data-error]', root).textContent = `No se pudo cargar el panel: ${error.message}`;
+      return [];
+    }
+  };
+
+  const stations = await loadDashboard();
+  mountMeasurements($('#simple-measurements', root), { stations });
+  $('#period', root).addEventListener('change', loadDashboard);
+
+  let refreshTimer = null;
+  let inFlight = false;
+  const silentRefresh = async () => {
+    if (inFlight || document.hidden) return;
+    inFlight = true;
+    try { await loadDashboard({ silent: true }); } finally { inFlight = false; }
+  };
+  const startTimer = () => { stopTimer(); refreshTimer = setInterval(silentRefresh, REFRESH_MS); };
+  const stopTimer = () => { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } };
+  const onVisibility = () => { if (document.hidden) stopTimer(); else { silentRefresh(); startTimer(); } };
+  document.addEventListener('visibilitychange', onVisibility);
+  startTimer();
+  return () => { stopTimer(); document.removeEventListener('visibilitychange', onVisibility); };
+}
+
+export async function renderPanel(root) {
+  if (!isAdmin()) return renderSimplePanel(root);
+  root.innerHTML = `
+    <div class="page-heading">
+      <div><p class="eyebrow">ADMINISTRACIÓN · TU FINCA</p><h1>Estado y alertas</h1></div>
+      <label class="period-label">Periodo del detalle técnico
+        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+      </label>
+    </div>
+    <p class="error" data-error role="alert"></p>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">ESTADO DE LA FINCA</p><h2>Resumen de un vistazo</h2></div>
+        <a class="link" href="#/cuenta">Mis fincas</a></div>
+      <div id="panel-overview" class="farm-overview"></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">MIS ALERTAS</p><h2>Alertas abiertas</h2></div>
+        <a class="link" href="#/avisos">Centro de avisos</a></div>
+      <div id="panel-alerts" class="plain-alerts"></div>
+      <p class="hint">Las alertas son orientativas, no avisos oficiales. Comprueba siempre la situación en tu finca.</p>
+    </section>
+    <p class="support-line hidden" data-support></p>
+    <details class="technical-details">
+      <summary>Ver detalle técnico de las estaciones</summary>
+      <div id="panel-stations" class="station-list"></div>
+      <section class="panel" id="panel-measurements"></section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Historial reciente</h2></div>
+          <a class="link" href="#/avisos">Centro de avisos</a></div>
+        <div id="panel-history" class="alerts"></div>
+      </section>
+    </details>`;
+
+  resetStationDetails();
+  renderSupport(root);
+  const loadDashboard = async ({ silent = false } = {}) => {
+    if (!silent) $('[data-error]', root).textContent = '';
+    try {
+      const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
+      resetStationDetails();
+      const overview = summarizeFarms(session.me?.farms || [], data.devices);
+      $('#panel-overview', root).innerHTML = renderFarmOverview(overview, { updatedAt: new Date().toISOString() });
+      const open = data.alerts.filter((alert) => !alert.closedAt);
+      $('#panel-alerts', root).innerHTML = open.length
+        ? open.map(renderOpenAlert).join('')
+        : '<p class="ok">No hay alertas abiertas. Todo tranquilo.</p>';
       $('#panel-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
-      $('#panel-alerts', root).innerHTML = data.alerts.length
+      $('#panel-history', root).innerHTML = data.alerts.length
         ? data.alerts.map(renderAlertRow).join('')
         : '<p class="empty">No hay avisos recientes.</p>';
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
@@ -494,7 +608,6 @@ export async function renderPanel(root) {
   const stations = await loadDashboard();
   mountMeasurements($('#panel-measurements', root), { stations });
   $('#period', root).addEventListener('change', loadDashboard);
-  focusMainCard(root);
 
   // Refresco silencioso cada 15 minutos; se pausa mientras la pestaña está oculta.
   let refreshTimer = null;
