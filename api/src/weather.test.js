@@ -2,8 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
-  aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice,
+  aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
 } from './weather.js';
+
+test('AEMET sky deduplicates repeated period descriptions', () => {
+  assert.equal(
+    aemetSky([
+      { descripcion: 'Cubierto con lluvia' }, { descripcion: 'Cubierto con lluvia' },
+      { descripcion: 'Muy nuboso' }, { descripcion: '' }, null,
+    ]),
+    'Cubierto con lluvia, Muy nuboso',
+  );
+  assert.equal(aemetSky([]), null);
+  assert.equal(aemetSky(undefined), null);
+});
 
 test('AEMET proximity reports distance and altitude difference against the microstation', () => {
   const proximity = aemetProximityForDevice(

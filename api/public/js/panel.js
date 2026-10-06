@@ -54,7 +54,9 @@ function heroBlock({ latest, history, weather }) {
     : aemetTemperature != null ? 'AEMET · OBSERVACIÓN REAL'
       : openTemperature != null ? 'OPEN-METEO · ESTIMACIÓN' : 'TEMPERATURA · SIN DATO';
   const forecastProvider = aemetDay ? 'AEMET' : openDay ? 'Open-Meteo' : null;
-  const forecastSky = aemetDay?.sky || (openDay ? weatherText(openDay.weatherCode) : 'Sin previsión disponible');
+  const forecastSky = aemetDay?.sky
+    ? aemetDay.sky.split(',')[0].trim()
+    : (openDay ? weatherText(openDay.weatherCode) : 'Sin previsión disponible');
   const minimum = aemetDay?.temperatureMinC ?? openDay?.temperatureMinC;
   const maximum = aemetDay?.temperatureMaxC ?? openDay?.temperatureMaxC;
   return `<section class="station-hero">

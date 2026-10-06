@@ -147,6 +147,14 @@ export function aemetProximityForDevice(device, observation) {
   };
 }
 
+// AEMET publica el estado del cielo por periodos; se deduplican para no repetir el mismo texto.
+export function aemetSky(estadoCielo) {
+  const descriptions = [...new Set((estadoCielo || [])
+    .map((state) => String(state?.descripcion || '').trim())
+    .filter(Boolean))];
+  return descriptions.join(', ') || null;
+}
+
 export function forecastAdvisories(daily = []) {
   const notices = [];
   for (const day of daily) {
@@ -223,7 +231,7 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }) {
         precipitationProbabilityPct: day.probPrecipitacion?.map((p) => Number(p.value)).filter(Number.isFinite).reduce((max, value) => Math.max(max, value), 0) ?? null,
         windKmh: day.viento?.map((w) => Number(w.velocidad)).filter(Number.isFinite).reduce((max, value) => Math.max(max, value), 0) ?? null,
         windDirection: day.viento?.[0]?.direccion ?? null,
-        sky: day.estadoCielo?.map((state) => state.descripcion).filter(Boolean).join(', ') || null,
+        sky: aemetSky(day.estadoCielo),
       })),
     };
   }
