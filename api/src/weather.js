@@ -106,6 +106,9 @@ export function normalizeAemetObservation(rows, stationId) {
     provider: 'AEMET',
     stationId: row.idema || stationId,
     observedAt: row.fint || null,
+    latitude: number(row.lat ?? row.latitude),
+    longitude: number(row.lon ?? row.longitude),
+    altitudeM: number(row.alt ?? row.altitude),
     temperatureC: number(row.ta),
     humidityPct: number(row.hr),
     pressureHpa: number(row.pres),
@@ -113,6 +116,34 @@ export function normalizeAemetObservation(rows, stationId) {
     windKmh: windSpeed == null ? null : Math.round(windSpeed * 3.6 * 10) / 10,
     windGustKmh: gustSpeed == null ? null : Math.round(gustSpeed * 3.6 * 10) / 10,
     windDirection: row.dv || null,
+  };
+}
+
+const AEMET_STATIONS = {
+  // Coordenadas y altitud de la ficha oficial AEMET de Huéscar (5051X).
+  '5051X': { latitude: 37 + 51 / 60 + 41 / 3600, longitude: -(2 + 39 / 60 + 10 / 3600), altitudeM: 1101 },
+};
+
+export function aemetProximityForDevice(device, observation) {
+  if (device.latitude == null || device.longitude == null || !observation) return null;
+  const station = AEMET_STATIONS[String(observation.stationId || '').toUpperCase()];
+  const latitude = observation.latitude ?? station?.latitude;
+  const longitude = observation.longitude ?? station?.longitude;
+  const aemetAltitudeM = observation.altitudeM ?? station?.altitudeM ?? null;
+  if (latitude == null || longitude == null) return null;
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const dLat = toRadians(latitude - Number(device.latitude));
+  const dLon = toRadians(longitude - Number(device.longitude));
+  const lat1 = toRadians(Number(device.latitude));
+  const lat2 = toRadians(latitude);
+  const haversine = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  const distanceKm = 6371 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+  const microAltitudeM = numeric(device.altitude);
+  return {
+    distanceKm: Math.round(distanceKm * 10) / 10,
+    microAltitudeM,
+    aemetAltitudeM,
+    altitudeDifferenceM: microAltitudeM == null || aemetAltitudeM == null ? null : Math.round((aemetAltitudeM - microAltitudeM) * 10) / 10,
   };
 }
 
@@ -134,6 +165,23 @@ export function forecastAdvisories(daily = []) {
     }
   }
   return notices;
+}
+
+export function describeAemetError(endpoint, error) {
+  const message = String(error?.message || '');
+  const status = Number(message.match(/(?:aemet_status_|provider_http_)(\d{3})/)?.[1]);
+  let cause = 'fallo de conexión o respuesta no válida';
+  if (status === 401 || status === 403) cause = `API key o permisos rechazados (HTTP ${status})`;
+  else if (status === 429) cause = 'límite de peticiones alcanzado (HTTP 429)';
+  else if (status >= 500) cause = `servicio AEMET con error HTTP ${status}`;
+  else if (status) cause = `respuesta HTTP ${status}`;
+  else if (/abort|timeout/i.test(message)) cause = 'tiempo de espera agotado';
+  else if (message === 'aemet_data_url_invalid') cause = 'AEMET devolvió una URL de datos no válida';
+  return `AEMET: ${endpoint} no disponible (${cause}).`;
+}
+
+export function mergeWeatherErrors(...groups) {
+  return [...new Set(groups.flat().filter(Boolean))];
 }
 
 async function aemetData(path) {
@@ -187,9 +235,9 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }) {
     warnings = parseAemetWarnings(body);
   }
   const errors = [];
-  if (forecastResult.status === 'rejected') errors.push('AEMET: previsión municipal no disponible.');
-  if (observationResult.status === 'rejected') errors.push('AEMET: observación de estación no disponible.');
-  if (warningsResult.status === 'rejected') errors.push('AEMET: avisos oficiales no disponibles.');
+  if (forecastResult.status === 'rejected') errors.push(describeAemetError('previsión municipal', forecastResult.reason));
+  if (observationResult.status === 'rejected') errors.push(describeAemetError('observación de estación', observationResult.reason));
+  if (warningsResult.status === 'rejected') errors.push(describeAemetError('avisos oficiales', warningsResult.reason));
   return { provider: 'AEMET', fetchedAt: new Date().toISOString(), observation, forecast, warnings, errors };
 }
 
@@ -224,7 +272,9 @@ export async function weatherForDevice(device) {
   let aemet = cached.aemet;
   const aemetConfig = aemetConfigForDevice(device);
   const hasAemetConfig = Object.values(aemetConfig).some(Boolean);
-  const stale = !isFresh(openMeteo) || (process.env.AEMET_API_KEY && hasAemetConfig && !isFresh(aemet));
+  const hasLegacyAemetErrors = aemet?.errors?.some((message) =>
+    /AEMET: (previsión municipal|observación de estación|avisos oficiales) no disponible\.$/.test(message));
+  const stale = !isFresh(openMeteo) || (process.env.AEMET_API_KEY && hasAemetConfig && (!isFresh(aemet) || hasLegacyAemetErrors));
   const errors = [];
   if (stale) {
     const jobs = [fetchOpenMeteo(device.latitude, device.longitude).then(async (value) => {
@@ -242,6 +292,12 @@ export async function weatherForDevice(device) {
     }
     await Promise.all(jobs);
   }
+  if (aemet?.observation) {
+    aemet = {
+      ...aemet,
+      observation: { ...aemet.observation, proximity: aemetProximityForDevice(device, aemet.observation) },
+    };
+  }
   const openData = openMeteo || null;
   const advisoryForecast = aemet?.forecast?.days?.length ? aemet.forecast.days : openData?.daily;
   const aemetMissing = [
@@ -256,7 +312,7 @@ export async function weatherForDevice(device) {
     openMeteo: openData,
     aemet: aemet || null,
     advisories: forecastAdvisories(advisoryForecast),
-    errors: [...(aemet?.errors || []), ...errors],
+    errors: mergeWeatherErrors(aemet?.errors || [], errors),
     aemetMissing,
     stale: Boolean(openData && !isFresh(openData)),
   };

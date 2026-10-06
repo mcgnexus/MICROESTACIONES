@@ -11,6 +11,33 @@ const logoutButton = $('#logout');
 const mainNav = $('#main-nav');
 const mobileNav = $('#mobile-nav');
 const sessionChip = $('#session-chip');
+const installButton = $('#install-app');
+const iosInstallHint = $('#ios-install-hint');
+let deferredInstallPrompt = null;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+}
+
+const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+if (isIos && !isStandalone) iosInstallHint.classList.remove('hidden');
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  installButton.classList.remove('hidden');
+});
+
+installButton.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installButton.classList.add('hidden');
+});
+
+window.addEventListener('appinstalled', () => installButton.classList.add('hidden'));
 
 function showLogin() {
   session.me = null;

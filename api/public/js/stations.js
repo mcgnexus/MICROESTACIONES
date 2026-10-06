@@ -294,7 +294,8 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
   const detail = await api(`/api/v1/stations/${encodeURIComponent(stationId)}`);
   const station = detail.station;
   const status = detail.status || {};
-  const activeTab = TABS.some(([key]) => key === tab) ? tab : 'resumen';
+  const availableTabs = isAdmin() ? TABS : TABS.filter(([key]) => key !== 'estadisticas');
+  const activeTab = availableTabs.some(([key]) => key === tab) ? tab : 'resumen';
   const link = (key) => `#/estaciones/${encodeURIComponent(station.id)}/${key}`;
 
   // El control remoto es una pantalla propia con su propia cabecera.
@@ -317,7 +318,7 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
         <a class="button-link" href="#/estaciones/${encodeURIComponent(station.id)}/remoto">Control remoto</a>
       </div>
     </div>
-    <nav class="tabs">${TABS.map(([key, label]) =>
+    <nav class="tabs">${availableTabs.map(([key, label]) =>
       `<a href="${link(key)}" class="${key === activeTab ? 'active' : ''}">${label}</a>`).join('')}</nav>
     <div data-tab-content></div>`;
 

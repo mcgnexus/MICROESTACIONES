@@ -94,6 +94,11 @@ function comparisonBlock({ latest, history, weather, sensors, status }) {
   const aemetStatus = observation
     ? `Estación ${escapeText(observation.stationId)} · medida ${dateText(observation.observedAt)}`
     : 'Observación AEMET no disponible';
+  const proximity = observation?.proximity;
+  const proximityNote = !observation ? ''
+    : proximity
+      ? `<p class="aemet-proximity">Distancia ${numberText(proximity.distanceKm, 1)} km · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} · microestación ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} · diferencia ${proximity.altitudeDifferenceM == null ? '—' : `${numberText(proximity.altitudeDifferenceM, 0)} m`}</p>`
+      : '<p class="aemet-proximity">Faltan coordenadas para calcular la distancia y la diferencia de altitud con la microestación.</p>';
   const upcoming = [
     ['💨', 'Viento'], ['🌧️', 'Precipitación'],
     ...(sensors.lux === true && latest?.lux != null ? [] : [['☀️', 'Lux']]),
@@ -101,7 +106,7 @@ function comparisonBlock({ latest, history, weather, sensors, status }) {
   ].map(([icon, label]) => `<div class="upcoming-sensor"><span class="upcoming-icon" aria-hidden="true">${icon}</span><span>${label}</span><span class="upcoming-badge">Próximamente</span></div>`).join('');
   return `<div class="reading-comparison">
     <section class="reading-source local-readings"><div class="reading-source-head"><h3>Microestación</h3><small>${dateText(latest?.observedAt)}</small></div><div class="reading-grid">${local}</div></section>
-    <section class="reading-source aemet-readings"><div class="reading-source-head"><h3>AEMET</h3><small>${aemetStatus}</small></div><div class="reading-grid">${aemetCards}</div></section>
+    <section class="reading-source aemet-readings"><div class="reading-source-head"><h3>AEMET</h3><small>${aemetStatus}</small></div><div class="reading-grid">${aemetCards}</div>${proximityNote}</section>
     <section class="upcoming-sensors-panel"><div class="upcoming-heading"><h3>Próximas mediciones locales</h3><small>AEMET aporta ahora viento y precipitación</small></div><div class="upcoming-grid">${upcoming}</div></section>
     <p class="reading-legend"><span class="legend-green">●</span> rango habitual <span class="legend-blue">●</span> frío/fresco <span class="legend-amber">●</span> precaución <span class="legend-red">●</span> extremo. La presión se colorea respecto a la mediana del periodo.</p>
   </div>`;

@@ -50,6 +50,26 @@ export async function renderStatisticsTab(content, stationId, station) {
     </div>`;
   }).join('');
 
+  const dixonCards = Object.entries(data.metrics).map(([key, metric]) => {
+    const result = metric.dixonQ;
+    if (!result) return '';
+    const pressure = key === 'pressure_pa';
+    const value = result.suspectedValue == null ? '—'
+      : pressure ? `${numberText(pressureMbar(result.suspectedValue), 1)} mbar`
+        : `${numberText(result.suspectedValue, metric.digits ?? 1)} ${metric.unit}`;
+    const label = result.status === 'possible_outlier' ? 'Extremo a revisar'
+      : result.status === 'no_outlier' ? 'Sin atípico detectado'
+        : result.status === 'no_variation' ? 'Serie constante' : 'Muestras insuficientes';
+    const badgeClass = result.status === 'possible_outlier' ? 'badge badge-warn' : 'badge badge-muted';
+    return `<article class="dixon-card">
+      <div class="dixon-card-head"><strong>${escapeText(metric.label)}</strong><span class="${badgeClass}">${label}</span></div>
+      <div class="dixon-result"><span>Q observada</span><strong>${numberText(result.q, 3)}</strong><span>Q crítica 95 %</span><strong>${numberText(result.criticalQ, 3)}</strong></div>
+      <p>${result.status === 'possible_outlier'
+        ? `Posible valor extremo (${result.side}): ${value} · ${dateText(result.suspectedAt)}.`
+        : `Muestras evaluadas: ${result.n} de hasta ${result.sampleLimit}.`}</p>
+    </article>`;
+  }).join('');
+
   const seriesRows = data.series.map((point) => `<tr>
     <td>${dateText(point.at)}</td><td>${point.count}</td>
     <td>${numberText(point.temperatureAvg)}</td><td>${numberText(point.humidityAvg)}</td>
@@ -95,6 +115,11 @@ export async function renderStatisticsTab(content, stationId, station) {
             (intervalo configurado ${numberText(coverage.intervalSeconds, 0)} s). Faltan ${coverage.missing}.</p></div>`
         : ''}
       <div class="stat-grid">${metricCards}</div>
+      <section class="dixon-analysis" aria-labelledby="dixon-heading">
+        <div class="dixon-heading"><div><p class="eyebrow">CONTROL ESTADÍSTICO · ADMINISTRACIÓN</p><h3 id="dixon-heading">Valores atípicos · Q de Dixon</h3></div><span class="badge badge-muted">95 % · α = 0,05</span></div>
+        <p class="hint">Evalúa el valor mínimo o máximo más extremo de las últimas 30 mediciones validadas por variable. Es una señal para revisar, no elimina ni invalida datos automáticamente.</p>
+        <div class="dixon-grid">${dixonCards}</div>
+      </section>
       <p class="hint">${(data.limits || []).map((limit) => escapeText(limit)).join(' ')}</p>
     </section>
     ${chartRows.length > 1 ? `<section class="panel"><h3>Evolución por bloques de ${data.bucketHours} h</h3>

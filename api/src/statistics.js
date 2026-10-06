@@ -16,6 +16,13 @@ export const STAT_METRICS = [
   { key: 'lux', column: 'lux', label: 'Iluminancia', unit: 'lux', digits: 0 },
 ];
 
+const DIXON_Q_95 = {
+  3: 0.970, 4: 0.829, 5: 0.710, 6: 0.625, 7: 0.568, 8: 0.526, 9: 0.493, 10: 0.466,
+  11: 0.444, 12: 0.426, 13: 0.410, 14: 0.396, 15: 0.384, 16: 0.374, 17: 0.365,
+  18: 0.356, 19: 0.349, 20: 0.342, 21: 0.337, 22: 0.331, 23: 0.326, 24: 0.321,
+  25: 0.317, 26: 0.312, 27: 0.308, 28: 0.305, 29: 0.301, 30: 0.299,
+};
+
 const quantile = (sorted, q) => {
   if (!sorted.length) return null;
   const position = (sorted.length - 1) * q;
@@ -105,9 +112,43 @@ export function coverageReport({ received, valid, invalid, intervalSeconds, from
   };
 }
 
+// Prueba Q de Dixon bilateral al 95 %, limitada a las 30 medidas más recientes.
+// Señala como máximo un extremo (mínimo o máximo); nunca elimina observaciones.
+export function dixonQTest(points, { maxSamples = 30 } = {}) {
+  const values = (points || []).map((point) => ({
+    at: point.at,
+    value: Number(point.value),
+    time: new Date(point.at).getTime(),
+  })).filter((point) => Number.isFinite(point.value) && Number.isFinite(point.time))
+    .sort((a, b) => a.time - b.time).slice(-maxSamples)
+    .sort((a, b) => a.value - b.value);
+  const n = values.length;
+  const base = { method: 'Dixon Q', alpha: 0.05, sampleLimit: maxSamples, n, status: 'insufficient_data', q: null, criticalQ: null, suspectedValue: null, suspectedAt: null, side: null };
+  if (n < 3 || n > 30) return base;
+  const range = values.at(-1).value - values[0].value;
+  if (range === 0) return { ...base, status: 'no_variation', criticalQ: DIXON_Q_95[n] };
+
+  const lowQ = (values[1].value - values[0].value) / range;
+  const highQ = (values.at(-1).value - values.at(-2).value) / range;
+  const side = highQ > lowQ ? 'maximum' : 'minimum';
+  const candidate = side === 'maximum' ? values.at(-1) : values[0];
+  const q = Math.max(lowQ, highQ);
+  const criticalQ = DIXON_Q_95[n];
+  const isOutlier = q > criticalQ;
+  return {
+    ...base,
+    status: isOutlier ? 'possible_outlier' : 'no_outlier',
+    q: round(q, 3),
+    criticalQ,
+    side,
+    suspectedValue: isOutlier ? candidate.value : null,
+    suspectedAt: isOutlier ? new Date(candidate.at).toISOString() : null,
+  };
+}
+
 // ---- Consulta completa -----------------------------------------------------
 // from/to son ISO. Solo datos validados y no borrados.
-export async function statisticsFor(deviceId, { from, to, includeCommunicationAlerts = true }) {
+export async function statisticsFor(deviceId, { from, to, includeCommunicationAlerts = true, includeDixonQ = false }) {
   const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${deviceId}`;
   const config = configRow?.config ?? {};
 
@@ -136,7 +177,12 @@ export async function statisticsFor(deviceId, { from, to, includeCommunicationAl
       .filter((row) => row[metric.column] != null)
       .map((row) => ({ at: row.observedAt, value: row[metric.column] }));
     const described = describeSeries(points, { digits: metric.digits });
-    metrics[metric.key] = { ...described, unit: metric.unit, label: metric.label };
+    metrics[metric.key] = {
+      ...described,
+      ...(includeDixonQ ? { dixonQ: dixonQTest(points) } : {}),
+      unit: metric.unit,
+      label: metric.label,
+    };
   }
 
   // Serie por horas para la gráfica.

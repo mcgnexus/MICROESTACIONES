@@ -2,8 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
-  aemetConfigForDevice,
+  aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice,
 } from './weather.js';
+
+test('AEMET proximity reports distance and altitude difference against the microstation', () => {
+  const proximity = aemetProximityForDevice(
+    { latitude: 37.8614, longitude: -2.6, altitude: 953 },
+    { stationId: '5051X' },
+  );
+  assert.ok(proximity.distanceKm > 0 && proximity.distanceKm < 6);
+  assert.equal(proximity.aemetAltitudeM, 1101);
+  assert.equal(proximity.microAltitudeM, 953);
+  assert.equal(proximity.altitudeDifferenceM, 148);
+  assert.equal(aemetProximityForDevice({ latitude: null, longitude: null }, { stationId: '5051X' }), null);
+});
+
+test('AEMET errors show safe endpoint diagnostics and repeated messages are deduplicated', () => {
+  assert.match(describeAemetError('previsión municipal', new Error('aemet_status_401')), /API key o permisos rechazados \(HTTP 401\)/);
+  assert.match(describeAemetError('avisos oficiales', new Error('provider_http_503')), /servicio AEMET con error HTTP 503/);
+  assert.deepEqual(mergeWeatherErrors(['fallo AEMET', 'fallo Open-Meteo'], ['fallo AEMET']), [
+    'fallo AEMET', 'fallo Open-Meteo',
+  ]);
+});
 
 test('Huéscar devices receive AEMET municipality, observation, and warning-area defaults', () => {
   assert.deepEqual(aemetConfigForDevice({ name: 'Microestación', publicZone: 'Huéscar, Granada' }), {

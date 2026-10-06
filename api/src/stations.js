@@ -211,7 +211,7 @@ router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, as
 });
 
 // Informe estadístico del periodo: solo datos validados y no borrados.
-router.get('/:id/statistics', requireSubscriber, requireStationAccess, async (req, res) => {
+router.get('/:id/statistics', requireSubscriber, requireRole('admin'), requireStationAccess, async (req, res) => {
   const to = req.query.to ? new Date(String(req.query.to)) : new Date();
   const from = req.query.from
     ? new Date(String(req.query.from))
@@ -219,7 +219,7 @@ router.get('/:id/statistics', requireSubscriber, requireStationAccess, async (re
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ error: 'invalid_range' });
   if (from >= to) return res.status(400).json({ error: 'invalid_range' });
   res.json(await statisticsFor(req.stationId, {
-    from, to, includeCommunicationAlerts: req.subscriber.role === 'admin',
+    from, to, includeCommunicationAlerts: true, includeDixonQ: true,
   }));
 });
 
