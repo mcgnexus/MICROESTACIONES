@@ -54,17 +54,24 @@ function groupFields(group, rules, config, defaults, pendingKeys) {
       ${keys.map(([key, rule]) => {
         const saved = config[key];
         const factory = defaults[key];
+        const pressureMbar = key === 'pressure_alert_low_pa';
+        const unit = pressureMbar ? 'mbar' : rule.unit;
+        const value = pressureMbar ? (saved == null ? saved : saved / 100) : saved;
+        const defaultValue = pressureMbar ? factory / 100 : factory;
+        const min = pressureMbar ? rule.min / 100 : rule.min;
+        const max = pressureMbar ? rule.max / 100 : rule.max;
+        const step = pressureMbar ? 1 : (rule.step ?? 1);
         if (rule.kind === 'boolean') {
           return `<label class="check">${escapeText(rule.label)}
             <input type="checkbox" data-key="${key}" ${(saved ?? factory) ? 'checked' : ''} ${canEdit() ? '' : 'disabled'}></label>`;
         }
         const fallback = saved === undefined
-          ? `placeholder="del equipo: ${factory} ${rule.unit}"`
+          ? `placeholder="del equipo: ${defaultValue} ${unit}"`
           : '';
         return `<label>${escapeText(rule.label)} ${pendingKeys.includes(key) ? '<span class="badge badge-muted">reservado</span>' : ''}
-          <input type="number" data-key="${key}" step="${rule.step ?? 1}" min="${rule.min}" max="${rule.max}"
-            value="${saved ?? ''}" ${fallback} ${canEdit() ? '' : 'disabled'}>
-          <small>permitido ${rule.min}–${rule.max} ${escapeText(rule.unit)}</small></label>`;
+          <input type="number" data-key="${key}" step="${step}" min="${min}" max="${max}"
+            value="${value ?? ''}" ${fallback} ${canEdit() ? '' : 'disabled'}>
+          <small>permitido ${min}–${max} ${escapeText(unit)}</small></label>`;
       }).join('')}
     </div>
   </fieldset>`;
@@ -85,8 +92,11 @@ function historyTable(history, currentVersion) {
         <td>${escapeText(entry.changeReason || '—')}</td>
         <td><span class="badge ${css}">${label}</span>${entry.appliedHint ? '<br><small>con datos posteriores</small>' : ''}</td>
         <td>${changes.length
-          ? `<ul class="diff">${changes.map(([key, change]) =>
-            `<li><code>${escapeText(key)}</code>: ${escapeText(JSON.stringify(change.from))} → <strong>${escapeText(JSON.stringify(change.to))}</strong></li>`).join('')}</ul>`
+          ? `<ul class="diff">${changes.map(([key, change]) => {
+            const format = (value) => key === 'pressure_alert_low_pa' && value != null
+              ? `${numberText(value / 100, 1)} mbar` : JSON.stringify(value);
+            return `<li><code>${escapeText(key)}</code>: ${escapeText(format(change.from))} → <strong>${escapeText(format(change.to))}</strong></li>`;
+          }).join('')}</ul>`
           : '<span class="empty">sin cambios</span>'}</td>
         <td class="row-actions">${confirmable
           ? `<button type="button" data-confirm="${entry.version}">Confirmar aplicación</button>` : ''}</td>
@@ -176,7 +186,10 @@ export async function renderRemoteControl(root, stationId, station) {
         const rule = rules[key];
         if (!rule) continue;
         if (rule.kind === 'boolean') body[key] = input.checked;
-        else body[key] = input.value === '' ? null : Number(input.value);
+        else {
+          const value = input.value === '' ? null : Number(input.value);
+          body[key] = key === 'pressure_alert_low_pa' && value != null ? Math.round(value * 100) : value;
+        }
       }
       const reason = window.prompt('Motivo del cambio (queda en el historial):', 'ajuste desde control remoto') || undefined;
       try {

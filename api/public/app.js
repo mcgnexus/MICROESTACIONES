@@ -9,6 +9,7 @@ const loginView = $('#login-view');
 const viewRoot = $('#view-root');
 const logoutButton = $('#logout');
 const mainNav = $('#main-nav');
+const mobileNav = $('#mobile-nav');
 const sessionChip = $('#session-chip');
 
 function showLogin() {
@@ -16,6 +17,7 @@ function showLogin() {
   loginView.classList.remove('hidden');
   viewRoot.classList.add('hidden');
   mainNav.classList.add('hidden');
+  mobileNav.classList.add('hidden');
   logoutButton.classList.add('hidden');
   sessionChip.classList.add('hidden');
 }
@@ -24,6 +26,7 @@ function showApp() {
   loginView.classList.add('hidden');
   viewRoot.classList.remove('hidden');
   mainNav.classList.remove('hidden');
+  mobileNav.classList.remove('hidden');
   logoutButton.classList.remove('hidden');
   sessionChip.classList.remove('hidden');
   sessionChip.textContent = `${session.me.email} · ${roleLabel(session.me.role)}`;
@@ -43,6 +46,12 @@ function currentRoute() {
 function highlightNav(section) {
   const key = section === 'estaciones' ? 'stations' : section === 'avisos' ? 'alerts' : section;
   mainNav.querySelectorAll('[data-nav]').forEach((link) => link.classList.toggle('active', link.dataset.nav === key));
+  mobileNav.querySelectorAll('[data-mobile-nav]').forEach((link) => {
+    const active = link.dataset.mobileNav === key;
+    link.classList.toggle('active', active);
+    if (active) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
 }
 
 async function route() {

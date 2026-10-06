@@ -1,5 +1,5 @@
 import {
-  $, api, escapeText, dateText, numberText, validationBadge, canEdit, openDialog,
+  $, api, escapeText, dateText, numberText, pressureText, validationBadge, canEdit, openDialog,
   localIsoDate, periodRange,
 } from './ui.js';
 
@@ -103,7 +103,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
       <td>${escapeText(row.sequence)}</td>
       <td>${cell(row.temperatureC, '°C')}</td>
       <td>${cell(row.humidityPct, '%')}</td>
-      <td>${cell(row.pressurePa, 'Pa', 0)}</td>
+       <td>${row.pressurePa == null ? '—' : `${pressureText(row.pressurePa)} mbar`}</td>
       <td>${cell(row.batteryMv, 'mV', 0)}</td>
       <td>${cell(row.lux, '', 0)}</td>
       <td>${escapeText(row.source || '—')}</td>
@@ -191,7 +191,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
         <dt>Hora observada</dt><dd>${dateText(row.observedAt)} · calidad ${escapeText(row.timeQuality)}</dd>
         <dt>Hora de recepción</dt><dd>${dateText(row.receivedAt)}</dd>
         <dt>Estado</dt><dd>${validationBadge(row)} ${flags.map(escapeText).join(' · ')}</dd>
-        <dt>Valores</dt><dd>${numberText(row.temperatureC)} °C · ${numberText(row.humidityPct)} % · ${numberText(row.pressurePa, 0)} Pa · ${numberText(row.batteryMv, 0)} mV · ${numberText(row.lux, 0)} lux</dd>
+        <dt>Valores</dt><dd>${numberText(row.temperatureC)} °C · ${numberText(row.humidityPct)} % · ${pressureText(row.pressurePa)} mbar · ${numberText(row.batteryMv, 0)} mV · ${numberText(row.lux, 0)} lux</dd>
         <dt>Origen / flags</dt><dd>${escapeText(row.source || '—')} · ${escapeText(row.flags)} · validación ${escapeText(row.validationFlags)}</dd>
         <dt>Valor recibido (raw)</dt><dd><code>${escapeText(row.rawPayload ? JSON.stringify(row.rawPayload) : '—')}</code></dd>
       </dl>`;

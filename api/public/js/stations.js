@@ -75,7 +75,7 @@ export async function renderStations(root) {
 
   api('/api/v1/stations/sensors-catalog').then(({ sensors }) => {
     $('[data-catalog]', root).textContent = `Catálogo de sensores: ${sensors
-      .map((s) => `${s.name} (${s.unit})`).join(' · ')}. La disponibilidad por estación se ajusta con las casillas anteriores.`;
+      .map((s) => `${s.name} (${s.id === 'pressure' ? 'mbar' : s.unit})`).join(' · ')}. La disponibilidad por estación se ajusta con las casillas anteriores.`;
   }).catch(() => {});
 
   async function loadList() {

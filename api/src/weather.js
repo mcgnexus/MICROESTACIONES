@@ -243,6 +243,7 @@ export async function weatherForDevice(device) {
     await Promise.all(jobs);
   }
   const openData = openMeteo || null;
+  const advisoryForecast = aemet?.forecast?.days?.length ? aemet.forecast.days : openData?.daily;
   const aemetMissing = [
     !process.env.AEMET_API_KEY ? 'API key AEMET_API_KEY' : null,
     !aemetConfig.municipalityCode ? 'código municipal' : null,
@@ -254,7 +255,7 @@ export async function weatherForDevice(device) {
     location: device.publicZone || `${Number(device.latitude).toFixed(3)}, ${Number(device.longitude).toFixed(3)}`,
     openMeteo: openData,
     aemet: aemet || null,
-    advisories: forecastAdvisories(openData?.daily),
+    advisories: forecastAdvisories(advisoryForecast),
     errors: [...(aemet?.errors || []), ...errors],
     aemetMissing,
     stale: Boolean(openData && !isFresh(openData)),

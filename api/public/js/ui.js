@@ -8,6 +8,8 @@ export const dateText = (value) => (value ? new Date(value).toLocaleString('es-E
 export const dayText = (value) => (value ? new Date(value).toLocaleDateString('es-ES') : '—');
 export const numberText = (value, digits = 1) =>
   value == null ? '—' : Number(value).toLocaleString('es-ES', { maximumFractionDigits: digits });
+export const pressureMbar = (value) => (value == null ? null : Number(value) / 100);
+export const pressureText = (value, digits = 1) => numberText(pressureMbar(value), digits);
 
 export const session = { me: null };
 let onUnauthorized = () => {};
@@ -126,7 +128,8 @@ export function sampleChartRows(rows, key, limit = 300) {
 const TREND_METRICS = {
   temperatureC: { icon: '🌡️', up: 'calentamiento', down: 'enfriamiento', unit: '°C' },
   humidityPct: { icon: '💧', up: 'aumenta la humedad relativa', down: 'disminuye la humedad relativa', unit: '%' },
-  pressurePa: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'Pa' },
+  pressurePa: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
+  pressureMbar: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
 };
 
 export function chartTrend(rows, key) {
@@ -157,6 +160,7 @@ const CHART_SCALE = {
   temperatureC: { minimumSpan: 10, step: 5 },
   humidityPct: { minimumSpan: 20, step: 10 },
   pressurePa: { minimumSpan: 5000, step: 1000 },
+  pressureMbar: { minimumSpan: 50, step: 10 },
   batteryMv: { minimumSpan: 500, step: 250 },
 };
 
@@ -278,7 +282,11 @@ if (typeof document !== 'undefined') {
   });
 }
 
-export const chartSection = (history, summary = {}) => `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', history, 'pressurePa', '#735bb0', 'Pa', 0, { min: summary.pressure_min, max: summary.pressure_max, avg: summary.pressure_avg })}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">El eje Y usa una escala de referencia ampliada para que variaciones pequeñas no ocupen toda la gráfica. Los chips Mín./Máx. muestran los extremos medidos. Las flechas resumen el periodo; no son un pronóstico.</p>`;
+export const chartSection = (history, summary = {}) => {
+  const pressureHistory = history.map((row) => ({ ...row, pressureMbar: pressureMbar(row.pressurePa) }));
+  const pressureSummary = Object.fromEntries(['min', 'max', 'avg'].map((key) => [key, pressureMbar(summary[`pressure_${key}`])]));
+  return `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', pressureHistory, 'pressureMbar', '#735bb0', 'mbar', 1, pressureSummary)}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">El eje Y usa una escala de referencia ampliada para que variaciones pequeñas no ocupen toda la gráfica. Los chips Mín./Máx. muestran los extremos medidos. Las flechas resumen el periodo; no son un pronóstico.</p>`;
+};
 
 // ---- Diálogo de detalle ----------------------------------------------------
 export function openDialog(title, bodyHtml, actionsHtml = '') {

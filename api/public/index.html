@@ -2,15 +2,17 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#153b2b">
-  <title>TECRURAL · Panel de estaciones</title>
+  <title>TecRural · Estaciones</title>
+  <link rel="icon" type="image/png" href="/tecrural-icon.png">
+  <link rel="apple-touch-icon" href="/tecrural-icon.png">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Saltar al contenido</a>
   <header class="topbar">
-    <a class="brand" href="#/panel">TECRURAL<span>ESTACIONES RURALES</span></a>
+    <a class="brand" href="#/panel"><img src="/tecrural-icon.png" alt="" width="42" height="42"><span class="brand-copy">TECRURAL<span>INNOVACIÓN CON RAÍCES</span></span></a>
     <nav id="main-nav" class="topnav hidden" aria-label="Secciones">
       <a href="#/panel" data-nav="panel">Panel</a>
       <a href="#/estaciones" data-nav="stations">Estaciones</a>
@@ -37,6 +39,12 @@
     </section>
     <section id="view-root" class="hidden" aria-live="polite"></section>
   </main>
+  <nav id="mobile-nav" class="mobile-tab-bar hidden" aria-label="Navegación móvil">
+    <a href="#/panel" data-mobile-nav="panel"><span aria-hidden="true">⌂</span>Panel</a>
+    <a href="#/estaciones" data-mobile-nav="stations"><span aria-hidden="true">◉</span>Estaciones</a>
+    <a href="#/avisos" data-mobile-nav="alerts"><span aria-hidden="true">♧</span>Avisos</a>
+    <a href="#/cuenta" data-mobile-nav="account"><span aria-hidden="true">●</span>Cuenta</a>
+  </nav>
   <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
   <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias.</p>
   <script type="module" src="/app.js"></script>

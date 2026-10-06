@@ -564,13 +564,13 @@ app.get('/api/v1/measurements.csv', requireSubscriber, async (req, res) => {
 
   const alertName = (level) => level === 1 ? 'prioritaria' : level === 2 ? 'aviso' : '';
   const columns = ['estacion', 'dispositivo', 'secuencia', 'fecha_hora_utc', 'recibido_utc', 'calidad_hora',
-    'temperatura_c', 'humedad_pct', 'presion_pa', 'bateria_mv', 'lux', 'origen', 'validado',
+    'temperatura_c', 'humedad_pct', 'presion_mbar', 'bateria_mv', 'lux', 'origen', 'validado',
     'flags_validacion', 'motivo_invalido', 'flags', 'alerta'];
   const lines = [columns.join(',')];
   for (const row of rows) {
     lines.push([row.deviceName, row.deviceId, row.sequence, row.observedAt?.toISOString?.() ?? row.observed_at,
       row.receivedAt?.toISOString?.() ?? row.received_at, row.timeQuality,
-      row.temperatureC, row.humidityPct, row.pressurePa, row.batteryMv, row.lux, row.source,
+      row.temperatureC, row.humidityPct, row.pressurePa == null ? null : Number(row.pressurePa) / 100, row.batteryMv, row.lux, row.source,
       row.isValidated ? 'si' : 'no', row.validationFlags, row.invalidatedReason, row.flags,
       alertName(row.alertLevel)]
        .map(csvCell).join(','));

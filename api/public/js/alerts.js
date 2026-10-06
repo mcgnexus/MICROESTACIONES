@@ -1,5 +1,5 @@
 import {
-  $, api, escapeText, dateText, numberText, canEdit,
+  $, api, escapeText, dateText, numberText, pressureText, canEdit,
   METRIC_LABELS, COMPARATOR_LABELS, CHANNEL_LABELS, ALERT_LEVELS,
 } from './ui.js';
 
@@ -23,6 +23,9 @@ export function durationText(seconds) {
 }
 
 function alertRow(alert, editable) {
+  const pressure = alert.ruleSnapshot?.metric === 'pressure';
+  const alertValue = pressure && typeof alert.value === 'number'
+    ? `${pressureText(alert.value)} mbar` : JSON.stringify(alert.value);
   const status = alert.closedAt
     ? `<span class="badge badge-muted">${alert.autoResolved ? 'Recuperado' : 'Cerrado'} ${dateText(alert.closedAt)}${alert.closureReason ? ` · ${escapeText(alert.closureReason)}` : ''}</span>`
     : '<span class="badge badge-warn">Abierto</span>';
@@ -30,9 +33,9 @@ function alertRow(alert, editable) {
     ? `<span class="badge badge-valid">Reconocido ${dateText(alert.acknowledgedAt)}</span>`
     : '<span class="badge badge-invalid">Sin reconocer</span>';
   const ruleInfo = alert.ruleId
-    ? `<span class="source-tag">Regla ${escapeText(METRIC_LABELS[alert.ruleSnapshot?.metric] || alert.ruleSnapshot?.metric || '')} ${escapeText(COMPARATOR_LABELS[alert.ruleSnapshot?.comparator] || '')} ${escapeText(alert.ruleSnapshot?.threshold ?? '')}`
+    ? `<span class="source-tag">Regla ${escapeText(METRIC_LABELS[alert.ruleSnapshot?.metric] || alert.ruleSnapshot?.metric || '')} ${escapeText(COMPARATOR_LABELS[alert.ruleSnapshot?.comparator] || '')} ${pressure ? `${pressureText(alert.ruleSnapshot?.threshold)} mbar` : escapeText(alert.ruleSnapshot?.threshold ?? '')}`
       + `${alert.ruleSnapshot?.min_duration_s ? ` · exige ${durationText(alert.ruleSnapshot.min_duration_s)}` : ''}`
-      + `${alert.ruleSnapshot?.margin ? ` · margen ${escapeText(String(alert.ruleSnapshot.margin))}` : ''}`
+      + `${alert.ruleSnapshot?.margin ? ` · margen ${pressure ? `${pressureText(alert.ruleSnapshot.margin)} mbar` : escapeText(String(alert.ruleSnapshot.margin))}` : ''}`
       + `${alert.ruleSnapshot?.urgent ? ' · urgente' : ''}</span>`
     : '';
   const actions = editable ? [
@@ -49,7 +52,7 @@ function alertRow(alert, editable) {
         · recibido ${dateText(alert.createdAt)}
       </div></td>
     <td>${escapeText(alert.deviceName)}</td>
-    <td>${escapeText(JSON.stringify(alert.value))}</td>
+    <td>${escapeText(alertValue)}</td>
     <td>${escapeText(alert.source || '—')}</td>
     <td>${escapeText(alert.recipient || '—')}${alert.channel ? ` · ${escapeText(CHANNEL_LABELS[alert.channel] || alert.channel)}` : ''}
       ${alert.deliveryStatus ? `<br><span class="badge badge-muted">${escapeText(DELIVERY_LABELS[alert.deliveryStatus] || alert.deliveryStatus)}</span>` : ''}</td>
@@ -59,6 +62,9 @@ function alertRow(alert, editable) {
 }
 
 function ruleRow(rule, editable) {
+  const pressure = rule.metric === 'pressure';
+  const threshold = pressure ? `${pressureText(rule.threshold)} mbar` : numberText(rule.threshold);
+  const margin = pressure ? `${pressureText(rule.recoveryMargin)} mbar` : numberText(rule.recoveryMargin);
   const actions = editable && !rule.system ? [
     `<button type="button" data-toggle-rule="${rule.id}" data-next="${rule.enabled ? 'false' : 'true'}">${rule.enabled ? 'Desactivar' : 'Activar'}</button>`,
     `<button type="button" class="danger" data-delete-rule="${rule.id}">Eliminar</button>`,
@@ -68,9 +74,9 @@ function ruleRow(rule, editable) {
     : '<span class="badge badge-muted">Inactiva</span>';
   return `<tr${rule.system ? ' class="row-system"' : ''}>
     <td>${escapeText(METRIC_LABELS[rule.metric] || rule.metric)}${rule.system ? ' <span class="badge badge-muted">sistema</span>' : ''}</td>
-    <td>${escapeText(COMPARATOR_LABELS[rule.comparator] || rule.comparator)} ${numberText(rule.threshold)}</td>
+    <td>${escapeText(COMPARATOR_LABELS[rule.comparator] || rule.comparator)} ${threshold}</td>
     <td>${escapeText(durationText(rule.minDurationS))}</td>
-    <td>${numberText(rule.recoveryMargin)}</td>
+    <td>${margin}</td>
     <td>${rule.urgent ? '<span class="badge badge-invalid">urgente</span>' : '—'}</td>
     <td>${escapeText(rule.message)}</td>
     <td>${escapeText(rule.recipient || '—')}<br><small>${escapeText(CHANNEL_LABELS[rule.channel] || rule.channel)}</small></td>
@@ -112,10 +118,10 @@ function rulesSection(rules, stationId, editable) {
     ${editable ? `<form data-rule-form class="rule-form">
       <label>Métrica<select name="metric">${Object.entries(METRIC_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label>
       <label>Condición<select name="comparator">${Object.entries(COMPARATOR_LABELS).map(([key, label]) => `<option value="${key}">${escapeText(label)}</option>`).join('')}</select></label>
-      <label>Umbral<input type="number" step="any" name="threshold" required></label>
+      <label data-threshold-label>Umbral<input type="number" step="any" name="threshold" required></label>
       <label>Nivel<select name="level"><option value="2">Aviso</option><option value="1">Prioritario</option></select></label>
       <label>Se sostiene (s)<input type="number" name="min_duration_s" min="0" max="86400" step="60" value="0"></label>
-      <label>Margen de recuperación<input type="number" name="recovery_margin" min="0" step="any" value="0"></label>
+      <label data-margin-label>Margen de recuperación<input type="number" name="recovery_margin" min="0" step="any" value="0"></label>
       <label>Mensaje<input name="message" required maxlength="200"></label>
       <label>Destinatario<input name="recipient" maxlength="200" placeholder="correo o teléfono"></label>
       <label>Canal<select name="channel">${Object.entries(CHANNEL_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'in_app' ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
@@ -153,6 +159,13 @@ function wireActions(content, stationId, reload) {
 
   const ruleForm = $('[data-rule-form]', content);
   if (ruleForm) {
+    const updatePressureLabels = () => {
+      const isPressure = ruleForm.elements.metric.value === 'pressure';
+      $('[data-threshold-label]', ruleForm).firstChild.textContent = isPressure ? 'Umbral (mbar)' : 'Umbral';
+      $('[data-margin-label]', ruleForm).firstChild.textContent = isPressure ? 'Margen de recuperación (mbar)' : 'Margen de recuperación';
+    };
+    ruleForm.elements.metric.addEventListener('change', updatePressureLabels);
+    updatePressureLabels();
     ruleForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = new FormData(ruleForm);
@@ -168,16 +181,18 @@ function wireActions(content, stationId, reload) {
 
 // Cuerpo de una regla nueva: incluye la duración mínima, el margen y si es urgente.
 function ruleBody(form, deviceId) {
+  const metric = form.get('metric');
+  const unitScale = metric === 'pressure' ? 100 : 1;
   const body = {
     device_id: deviceId,
-    metric: form.get('metric'),
+    metric,
     comparator: form.get('comparator'),
-    threshold: Number(form.get('threshold')),
+    threshold: Number(form.get('threshold')) * unitScale,
     level: Number(form.get('level')),
     message: form.get('message'),
     channel: form.get('channel'),
     min_duration_s: Number(form.get('min_duration_s') || 0),
-    recovery_margin: Number(form.get('recovery_margin') || 0),
+    recovery_margin: Number(form.get('recovery_margin') || 0) * unitScale,
     urgent: form.get('urgent') === 'on',
   };
   if (form.get('recipient')) body.recipient = form.get('recipient');

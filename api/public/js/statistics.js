@@ -1,4 +1,4 @@
-import { $, api, escapeText, dateText, numberText, canEdit, METRIC_ICONS } from './ui.js';
+import { $, api, escapeText, dateText, numberText, pressureMbar, canEdit, METRIC_ICONS } from './ui.js';
 import { makeChart } from './ui.js';
 
 const TREND_LABELS = { sube: 'sube', baja: 'baja', estable: 'estable', insuficiente: 'sin datos suficientes' };
@@ -16,7 +16,20 @@ export async function renderStatisticsTab(content, stationId, station) {
   ]);
 
   const coverage = data.coverage;
-  const metricCards = Object.entries(data.metrics).map(([key, metric]) => `
+  const metricCards = Object.entries(data.metrics).map(([key, sourceMetric]) => {
+    const metric = key === 'pressure_pa' ? {
+      ...sourceMetric,
+      unit: 'mbar', digits: 1,
+      min: pressureMbar(sourceMetric.min), max: pressureMbar(sourceMetric.max),
+      avg: pressureMbar(sourceMetric.avg), stddev: pressureMbar(sourceMetric.stddev),
+      p10: pressureMbar(sourceMetric.p10), p50: pressureMbar(sourceMetric.p50), p90: pressureMbar(sourceMetric.p90),
+      trend: sourceMetric.trend ? {
+        ...sourceMetric.trend,
+        slopePerHour: pressureMbar(sourceMetric.trend.slopePerHour),
+        totalChange: pressureMbar(sourceMetric.trend.totalChange),
+      } : sourceMetric.trend,
+    } : sourceMetric;
+    return `
     <div class="stat-card">
       <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span class="metric-icon" aria-hidden="true">${METRIC_ICONS[metric.label]} </span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
       <div class="stat-row">
@@ -34,7 +47,8 @@ export async function renderStatisticsTab(content, stationId, station) {
         Tendencia ${escapeText(TREND_LABELS[metric.trend.direction] || metric.trend.direction)}
         ${metric.trend.slopePerHour != null ? ` · ${numberText(metric.trend.slopePerHour, 3)} ${escapeText(metric.unit)}/h` : ''}
       </p>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   const seriesRows = data.series.map((point) => `<tr>
     <td>${dateText(point.at)}</td><td>${point.count}</td>
