@@ -147,12 +147,33 @@ export function aemetProximityForDevice(device, observation) {
   };
 }
 
-// AEMET publica el estado del cielo por periodos; se deduplican para no repetir el mismo texto.
+// AEMET publica el estado del cielo por periodos. En vez de concatenar todos
+// (queda un texto largo y confuso), se elige una única descripción representativa:
+// la del periodo que cubre el mediodía y, si no lo hay, la más repetida.
 export function aemetSky(estadoCielo) {
-  const descriptions = [...new Set((estadoCielo || [])
-    .map((state) => String(state?.descripcion || '').trim())
-    .filter(Boolean))];
-  return descriptions.join(', ') || null;
+  const entries = (estadoCielo || [])
+    .map((state) => ({
+      description: String(state?.descripcion || '').trim(),
+      period: String(state?.periodo || '').trim(),
+    }))
+    .filter((entry) => entry.description);
+  if (!entries.length) return null;
+  const midday = entries.find((entry) => {
+    const match = entry.period.match(/^(\d{2})-(\d{2})$/);
+    if (!match) return false;
+    const start = Number(match[1]);
+    const end = Number(match[2]) === 0 ? 24 : Number(match[2]);
+    return start <= 12 && 12 < end;
+  });
+  if (midday) return midday.description;
+  const counts = new Map();
+  for (const entry of entries) counts.set(entry.description, (counts.get(entry.description) || 0) + 1);
+  let best = entries[0].description;
+  let bestCount = 0;
+  for (const [description, count] of counts) {
+    if (count > bestCount) { best = description; bestCount = count; }
+  }
+  return best;
 }
 
 export function forecastAdvisories(daily = []) {

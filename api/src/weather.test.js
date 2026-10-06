@@ -5,13 +5,22 @@ import {
   aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
 } from './weather.js';
 
-test('AEMET sky deduplicates repeated period descriptions', () => {
+test('AEMET sky returns a single representative description', () => {
+  // Prefiere el periodo que cubre el mediodía.
+  assert.equal(
+    aemetSky([
+      { periodo: '00-12', descripcion: 'Muy nuboso' },
+      { periodo: '12-24', descripcion: 'Cubierto con lluvia' },
+    ]),
+    'Cubierto con lluvia',
+  );
+  // Sin periodos, escoge la descripción más repetida.
   assert.equal(
     aemetSky([
       { descripcion: 'Cubierto con lluvia' }, { descripcion: 'Cubierto con lluvia' },
       { descripcion: 'Muy nuboso' }, { descripcion: '' }, null,
     ]),
-    'Cubierto con lluvia, Muy nuboso',
+    'Cubierto con lluvia',
   );
   assert.equal(aemetSky([]), null);
   assert.equal(aemetSky(undefined), null);

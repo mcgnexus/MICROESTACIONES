@@ -500,3 +500,20 @@ td.row-actions button,td button{font-size:15px}
 .stats-station{padding:22px}
 .stats-chart{margin:16px 0 6px}
 @media(max-width:880px){.stats-controls{grid-template-columns:1fr}.stats-field-stations{grid-column:1/-1}}
+
+/* ---- Ajustes de tablet y móviles pequeños --------------------------------- */
+@media(min-width:761px) and (max-width:1024px){
+  .weather-days{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .weather-hours{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-station-card>.chart-grid{gap:14px}
+  .detail-readings{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .hero-temperature strong{font-size:clamp(44px,7vw,60px)}
+}
+@media(max-width:520px){
+  .weather-days,.weather-hours{grid-template-columns:1fr}
+  .hero-main{flex-wrap:wrap;gap:10px}
+  .hero-forecast{width:100%;min-width:0}
+  .detail-readings{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stats-results{gap:12px}
+  .stats-stations{max-height:none}
+}
