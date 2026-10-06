@@ -267,21 +267,27 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     segment.push(point);
   });
   if (segment.length) segments.push(segment);
-  const gradientId = `chart-gradient-${++chartInstance}`;
+  chartInstance += 1;
+  const gradientId = `chart-gradient-${chartInstance}`;
+  const glowId = `chart-glow-${chartInstance}`;
   const areaPaths = segments.filter((part) => part.length > 1).map((part) => {
     const firstPoint = part[0];
     const lastPoint = part.at(-1);
     const area = `M${firstPoint.x.toFixed(1)},${height - bottom} L${part.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L')} L${lastPoint.x.toFixed(1)},${height - bottom} Z`;
     return `<path class="chart-area" d="${area}" fill="url(#${gradientId})"/>`;
   }).join('');
-  const paths = segments.map((part) => `<polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${part.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')}"/>`).join('');
+  const paths = segments.map((part) => `<polyline class="chart-line" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" pathLength="1" filter="url(#${glowId})" points="${part.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')}"/>`).join('');
+  const lastCoord = coords.at(-1);
+  const pulse = lastCoord
+    ? `<circle class="chart-pulse" cx="${lastCoord.x.toFixed(1)}" cy="${lastCoord.y.toFixed(1)}" r="5" fill="${color}" pointer-events="none"/>`
+    : '';
   const pointTargets = coords.map(({ x, y, row }, pointIndex) => {
     const label = `${dateText(row.observedAt)}: ${numberText(row[key], digits)} ${unit}`;
     const tabIndex = coords.length <= 40 || pointIndex === 0 || pointIndex === coords.length - 1 ? 0 : -1;
-    return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.5" fill="${color}" pointer-events="none"/>`;
+    return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.4" fill="${color}" pointer-events="none"/>`;
   }).join('');
   const latestValue = numberText(orderedPoints.at(-1)[key], digits);
-  return `<div class="chart-box tecrural-chart-card"${detailAttrs}><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".24"/><stop offset="100%" stop-color="${color}" stop-opacity=".015"/></linearGradient></defs>${ticks}${areaPaths}${paths}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
+  return `<div class="chart-box tecrural-chart-card"${detailAttrs}><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".42"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient><filter id="${glowId}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>${ticks}${areaPaths}${paths}${pulse}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {

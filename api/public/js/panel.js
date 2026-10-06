@@ -57,12 +57,12 @@ const METRIC_META = {
 };
 
 const AEMET_META = {
-  temperatureC: { label: 'Temperatura', unit: '°C', digits: 1, local: 'temperatureC' },
-  humidityPct: { label: 'Humedad', unit: '%', digits: 1, local: 'humidityPct' },
-  pressureHpa: { label: 'Presión', unit: 'mbar', digits: 1, local: 'pressureMbar' },
-  precipitationMm: { label: 'Precipitación', unit: 'mm', digits: 1, local: null },
-  windKmh: { label: 'Viento', unit: 'km/h', digits: 1, local: null },
-  windGustKmh: { label: 'Racha', unit: 'km/h', digits: 1, local: null },
+  temperatureC: { label: 'Temperatura', unit: '°C', digits: 1, icon: '🌡️', kind: 'temperature', local: 'temperatureC' },
+  humidityPct: { label: 'Humedad', unit: '%', digits: 1, icon: '💧', kind: 'humidity', local: 'humidityPct' },
+  pressureHpa: { label: 'Presión', unit: 'mbar', digits: 1, icon: '🌬️', kind: 'pressure', local: 'pressureMbar' },
+  precipitationMm: { label: 'Precipitación', unit: 'mm', digits: 1, icon: '🌧️', kind: 'rain', local: null },
+  windKmh: { label: 'Viento', unit: 'km/h', digits: 1, icon: '💨', kind: 'wind', local: null },
+  windGustKmh: { label: 'Racha', unit: 'km/h', digits: 1, icon: '🌬️', kind: 'wind', local: null },
 };
 
 const rawValue = (row, key) => (key === 'pressureMbar' ? pressureMbar(row?.pressurePa) : row?.[key]);
@@ -70,12 +70,32 @@ const chartRowsFor = (item, key) => (key === 'pressureMbar'
   ? (item.history || []).map((row) => ({ ...row, pressureMbar: pressureMbar(row.pressurePa) }))
   : (item.history || []));
 
-function lastReadings(rows, key, meta, limit = 5) {
-  const points = rows.filter((row) => row[key] != null && row.observedAt);
+// Formato compacto de hora para las tarjetas de detalle.
+const stampText = (value) => (value
+  ? new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  : '—');
+
+const TONE_KIND = { temperatureC: 'temperature', humidityPct: 'humidity', pressureMbar: 'pressure', batteryMv: 'battery', lux: 'neutral' };
+
+function metricTone(key, value, reference = null) {
+  const kind = TONE_KIND[key];
+  if (!kind) return 'tone-neutral';
+  if (kind === 'battery') {
+    if (value == null) return 'tone-muted';
+    return value < 3300 ? 'tone-battery-critical' : value < 3600 ? 'tone-battery-low' : 'tone-battery-ok';
+  }
+  return valueTone(kind, value, reference);
+}
+
+function valueCard({ key, value, meta, label = null, reference = null }) {
+  return readingCard({ label: label || meta.label, icon: meta.icon, value: numberText(value, meta.digits), unit: meta.unit, tone: metricTone(key, value, reference) });
+}
+
+function lastReadingsBlock(rows, key, meta, reference = null, limit = 5) {
+  const points = rows.filter((row) => row[key] != null && row.observedAt).slice(-limit).reverse();
   if (!points.length) return '<div class="detail-block"><h4>Últimas mediciones</h4><p class="empty">Sin mediciones registradas.</p></div>';
-  const last = points.slice(-limit).reverse();
-  return `<div class="detail-block"><h4>Últimas ${last.length} mediciones</h4><table class="detail-table"><thead><tr><th>Hora</th><th>Valor</th></tr></thead><tbody>${last
-    .map((row) => `<tr><td>${dateText(row.observedAt)}</td><td>${numberText(row[key], meta.digits)} ${escapeText(meta.unit)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="detail-block"><h4>Últimas ${points.length} mediciones</h4><div class="detail-readings">${points
+    .map((row) => valueCard({ key, value: row[key], meta, label: stampText(row.observedAt), reference })).join('')}</div></div>`;
 }
 
 function forecastBlock(item, key) {
@@ -87,27 +107,27 @@ function forecastBlock(item, key) {
   if (key === 'temperatureC') {
     title = 'Temperatura';
     rows = days.length
-      ? days.map((day) => ({ when: dayText(`${String(day.date).slice(0, 10)}T12:00:00`), text: `${numberText(day.temperatureMinC)}° / ${numberText(day.temperatureMaxC)}°` }))
-      : hours.map((hour) => ({ when: dateText(hour.forecastFor), text: `${numberText(hour.temperatureC)} °C` }));
+      ? days.map((day) => ({ when: dayText(`${String(day.date).slice(0, 10)}T12:00:00`), text: `🌡️ ${numberText(day.temperatureMinC)}° / ${numberText(day.temperatureMaxC)}°` }))
+      : hours.map((hour) => ({ when: stampText(hour.forecastFor), text: `🌡️ ${numberText(hour.temperatureC)} °C` }));
   } else if (key === 'humidityPct') {
     title = 'Humedad';
-    rows = hours.map((hour) => ({ when: dateText(hour.forecastFor), text: `${numberText(hour.humidityPct)} %` }));
+    rows = hours.map((hour) => ({ when: stampText(hour.forecastFor), text: `💧 ${numberText(hour.humidityPct)} %` }));
   } else if (key === 'precipitationMm') {
     title = 'Precipitación';
     rows = days.length
-      ? days.map((day) => ({ when: dayText(`${String(day.date).slice(0, 10)}T12:00:00`), text: `Prob. ${numberText(day.precipitationProbabilityPct, 0)} %` }))
-      : hours.map((hour) => ({ when: dateText(hour.forecastFor), text: `${numberText(hour.precipitationMm)} mm · ${numberText(hour.precipitationProbabilityPct, 0)} %` }));
+      ? days.map((day) => ({ when: dayText(`${String(day.date).slice(0, 10)}T12:00:00`), text: `🌧️ Prob. ${numberText(day.precipitationProbabilityPct, 0)} %` }))
+      : hours.map((hour) => ({ when: stampText(hour.forecastFor), text: `🌧️ ${numberText(hour.precipitationMm)} mm · ${numberText(hour.precipitationProbabilityPct, 0)} %` }));
   } else if (key === 'windKmh' || key === 'windGustKmh') {
     title = key === 'windGustKmh' ? 'Rachas' : 'Viento';
     rows = days.length
-      ? days.map((day) => ({ when: dayText(`${String(day.date).slice(0, 10)}T12:00:00`), text: `${numberText(day.windKmh)} km/h ${escapeText(day.windDirection || '')}` }))
-      : hours.map((hour) => ({ when: dateText(hour.forecastFor), text: `${numberText(key === 'windGustKmh' ? hour.windGustKmh : hour.windKmh)} km/h` }));
+      ? days.map((day) => ({ when: dayText(`${String(day.date).slice(0, 10)}T12:00:00`), text: `💨 ${numberText(day.windKmh)} km/h ${escapeText(day.windDirection || '')}` }))
+      : hours.map((hour) => ({ when: stampText(hour.forecastFor), text: `💨 ${numberText(key === 'windGustKmh' ? hour.windGustKmh : hour.windKmh)} km/h` }));
   }
   rows = rows.filter((row) => row.text && !/—/.test(row.text));
   if (!rows.length) return '';
   const provider = days.length ? 'AEMET' : 'Open-Meteo';
-  return `<div class="detail-block"><h4>Previsión de ${title.toLowerCase()} · ${provider}</h4><table class="detail-table"><thead><tr><th>Cuándo</th><th>Previsión</th></tr></thead><tbody>${rows
-    .map((row) => `<tr><td>${escapeText(row.when)}</td><td>${escapeText(row.text)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="detail-block"><h4>Previsión de ${title.toLowerCase()} · ${provider}</h4><div class="weather-days">${rows
+    .map((row) => `<div class="weather-day"><strong>${escapeText(row.when)}</strong><span>${escapeText(row.text)}</span></div>`).join('')}</div></div>`;
 }
 
 function buildLocalMetricDetail(item, metricKey) {
@@ -116,15 +136,16 @@ function buildLocalMetricDetail(item, metricKey) {
   if (!meta) return null;
   const rows = chartRowsFor(item, key);
   const recentRows = item.trendHistory?.length ? chartRowsFor({ ...item, history: item.trendHistory }, key) : rows;
+  const reference = key === 'pressureMbar' ? median(rows.map((row) => row[key])) : null;
   const chart = rows.some((row) => row[key] != null) ? makeChart(meta.label, rows, key, meta.color, meta.unit, meta.digits) : '';
   const observation = item.weather?.aemet?.observation;
   const aemetValue = meta.aemet && observation ? observation[meta.aemet] : null;
   const comparison = observation
-    ? `<div class="detail-block"><h4>Comparación con AEMET</h4><div class="fact-grid"><div><span>Microestación</span><strong>${numberText(rawValue(item.latest, key), meta.digits)} ${escapeText(meta.unit)}</strong></div><div><span>AEMET</span><strong>${aemetValue == null ? '—' : `${numberText(aemetValue, meta.digits)} ${escapeText(meta.unit)}`}</strong></div></div><p class="hint">AEMET ${escapeText(observation.stationId || '')} · ${dateText(observation.observedAt)}</p></div>`
+    ? `<div class="detail-block"><h4>Comparación con AEMET</h4><div class="reading-grid">${valueCard({ key, value: rawValue(item.latest, key), meta })}${valueCard({ key, value: aemetValue, meta, label: `${meta.label} · AEMET` })}</div><p class="hint">AEMET ${escapeText(observation.stationId || '')} · ${dateText(observation.observedAt)}</p></div>`
     : '';
   return {
     title: `${meta.label} · ${item.device?.name || 'Microestación'}`,
-    body: `${chart}${lastReadings(recentRows, key, meta)}${forecastBlock(item, key)}${comparison}`,
+    body: `${chart}${lastReadingsBlock(recentRows, key, meta, reference)}${forecastBlock(item, key)}${comparison}`,
   };
 }
 
@@ -133,12 +154,15 @@ function buildAemetMetricDetail(item, metricKey) {
   if (!meta) return null;
   const observation = item.weather?.aemet?.observation;
   const value = observation?.[metricKey];
-  const blocks = [`<div class="detail-block"><h4>Observación AEMET</h4><div class="fact-grid"><div><span>Estación</span><strong>${escapeText(observation?.stationId || '—')}</strong></div><div><span>${escapeText(meta.label)}</span><strong>${numberText(value, meta.digits)} ${escapeText(meta.unit)}</strong></div></div><p class="hint">Medida ${dateText(observation?.observedAt)}</p></div>`];
+  const aemetCard = readingCard({ label: `${meta.label} · AEMET`, icon: meta.icon, value: numberText(value, meta.digits), unit: meta.unit, tone: valueTone(meta.kind, value) });
+  const header = `<div class="detail-block"><h4>Observación AEMET · ${escapeText(observation?.stationId || '—')}</h4><div class="reading-grid">${readingCard({ label: 'Estación observadora', icon: '📡', value: escapeText(observation?.stationId || '—'), unit: '', tone: 'tone-neutral' })}${aemetCard}<div class="reading-card tone-muted"><span class="reading-label"><span class="reading-icon" aria-hidden="true">🕒</span>Medida</span><div class="reading-value"><strong>${escapeText(stampText(observation?.observedAt))}</strong></div></div></div></div>`;
+  const blocks = [header];
   if (meta.local) {
     const localMeta = METRIC_META[meta.local];
     const rows = item.trendHistory?.length ? chartRowsFor({ ...item, history: item.trendHistory }, meta.local) : chartRowsFor(item, meta.local);
-    blocks.push(`<div class="detail-block"><h4>Comparación con la microestación</h4><div class="fact-grid"><div><span>Microestación</span><strong>${numberText(rawValue(item.latest, meta.local), localMeta.digits)} ${escapeText(localMeta.unit)}</strong></div><div><span>AEMET</span><strong>${numberText(value, meta.digits)} ${escapeText(meta.unit)}</strong></div></div></div>`);
-    blocks.push(lastReadings(rows, meta.local, localMeta));
+    const reference = meta.local === 'pressureMbar' ? median(rows.map((row) => row[meta.local])) : null;
+    blocks.push(`<div class="detail-block"><h4>Comparación con la microestación</h4><div class="reading-grid">${valueCard({ key: meta.local, value: rawValue(item.latest, meta.local), meta: localMeta })}${aemetCard}</div></div>`);
+    blocks.push(lastReadingsBlock(rows, meta.local, localMeta, reference));
   }
   blocks.push(forecastBlock(item, metricKey === 'pressureHpa' ? 'pressureMbar' : metricKey));
   return { title: `${meta.label} · AEMET`, body: blocks.join('') };
@@ -146,18 +170,20 @@ function buildAemetMetricDetail(item, metricKey) {
 
 function buildSummaryDetail(item) {
   const { device, latest, status, sensors } = item;
+  const cards = [
+    latest?.temperatureC != null ? valueCard({ key: 'temperatureC', value: latest.temperatureC, meta: METRIC_META.temperatureC }) : '',
+    latest?.humidityPct != null ? valueCard({ key: 'humidityPct', value: latest.humidityPct, meta: METRIC_META.humidityPct }) : '',
+    latest?.pressurePa != null ? valueCard({ key: 'pressureMbar', value: rawValue(latest, 'pressureMbar'), meta: METRIC_META.pressureMbar }) : '',
+    sensors?.battery === false ? '' : valueCard({ key: 'batteryMv', value: latest?.batteryMv, meta: METRIC_META.batteryMv }),
+  ].filter(Boolean).join('');
   const facts = [
     ['Estación', device?.name],
     ['Última lectura', dateText(latest?.observedAt)],
-    ['Temperatura', latest?.temperatureC == null ? null : `${numberText(latest.temperatureC)} °C`],
-    ['Humedad', latest?.humidityPct == null ? null : `${numberText(latest.humidityPct)} %`],
-    ['Presión', `${pressureText(latest?.pressurePa)} mbar`],
-    ['Batería', sensors?.battery === false ? 'Desactivada' : `${numberText(latest?.batteryMv, 0)} mV`],
     ['Conectividad', status?.connectivity],
   ].filter(([, value]) => value != null);
   return {
     title: device?.name || 'Microestación',
-    body: `<div class="detail-block"><h4>Resumen</h4><dl class="detail-grid">${facts.map(([label, value]) => `<dt>${escapeText(label)}</dt><dd>${escapeText(value)}</dd>`).join('')}</dl></div>`,
+    body: `<div class="detail-block"><h4>Resumen</h4><div class="reading-grid">${cards}</div></div><div class="detail-block"><h4>Ficha</h4><dl class="detail-grid">${facts.map(([label, value]) => `<dt>${escapeText(label)}</dt><dd>${escapeText(value)}</dd>`).join('')}</dl></div>`,
   };
 }
 
@@ -168,19 +194,20 @@ function buildDayDetail(item, isoDate) {
   const day = aemetDay || openDay;
   if (!day) return null;
   const hours = (weather.openMeteo?.hourly || []).filter((hour) => String(hour.forecastFor).slice(0, 10) === isoDate);
-  const facts = [
-    ['Cielo', aemetDay?.sky || (openDay ? weatherText(openDay.weatherCode) : null)],
-    ['Temperatura', `${numberText(day.temperatureMinC)}° / ${numberText(day.temperatureMaxC)}°`],
-    ['Precipitación', aemetDay ? `Prob. ${numberText(aemetDay.precipitationProbabilityPct, 0)} %` : `${numberText(day.precipitationMm)} mm`],
-    ['Viento', `${numberText(day.windKmh)} km/h ${escapeText(day.windDirection || '')}`],
-  ].filter(([, value]) => value && value !== '—');
+  const sky = aemetDay?.sky || (openDay ? weatherText(openDay.weatherCode) : 'Sin descripción');
+  const cards = [
+    readingCard({ label: 'Cielo', icon: '🌤️', value: escapeText(sky), unit: '', tone: 'tone-neutral' }),
+    readingCard({ label: 'Temperatura', icon: '🌡️', value: `${numberText(day.temperatureMinC)}° / ${numberText(day.temperatureMaxC)}°`, unit: '', tone: 'tone-normal' }),
+    readingCard({ label: 'Precipitación', icon: '🌧️', value: numberText(day.precipitationMm), unit: 'mm', tone: 'tone-cool' }),
+    readingCard({ label: 'Viento', icon: '💨', value: numberText(day.windKmh), unit: 'km/h', tone: 'tone-neutral' }),
+  ].join('');
   const hourly = hours.length
-    ? `<div class="detail-block"><h4>Detalle por horas</h4><table class="detail-table"><thead><tr><th>Hora</th><th>Temp.</th><th>Humedad</th><th>Lluvia</th><th>Viento</th></tr></thead><tbody>${hours
-      .map((hour) => `<tr><td>${dateText(hour.forecastFor)}</td><td>${numberText(hour.temperatureC)} °C</td><td>${numberText(hour.humidityPct)} %</td><td>${numberText(hour.precipitationMm)} mm</td><td>${numberText(hour.windKmh)} km/h</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="detail-block"><h4>Detalle por horas</h4><div class="weather-hours">${hours
+      .map((hour) => `<div><strong>${escapeText(stampText(hour.forecastFor))}</strong><span>🌡️ ${numberText(hour.temperatureC)} °C · 💧 ${numberText(hour.humidityPct)} %</span><span>🌧️ ${numberText(hour.precipitationMm)} mm · 💨 ${numberText(hour.windKmh)} km/h</span></div>`).join('')}</div></div>`
     : '';
   return {
     title: `Previsión · ${dayText(`${isoDate}T12:00:00`)}`,
-    body: `<div class="detail-block"><h4>${aemetDay ? 'AEMET' : 'Open-Meteo'}</h4><div class="fact-grid">${facts.map(([label, value]) => `<div><span>${escapeText(label)}</span><strong>${escapeText(value)}</strong></div>`).join('')}</div></div>${hourly}`,
+    body: `<div class="detail-block"><h4>${aemetDay ? 'AEMET' : 'Open-Meteo'}</h4><div class="reading-grid">${cards}</div></div>${hourly}`,
   };
 }
 
@@ -226,16 +253,26 @@ function readingCard({ label, icon, value, unit, tone, trend = '', detail = '' }
 }
 
 function heroBlock({ latest, history, weather, detailKey }) {
+  const aemetDay = weather?.aemet?.forecast?.days?.[0];
+  const openDay = weather?.openMeteo?.daily?.[0];
+  const forecast = aemetDay || openDay;
   const temperature = latest?.temperatureC ?? weather?.aemet?.observation?.temperatureC ?? weather?.openMeteo?.current?.temperatureC;
   const temperatureSource = latest?.temperatureC != null ? 'MICROESTACIÓN · MEDICIÓN DIRECTA'
     : weather?.aemet?.observation?.temperatureC != null ? 'AEMET · OBSERVACIÓN REAL'
       : weather?.openMeteo?.current?.temperatureC != null ? 'OPEN-METEO · ESTIMACIÓN' : 'TEMPERATURA · SIN DATO';
+  const forecastProvider = aemetDay ? 'AEMET' : openDay ? 'Open-Meteo' : null;
+  const forecastSky = aemetDay?.sky
+    ? aemetDay.sky.split(',')[0].trim()
+    : (openDay ? weatherText(openDay.weatherCode) : 'Sin previsión disponible');
+  const minimum = aemetDay?.temperatureMinC ?? openDay?.temperatureMinC;
+  const maximum = aemetDay?.temperatureMaxC ?? openDay?.temperatureMaxC;
   return `<section class="station-hero"${detailAttrs(detailKey, '__summary')}>
     <div class="hero-ambient" aria-hidden="true"></div>
     <div class="hero-content">
       <div class="hero-source-row"><span class="hero-local-badge"><span aria-hidden="true">●</span> ${temperatureSource}</span>${latest?.temperatureC != null ? trendArrow(history, 'temperatureC') : ''}</div>
       <div class="hero-main">
         <div class="hero-temperature"><strong>${numberText(temperature)}</strong><span>°C</span></div>
+        <div class="hero-forecast"><span class="hero-weather-icon" aria-hidden="true">${forecast ? (aemetDay ? '🌤️' : '☁️') : '🌱'}</span><strong>${escapeText(forecastSky)}</strong><small>${forecastProvider ? `Previsión · ${forecastProvider}` : 'Previsión no disponible'}</small>${minimum != null || maximum != null ? `<small>${numberText(minimum)}° / ${numberText(maximum)}°</small>` : ''}</div>
       </div>
       <div class="hero-readout-footer"><span>Microestación · ${dateText(latest?.observedAt)}</span><span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} mbar</span></div>
     </div>

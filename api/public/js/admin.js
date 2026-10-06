@@ -1,6 +1,7 @@
 import {
   $, api, escapeText, dateText, roleLabel, planLabel, isAdmin,
 } from './ui.js';
+import { mountAdminStatistics } from './admin-statistics.js';
 
 const ROLES = ['admin', 'operator', 'viewer'];
 const PLANS = ['free', 'pro', 'enterprise'];
@@ -64,6 +65,9 @@ export async function renderAdmin(root) {
         <div><h3>Concedidas</h3><ul class="plain-list" data-granted></ul></div>
         <div><h3>Disponibles</h3><ul class="plain-list" data-available></ul></div>
       </div>
+    </section>
+    <section class="panel" data-statistics-panel>
+      <p class="empty">Cargando análisis estadístico…</p>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">PILOTOS EN FINCAS</p><h2>Solicitudes de acceso</h2></div></div>
@@ -165,4 +169,5 @@ export async function renderAdmin(root) {
   }
 
   await load();
+  await mountAdminStatistics($('[data-statistics-panel]', root));
 }

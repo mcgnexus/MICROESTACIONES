@@ -40,8 +40,9 @@ test('station cards compare microstation and AEMET, and prefer AEMET daily forec
   assert.match(html, /Radiación UV/);
   assert.match(html, /AEMET aporta ahora viento y precipitación/);
   assert.match(html, /Previsión municipal AEMET/);
-  // La previsión ya no se duplica en el hero: solo aparece en el bloque externo.
-  assert.doesNotMatch(html, /hero-forecast/);
+  // El hero mantiene la previsión del día de AEMET y el bloque externo da el detalle.
+  assert.match(html, /hero-forecast/);
+  assert.match(html, /Previsión · AEMET/);
   assert.doesNotMatch(html, /Previsión Open-Meteo · 5 días|Previsión por horas/);
   // La previsión queda justo después de la comparación AEMET y antes de las gráficas.
   assert.ok(html.indexOf('aemet-readings') < html.indexOf('weather-panel'));

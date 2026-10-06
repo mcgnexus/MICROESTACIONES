@@ -10,6 +10,7 @@ const SHELL_FILES = [
   '/pwa-512.png',
   '/js/account.js',
   '/js/admin.js',
+  '/js/admin-statistics.js',
   '/js/alerts.js',
   '/js/config.js',
   '/js/device-config.js',
