@@ -8,7 +8,8 @@ test('pressure values are converted from Pa to mbar in the UI and station charts
   assert.equal(pressureText(90000), '900');
   const history = [0, 1, 2].map((index) => ({ observedAt: new Date(index * 3600000).toISOString(), pressurePa: 90000 + index * 100 }));
   const section = chartSection(history, { pressure_min: 90000, pressure_max: 90200, pressure_avg: 90100 });
-  assert.match(section, /Presión · mbar/);
+  assert.match(section, /<h3>Presión<\/h3>/);
+  assert.match(section, /chart-current"><strong>902<\/strong><small>mbar<\/small>/);
   assert.match(section, /900/);
   assert.doesNotMatch(section, /Presión · Pa/);
 });
@@ -83,6 +84,10 @@ test('metrics include an icon and graphs explain temperature trend with an arrow
   assert.match(chart, /↑/);
   assert.match(chart, /calentamiento/);
   assert.match(chart, /viewBox="0 0 560 200"/);
+  assert.match(chart, /chart-area/);
+  assert.match(chart, /tecrural-chart-card/);
+  assert.match(chart, /chart-current/);
+  assert.match(chart, /<strong>3<\/strong>/);
 });
 
 test('pressure chart uses a broader reference scale than its measured range', () => {

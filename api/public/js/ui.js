@@ -164,6 +164,8 @@ const CHART_SCALE = {
   batteryMv: { minimumSpan: 500, step: 250 },
 };
 
+let chartInstance = 0;
+
 export function chartYDomain(key, min, max) {
   const scale = CHART_SCALE[key] || { minimumSpan: 0, step: 1 };
   const center = (min + max) / 2;
@@ -202,7 +204,8 @@ function chartTrendBadge(rows, key, digits) {
 export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null) {
   const allPoints = rows.filter((row) => row[key] != null);
   const points = sampleChartRows(rows, key);
-  if (!allPoints.length) return `<div class="chart-box"><h3>${title}</h3><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
+  const icon = TREND_METRICS[key]?.icon || '📈';
+  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
   const width = 560, height = 200, left = 58, right = 14, top = 16, bottom = 34;
   const values = allPoints.map((row) => Number(row[key]));
   const min = exactStats?.min ?? Math.min(...values);
@@ -215,8 +218,9 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
   const xAt = (row) => left + ((lastTime === firstTime ? 0.5 : (new Date(row.observedAt).getTime() - firstTime) / (lastTime - firstTime))) * (width - left - right);
   const yAt = (row) => height - bottom - ((Number(row[key]) - low) / (high - low)) * (height - top - bottom);
   const coords = points.map((row) => ({ x: xAt(row), y: yAt(row), row }));
-  const first = dateText(allPoints[0].observedAt);
-  const last = dateText(allPoints.at(-1).observedAt);
+  const orderedPoints = [...allPoints].sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
+  const first = dateText(orderedPoints[0].observedAt);
+  const last = dateText(orderedPoints.at(-1).observedAt);
   const ticks = [0, 1, 2].map((i) => {
     const fraction = i / 2;
     const y = top + fraction * (height - top - bottom);
@@ -242,13 +246,21 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     segment.push(point);
   });
   if (segment.length) segments.push(segment);
+  const gradientId = `chart-gradient-${++chartInstance}`;
+  const areaPaths = segments.filter((part) => part.length > 1).map((part) => {
+    const firstPoint = part[0];
+    const lastPoint = part.at(-1);
+    const area = `M${firstPoint.x.toFixed(1)},${height - bottom} L${part.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L')} L${lastPoint.x.toFixed(1)},${height - bottom} Z`;
+    return `<path class="chart-area" d="${area}" fill="url(#${gradientId})"/>`;
+  }).join('');
   const paths = segments.map((part) => `<polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${part.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')}"/>`).join('');
   const pointTargets = coords.map(({ x, y, row }, pointIndex) => {
     const label = `${dateText(row.observedAt)}: ${numberText(row[key], digits)} ${unit}`;
     const tabIndex = coords.length <= 40 || pointIndex === 0 || pointIndex === coords.length - 1 ? 0 : -1;
     return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.5" fill="${color}" pointer-events="none"/>`;
   }).join('');
-  return `<div class="chart-box"><div class="chart-heading"><h3>${TREND_METRICS[key]?.icon ? `<span class="chart-icon" aria-hidden="true">${TREND_METRICS[key].icon}</span> ` : ''}${escapeText(title)} · ${escapeText(unit)}</h3>${chartTrendBadge(allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}">${ticks}${timeLabels}${paths}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${unit}</span><span>Máx. ${numberText(max, digits)} ${unit}</span><span>Prom. ${numberText(average, digits)} ${unit}</span></div></div>`;
+  const latestValue = numberText(orderedPoints.at(-1)[key], digits);
+  return `<div class="chart-box tecrural-chart-card"><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".24"/><stop offset="100%" stop-color="${color}" stop-opacity=".015"/></linearGradient></defs>${ticks}${areaPaths}${paths}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {
@@ -285,7 +297,7 @@ if (typeof document !== 'undefined') {
 export const chartSection = (history, summary = {}) => {
   const pressureHistory = history.map((row) => ({ ...row, pressureMbar: pressureMbar(row.pressurePa) }));
   const pressureSummary = Object.fromEntries(['min', 'max', 'avg'].map((key) => [key, pressureMbar(summary[`pressure_${key}`])]));
-  return `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#d47749', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#4286a8', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', pressureHistory, 'pressureMbar', '#735bb0', 'mbar', 1, pressureSummary)}${makeChart('Batería', history, 'batteryMv', '#528452', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">El eje Y usa una escala de referencia ampliada para que variaciones pequeñas no ocupen toda la gráfica. Los chips Mín./Máx. muestran los extremos medidos. Las flechas resumen el periodo; no son un pronóstico.</p>`;
+  return `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${makeChart('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">Evolución de mediciones validadas de la microestación. Las flechas resumen el periodo seleccionado.</p>`;
 };
 
 // ---- Diálogo de detalle ----------------------------------------------------

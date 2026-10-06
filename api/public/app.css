@@ -153,6 +153,37 @@ button:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:760px){.reading-comparison{gap:9px}.reading-source{padding:11px}.reading-source-head{display:block}.reading-source-head small{display:block;text-align:left;margin-top:5px}.reading-grid{gap:7px}.reading-card{padding:9px;min-height:96px}.reading-icon{font-size:23px}.reading-value{gap:3px}.reading-value strong{font-size:20px}.reading-value small{font-size:10px}}
 @media(max-width:520px){.reading-comparison{grid-template-columns:1fr}.reading-source-head{display:flex}.reading-source-head small{text-align:right;margin:0}}
 
+/* Tarjetas de evolución con encabezado de lectura, tendencia y área suave. */
+.chart-title{display:flex;align-items:center;gap:8px;min-width:0}.chart-title h3{font-size:15px}.chart-title small{display:block;color:#809087;font-size:9px;font-weight:750;letter-spacing:.06em}
+.chart-current{display:flex;align-items:baseline;gap:4px;white-space:nowrap}.chart-current strong{font-size:20px;font-weight:850;font-variant-numeric:tabular-nums}.chart-current small{font-size:10px;color:#68766c}
+.chart-trend-strip{min-height:22px;margin-bottom:4px}.chart-trend-strip .chart-trend-wrap{display:flex;align-items:center;gap:6px;max-width:none;text-align:left}.chart-trend-strip .chart-trend-note{margin:0}
+.chart-area{pointer-events:none}.chart-dates{display:flex;justify-content:space-between;gap:8px;margin-top:4px;color:#75867d;font-size:9px}.chart-dates span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dashboard-station-card>.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:17px;margin-bottom:9px}
+.tecrural-chart-card{min-width:0;padding:15px 15px 12px;border:1px solid #dfeae4;border-radius:18px;background:linear-gradient(155deg,#fff 0%,#fbfdfc 100%);box-shadow:0 5px 16px #123e2e09}
+.tecrural-chart-card .chart-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-height:0;margin-bottom:7px}
+.tecrural-chart-card .chart-title{display:flex;align-items:center;gap:9px;min-width:0}
+.tecrural-chart-card .chart-icon{display:grid;place-items:center;width:35px;height:35px;flex:0 0 auto;border-radius:12px;background:#eaf5ef;color:#17633e;font-size:20px;line-height:1}
+.tecrural-chart-card .chart-title h3{overflow:hidden;color:#203d30;font-size:13px;font-weight:800;text-overflow:ellipsis;white-space:nowrap}
+.tecrural-chart-card .chart-title small{display:block;margin-top:3px;color:#809087;font-size:8px;font-weight:800;letter-spacing:.07em}
+.tecrural-chart-card .chart-current{display:flex;align-items:baseline;gap:3px;white-space:nowrap}
+.tecrural-chart-card .chart-current strong{color:#153f30;font-size:21px;font-weight:850;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.tecrural-chart-card .chart-current small{color:#64776d;font-size:10px;font-weight:700}
+.tecrural-chart-card .chart-trend-strip{min-height:22px}
+.tecrural-chart-card .chart-trend-wrap{display:flex;align-items:center;gap:6px;max-width:none;text-align:left}
+.tecrural-chart-card .chart-trend{padding:3px 8px;border:1px solid #e4ece6;background:#f4f8f5;font-size:9px}
+.tecrural-chart-card .chart-trend strong{font-size:14px}
+.tecrural-chart-card .chart-trend-note{margin:0;font-size:9px}
+.tecrural-chart-card .chart-wrap{overflow:hidden;border-radius:10px;background:linear-gradient(180deg,#f9fcfa,#fff)}
+.tecrural-chart-card .chart{height:148px}
+.tecrural-chart-card .chart-gridline{stroke:#e4ece7;stroke-dasharray:3 5}
+.tecrural-chart-card .chart-axis-label{fill:#7a8a81;font-size:10px}
+.tecrural-chart-card .chart-hit:focus{stroke:#153f30;stroke-width:2}
+.tecrural-chart-card .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:9px}
+.tecrural-chart-card .summary span{padding:6px 4px;border-radius:8px;background:#f2f7f4;color:#557064;font-size:9px;text-align:center;white-space:nowrap}
+.tecrural-chart-card.chart-empty{min-height:160px}
+.dashboard-station-card>.chart-trend-help{margin-top:0;margin-bottom:14px;color:#718279;font-size:10px}
+@media(max-width:760px){.dashboard-station-card>.chart-grid{grid-template-columns:1fr!important;gap:10px}.tecrural-chart-card{padding:13px}.tecrural-chart-card .chart{height:158px}.tecrural-chart-card .chart-current strong{font-size:23px}.tecrural-chart-card .summary span{font-size:10px}}
+
 /* TecRural mobile-first dashboard, using the brand's forest green and sensor cyan. */
 :root{--tr-forest:#17633e;--tr-forest-deep:#123e2e;--tr-cyan:#16a6bf;--tr-cloud:#edf4f3}
 body{background:#edf3f1}
@@ -214,7 +245,7 @@ main{max-width:1240px;margin:clamp(18px,3vw,36px) auto;padding:0 clamp(12px,2.2v
 .dashboard-station-card>.coverage:not(.reliability-summary){font-size:11px}
 .dashboard-station-card .weather-panel{border-radius:18px;background:#f4f9f7;border-color:#dce9e2}
 .dashboard-station-card .weather-current,.dashboard-station-card .weather-day{border-radius:13px}
-.dashboard-station-card .chart-box{border-radius:15px}
+.dashboard-station-card .tecrural-chart-card{border-radius:18px}
 .dashboard-station-card .weather-panel .source-tag{background:#e8f5f1;color:#276a51}
 .dashboard-station-card .weather-provider h4{color:#1a6148}
 .dashboard-station-card .weather-attribution a{color:#07869a}
