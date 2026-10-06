@@ -14,6 +14,13 @@ const SENSOR_KEYS = [['temperature', 'Temperatura'], ['humidity', 'Humedad'], ['
 const TEXT_FIELD = (name, label, extra = '') =>
   `<label>${label}<input name="${name}" ${extra}></label>`;
 
+function applyAemetDefaults(form) {
+  const location = form.elements.public_zone.value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (!/(^|\W)huescar(\W|$)/.test(location)) return;
+  if (!form.elements.aemet_municipality_code.value) form.elements.aemet_municipality_code.value = '18098';
+  if (!form.elements.aemet_station_id.value) form.elements.aemet_station_id.value = '5051X';
+}
+
 // ---- Listado con alta/edición ---------------------------------------------
 export async function renderStations(root) {
   root.innerHTML = `
@@ -47,7 +54,7 @@ export async function renderStations(root) {
           ${TEXT_FIELD('firmware_version', 'Versión de firmware', 'maxlength="60"')}
           ${TEXT_FIELD('coverage_km', 'Cobertura (km)', 'type="number" step="0.1" min="0.1" max="500" placeholder="25"')}
         </div>
-        <p class="hint">Open-Meteo usa las coordenadas automáticamente. Para AEMET, añade el código municipal, el indicativo de la estación observadora más cercana y el área de avisos; la API key debe estar guardada como variable privada AEMET_API_KEY en el servidor.</p>
+        <p class="hint">Open-Meteo usa las coordenadas automáticamente. Para AEMET, añade el código municipal, el indicativo de la estación observadora más cercana y el área de avisos; la API key debe estar guardada como variable privada AEMET_API_KEY en el servidor. Para Huéscar se sugieren el municipio 18098 y la estación observadora 5051X.</p>
         <fieldset class="sensor-set"><legend>Sensores activos</legend>${SENSOR_KEYS
           .map(([key, label]) => `<label class="check"><input type="checkbox" name="sensor_${key}" checked> ${label}</label>`).join('')}</fieldset>
         <div class="form-grid">
@@ -132,6 +139,7 @@ export async function renderStations(root) {
       SENSOR_KEYS.forEach(([key]) => { form.elements[`sensor_${key}`].checked = key !== 'lux'; });
       form.elements.active.checked = true;
     }
+    applyAemetDefaults(form);
     const sensors = { ...(station?.sensors || {}) };
     SENSOR_KEYS.forEach(([key]) => {
       if (station) form.elements[`sensor_${key}`].checked = sensors[key] !== false;
@@ -140,6 +148,8 @@ export async function renderStations(root) {
     list.classList.add('hidden');
     formPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  form.elements.public_zone.addEventListener('input', () => applyAemetDefaults(form));
 
   function closeForm() {
     formPanel.classList.add('hidden');
