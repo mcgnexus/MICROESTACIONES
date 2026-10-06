@@ -1,5 +1,5 @@
 import {
-  $, api, escapeText, dateText, numberText, connectivityBadge,
+  $, api, escapeText, dateText, dayText, numberText, connectivityBadge,
   batteryLabel, metric, chartSection,
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
