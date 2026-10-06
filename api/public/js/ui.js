@@ -156,6 +156,24 @@ export function chartTrend(rows, key) {
   return { direction, change };
 }
 
+// Serie corta para las tendencias: el día local en curso; si aún no hay muestras
+// suficientes, cae a las últimas 3 horas y, en último caso, a las últimas 5 lecturas.
+export function trendWindowRows(rows, now = new Date()) {
+  const points = (rows || []).filter((row) => row && row.observedAt);
+  if (points.length < 3) return points;
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const dayStart = startOfDay.getTime();
+  const today = points.filter((row) => new Date(row.observedAt).getTime() >= dayStart);
+  if (today.length >= 3) return today;
+  const recentStart = now.getTime() - 3 * 3600000;
+  const recent = points.filter((row) => new Date(row.observedAt).getTime() >= recentStart);
+  return recent.length >= 3 ? recent : points.slice(-5);
+}
+
+// Ventana corta del día local, normalizada a la hora de `now` (para gráficos).
+export const TREND_WINDOW_LABEL = 'tendencia del día en curso';
+
 const CHART_SCALE = {
   temperatureC: { minimumSpan: 10, step: 5 },
   humidityPct: { minimumSpan: 20, step: 10 },
@@ -190,22 +208,25 @@ export function chartGapThreshold(rows) {
 function chartTrendBadge(rows, key, digits) {
   const metric = TREND_METRICS[key];
   if (!metric) return '';
-  const { direction, change } = chartTrend(rows, key);
+  const { direction, change } = chartTrend(trendWindowRows(rows), key);
   const icon = direction === 'sube' ? '↑' : direction === 'baja' ? '↓' : direction === 'estable' ? '→' : '·';
   const explanation = direction === 'sube' ? metric.up
     : direction === 'baja' ? metric.down
-      : direction === 'estable' ? 'variación pequeña durante el periodo'
-        : 'se necesitan al menos 3 muestras con horas distintas';
-  const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit} en el periodo`;
+      : direction === 'estable' ? 'variación pequeña durante el día'
+        : 'se necesitan al menos 3 muestras del día en curso';
+  const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit} en el día`;
   const accessible = `${direction}: ${explanation}${amount}`;
   return `<div class="chart-trend-wrap"><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="Tendencia ${escapeText(accessible)}"><strong aria-hidden="true">${icon}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${amount ? escapeText(amount) : ''}</small></div>`;
 }
 
-export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null) {
+export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null, detail = null, trendRows = null) {
   const allPoints = rows.filter((row) => row[key] != null);
   const points = sampleChartRows(rows, key);
   const icon = TREND_METRICS[key]?.icon || '📈';
-  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
+  const detailAttrs = detail
+    ? ` data-detail-key="${escapeText(detail.key)}" data-detail-metric="${escapeText(detail.metric || key)}" data-detail-source="${escapeText(detail.source || 'local')}" role="button" tabindex="0" aria-label="Ampliar ${escapeText(title)}"`
+    : '';
+  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"${detailAttrs}><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
   const width = 560, height = 200, left = 58, right = 14, top = 16, bottom = 34;
   const values = allPoints.map((row) => Number(row[key]));
   const min = exactStats?.min ?? Math.min(...values);
@@ -260,7 +281,7 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.5" fill="${color}" pointer-events="none"/>`;
   }).join('');
   const latestValue = numberText(orderedPoints.at(-1)[key], digits);
-  return `<div class="chart-box tecrural-chart-card"><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".24"/><stop offset="100%" stop-color="${color}" stop-opacity=".015"/></linearGradient></defs>${ticks}${areaPaths}${paths}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
+  return `<div class="chart-box tecrural-chart-card"${detailAttrs}><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".24"/><stop offset="100%" stop-color="${color}" stop-opacity=".015"/></linearGradient></defs>${ticks}${areaPaths}${paths}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {
@@ -294,10 +315,19 @@ if (typeof document !== 'undefined') {
   });
 }
 
-export const chartSection = (history, summary = {}) => {
+export const chartSection = (history, summary = {}, options = {}) => {
   const pressureHistory = history.map((row) => ({ ...row, pressureMbar: pressureMbar(row.pressurePa) }));
   const pressureSummary = Object.fromEntries(['min', 'max', 'avg'].map((key) => [key, pressureMbar(summary[`pressure_${key}`])]));
-  return `<div class="chart-grid">${makeChart('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${makeChart('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${makeChart('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${makeChart('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}</div><p class="chart-trend-help">Evolución de mediciones validadas de la microestación. Las flechas resumen el periodo seleccionado.</p>`;
+  const detail = options.detailKey ? { key: options.detailKey } : null;
+  const trendFor = (key) => (options.trendHistory
+    ? options.trendHistory.map((row) => (key === 'pressureMbar' ? { ...row, pressureMbar: pressureMbar(row.pressurePa) } : row))
+    : null);
+  const card = (title, rows, key, color, unit, digits, stats = null) =>
+    makeChart(title, rows, key, color, unit, digits, stats, detail ? { ...detail, metric: key } : null, trendFor(key));
+  const lux = options.sensors?.lux === true && history.some((row) => row.lux != null)
+    ? card('Iluminancia', history, 'lux', '#d99a1f', 'lux', 0)
+    : '';
+  return `<div class="chart-grid">${card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}${lux}</div><p class="chart-trend-help">Evolución de mediciones validadas de la microestación. Las flechas resumen el día en curso. Toca un gráfico o una tarjeta para ampliar.</p>`;
 };
 
 // ---- Diálogo de detalle ----------------------------------------------------

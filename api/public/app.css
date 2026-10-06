@@ -303,3 +303,144 @@ main{max-width:1240px;margin:clamp(18px,3vw,36px) auto;padding:0 clamp(12px,2.2v
   .mobile-tab-bar a.active{color:var(--tr-forest)}
   .mobile-tab-bar a.active>span{color:var(--tr-cyan)}
 }
+
+/* ---- Escala tipográfica global +25% --------------------------------------- */
+/* Sube el tamaño base y todos los microtextos para mejorar la lectura. */
+:root{font-size:125%}
+body{font-size:1rem}
+.eyebrow{font-size:14px}
+.brand-copy span{font-size:11px}
+label{font-size:16px}
+.error{font-size:16px}
+.hint{font-size:15px}
+code,pre{font-size:15px}
+details summary{font-size:15px}
+.link,.button-link{font-size:16px}
+.chip{font-size:15px}
+.topnav a{font-size:16px}
+.tabs a{font-size:16px}
+.badge{font-size:14px;padding:5px 10px}
+.period-label{font-size:15px}
+input,select,button{font-size:16px}
+td.row-actions button,td button{font-size:15px}
+.row-actions .button-link{font-size:15px}
+.detail-grid dt{font-size:15px}
+.detail-grid dd{font-size:16px}
+.plain-list li{font-size:16px}
+.plain-list small{font-size:14px}
+.diff{font-size:15px}
+.stat-card .eyebrow{font-size:13px}
+.stat-card .eyebrow small{font-size:13px}
+.stat-row{font-size:15px}
+.stat-row strong{font-size:17px}
+.trend{font-size:15px}
+.dixon-heading h3{font-size:19px}
+.dixon-card-head strong{font-size:16px}
+.dixon-result{font-size:15px}
+.dixon-result strong{font-size:17px}
+.dixon-card p{font-size:14px}
+.aemet-proximity{font-size:13px}
+.stepper strong{font-size:15px}
+.stepper small,.stepper time{font-size:14px}
+.remote-facts span,.remote-facts small{font-size:14px}
+.remote-facts strong{font-size:19px}
+.config-group legend{font-size:15px}
+.config-group label small{font-size:14px}
+.warn-box p{font-size:15px}
+.fact-grid span{font-size:14px}
+.fact-grid strong{font-size:20px}
+.weather-attribution{font-size:12px}
+.footnote{font-size:14px}
+.pwa-install-hint{font-size:15px}
+.topbar .pwa-install-hint{font-size:14px}
+.mobile-tab-bar a{font-size:12px}
+.mobile-tab-bar a>span{font-size:24px}
+.footnote{font-size:14px}
+.source-tag{font-size:13px}
+
+/* Tarjetas de lectura y comparación */
+.reading-label{font-size:14px;min-height:34px}
+.reading-icon{font-size:31px}
+.reading-value strong{font-size:clamp(24px,2.4vw,31px)}
+.reading-value small{font-size:13px}
+.reading-source-head h3{font-size:19px}
+.reading-source-head small{font-size:13px}
+.reading-legend{font-size:12px}
+.upcoming-heading h3{font-size:14px}
+.upcoming-heading small{font-size:12px}
+.upcoming-sensor{font-size:12px}
+.upcoming-badge{font-size:10px}
+.upcoming-icon{font-size:24px}
+
+/* Hero */
+.hero-local-badge{font-size:12px}
+.hero-temperature>span{font-size:28px}
+.hero-forecast strong{font-size:14px}
+.hero-forecast small{font-size:12px}
+.hero-readout-footer{font-size:12px}
+.hero-weather-icon{font-size:34px}
+
+/* Gráficos */
+.chart-title h3{font-size:18px}
+.chart-title small{font-size:11px}
+.chart-current strong{font-size:24px}
+.chart-current small{font-size:12px}
+.chart-axis-label{font-size:13px}
+.chart-trend{font-size:14px}
+.chart-trend strong{font-size:22px}
+.chart-trend-note{font-size:12px}
+.chart-trend-help{font-size:14px}
+.chart-dates{font-size:11px}
+.tecrural-chart-card .chart-title h3{font-size:16px}
+.tecrural-chart-card .chart-title small{font-size:10px}
+.tecrural-chart-card .chart-current strong{font-size:25px}
+.tecrural-chart-card .chart-current small{font-size:12px}
+.tecrural-chart-card .chart-trend{font-size:12px}
+.tecrural-chart-card .chart-trend strong{font-size:17px}
+.tecrural-chart-card .chart-trend-note{font-size:11px}
+.tecrural-chart-card .summary span{font-size:11px}
+.dashboard-station-card>.chart-trend-help{font-size:12px}
+
+/* Meteorología */
+.weather-heading h3{font-size:22px}
+.weather-current-title h4,.weather-provider h4,.weather-alert-group h4{font-size:18px}
+.weather-current-title small{font-size:13px}
+.weather-metrics span{font-size:14px}
+.weather-metrics strong{font-size:20px}
+.weather-day{font-size:14px}
+.weather-day strong{font-size:15px}
+.weather-alert{font-size:14px}
+.weather-hours>div{font-size:13px}
+.weather-hourly summary{font-size:14px}
+
+/* Fuente accesible: mantiene las cuadrículas dentro del ancho */
+@media(max-width:760px){
+  .reading-label{font-size:12px}
+  .reading-value strong{font-size:clamp(20px,6vw,24px)}
+  .tecrural-chart-card .chart-current strong{font-size:23px}
+  .tecrural-chart-card .summary span{font-size:11px}
+  .weather-metrics strong{font-size:19px}
+}
+
+/* ---- Ampliación de tarjetas y gráficos ------------------------------------ */
+.dashboard-station-card{scroll-margin-top:92px}
+.reading-card,.chart-box[data-detail-key],.station-hero[data-detail-key],.weather-day[data-detail-key]{cursor:pointer}
+.reading-card:hover,.chart-box[data-detail-key]:hover,.station-hero[data-detail-key]:hover,.weather-day[data-detail-key]:hover{border-color:#9fc9bb}
+.reading-card:focus-visible,.chart-box[data-detail-key]:focus-visible,.station-hero[data-detail-key]:focus-visible,.weather-day[data-detail-key]:focus-visible{outline:3px solid #d47749;outline-offset:2px}
+.dashboard-station-card--focus{animation:tr-card-focus 1.8s ease-out}
+@keyframes tr-card-focus{
+  0%{box-shadow:0 0 0 0 #16a6bf99;border-color:#16a6bf}
+  40%{box-shadow:0 0 0 6px #16a6bf33;border-color:#16a6bf}
+  100%{box-shadow:0 12px 36px #123e2e12}
+}
+.detail-block{margin:0 0 18px}
+.detail-block:last-child{margin-bottom:0}
+.detail-block h4{margin:0 0 10px;font-size:16px;color:#203d30}
+.detail-dialog .tecrural-chart-card .chart{height:320px}
+.detail-dialog .chart-tooltip{font-size:12px}
+.detail-table{width:100%;border-collapse:collapse;font-size:14px}
+.detail-table th,.detail-table td{padding:8px 10px;border-bottom:1px solid #edf0ec;text-align:left}
+.detail-table th{color:#5d6f62;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.detail-dialog .fact-grid{margin:0}
+.detail-dialog .fact-grid>div{background:#f2f8f5}
+@media(max-width:760px){.detail-dialog .tecrural-chart-card .chart{height:220px}}

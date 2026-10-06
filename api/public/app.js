@@ -14,6 +14,7 @@ const sessionChip = $('#session-chip');
 const installButton = $('#install-app');
 const iosInstallHint = $('#ios-install-hint');
 let deferredInstallPrompt = null;
+let viewTeardown = () => {};
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/service-worker.js').catch(() => {});
@@ -40,6 +41,8 @@ installButton.addEventListener('click', async () => {
 window.addEventListener('appinstalled', () => installButton.classList.add('hidden'));
 
 function showLogin() {
+  viewTeardown();
+  viewTeardown = () => {};
   session.me = null;
   loginView.classList.remove('hidden');
   viewRoot.classList.add('hidden');
@@ -86,20 +89,24 @@ async function route() {
   showApp();
   const { section, id, tab } = currentRoute();
   highlightNav(section);
+  viewTeardown();
+  viewTeardown = () => {};
   viewRoot.innerHTML = '<p class="empty">Cargando…</p>';
   try {
-    if (section === 'estaciones' && id) await renderStationDetail(viewRoot, id, tab);
-    else if (section === 'estaciones') await renderStations(viewRoot);
-    else if (section === 'avisos') await renderAlertsCenter(viewRoot);
-    else if (section === 'admin') await renderAdmin(viewRoot);
-    else if (section === 'cuenta') await renderAccount(viewRoot);
-    else await renderPanel(viewRoot);
+    let cleanup;
+    if (section === 'estaciones' && id) cleanup = await renderStationDetail(viewRoot, id, tab);
+    else if (section === 'estaciones') cleanup = await renderStations(viewRoot);
+    else if (section === 'avisos') cleanup = await renderAlertsCenter(viewRoot);
+    else if (section === 'admin') cleanup = await renderAdmin(viewRoot);
+    else if (section === 'cuenta') cleanup = await renderAccount(viewRoot);
+    else cleanup = await renderPanel(viewRoot);
+    if (typeof cleanup === 'function') viewTeardown = cleanup;
   } catch (error) {
     if (error.message === 'authentication_required' || error.message === 'session_expired') { showLogin(); return; }
     viewRoot.innerHTML = '<section class="panel"><p class="error" data-route-error></p></section>';
     $('[data-route-error]', viewRoot).textContent = `No se pudo cargar la vista: ${error.message}`;
   }
-  window.scrollTo({ top: 0 });
+  if (section !== 'panel') window.scrollTo({ top: 0 });
 }
 
 setUnauthorizedHandler(() => showLogin());

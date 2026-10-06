@@ -296,7 +296,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
     LEFT JOIN device_status st ON st.device_id = d.id
     WHERE sd.subscriber_id = ${req.subscriber.id} AND d.active = true ORDER BY d.name`;
   const deviceIds = devices.map((device) => device.id);
-  const [latestRows, historyRows, summaryRows, forecastRows, nearbyCandidates] = deviceIds.length
+  const [latestRows, historyRows, summaryRows, forecastRows, nearbyCandidates, trendRows] = deviceIds.length
     ? await Promise.all([
       sql`SELECT DISTINCT ON (device_id) device_id, sequence, observed_at, received_at, time_quality,
           temperature_c, humidity_pct, pressure_pa, battery_mv, lux, source, flags, alert_level,
@@ -365,8 +365,14 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
         FROM devices WHERE active = true AND publish_permission = true
           AND latitude IS NOT NULL AND longitude IS NOT NULL
           AND last_seen_at >= now() - interval '2 hours'`,
+      // Serie corta para las tendencias del día local (validada y sin borrados).
+      sql`SELECT device_id, observed_at, temperature_c, humidity_pct, pressure_pa, battery_mv, lux
+        FROM measurements
+        WHERE device_id = ANY(${deviceIds}) AND observed_at >= now() - interval '36 hours'
+          AND is_validated AND deleted_at IS NULL
+        ORDER BY device_id, observed_at`,
     ])
-    : [[], [], [], [], []];
+    : [[], [], [], [], [], []];
 
   const latestByDevice = new Map(latestRows.map((row) => [row.deviceId, row]));
   const weatherByDevice = new Map(await Promise.all(devices.map(async (device) => [device.id, await weatherForDevice(device)])));
@@ -374,6 +380,11 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   for (const row of historyRows) {
     if (!historyByDevice.has(row.deviceId)) historyByDevice.set(row.deviceId, []);
     historyByDevice.get(row.deviceId).push(row);
+  }
+  const trendHistoryByDevice = new Map();
+  for (const row of trendRows) {
+    if (!trendHistoryByDevice.has(row.deviceId)) trendHistoryByDevice.set(row.deviceId, []);
+    trendHistoryByDevice.get(row.deviceId).push(row);
   }
   const summaryByDevice = new Map(summaryRows.map((row) => [row.deviceId, row]));
   const forecastsByDevice = new Map();
@@ -424,6 +435,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
       status: statusPayload(device, config),
       latest: latest || null,
       history,
+      trendHistory: trendHistoryByDevice.get(device.id) ?? [],
       // El row llega camelizado por el transform de columna: el resumen se expone en snake_case.
       summary: {
         ...Object.fromEntries(Object.entries(summary).filter(([key]) => key !== 'deviceId')

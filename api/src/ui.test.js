@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText, trendWindowRows } from '../public/js/ui.js';
 import { renderStationCard } from '../public/js/panel.js';
 
 test('pressure values are converted from Pa to mbar in the UI and station charts', () => {
@@ -36,12 +36,19 @@ test('station cards compare microstation and AEMET, and prefer AEMET daily forec
   assert.match(html, /<strong>900<\/strong><small>mbar<\/small>/);
   assert.match(html, /5051X/);
   assert.match(html, /MICROESTACIÓN · MEDICIÓN DIRECTA/);
-  assert.match(html, /Previsión · AEMET/);
   assert.match(html, /Próximas mediciones locales/);
   assert.match(html, /Radiación UV/);
   assert.match(html, /AEMET aporta ahora viento y precipitación/);
   assert.match(html, /Previsión municipal AEMET/);
+  // La previsión ya no se duplica en el hero: solo aparece en el bloque externo.
+  assert.doesNotMatch(html, /hero-forecast/);
   assert.doesNotMatch(html, /Previsión Open-Meteo · 5 días|Previsión por horas/);
+  // La previsión queda justo después de la comparación AEMET y antes de las gráficas.
+  assert.ok(html.indexOf('aemet-readings') < html.indexOf('weather-panel'));
+  assert.ok(html.indexOf('weather-panel') < html.indexOf('tecrural-chart-card'));
+  // Tarjetas de lectura y gráficos ampliables.
+  assert.match(html, /data-detail-key="station-\d+" data-detail-metric="temperatureC"/);
+  assert.match(html, /data-detail-source="aemet"/);
 });
 
 test('chart sampling bounds dense data and keeps the endpoints and local extrema', () => {
@@ -104,4 +111,38 @@ test('gap threshold follows normal cadence instead of a majority of missed sampl
   assert.equal(chartGapThreshold(rows), 5 * 60 * 1000 * 2.5);
   const svg = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C');
   assert.equal((svg.match(/<polyline/g) || []).length, 3);
+});
+
+test('trend window keeps the current local day and falls back to recent readings', () => {
+  const now = new Date('2026-05-20T18:00:00');
+  const row = (iso, value) => ({ observedAt: iso, temperatureC: value });
+  const mixed = [
+    row('2026-05-18T10:00:00', 10),
+    row('2026-05-19T10:00:00', 20),
+    row('2026-05-20T01:00:00', 3),
+    row('2026-05-20T06:00:00', 6),
+    row('2026-05-20T12:00:00', 12),
+  ];
+  const today = trendWindowRows(mixed, now);
+  assert.equal(today.length, 3);
+  assert.equal(today[0].temperatureC, 3);
+
+  const stale = [
+    row('2026-05-19T01:00:00', 1),
+    row('2026-05-19T02:00:00', 2),
+    row('2026-05-19T03:00:00', 3),
+    row('2026-05-19T04:00:00', 4),
+  ];
+  // Sin datos del día usa las últimas 3 h; si tampoco hay, cae a las últimas 5.
+  assert.equal(trendWindowRows(stale, now).length, 4);
+  assert.equal(trendWindowRows(stale.slice(0, 2), now).length, 2);
+});
+
+test('chart cards expose detail attributes when a key is provided', () => {
+  const rows = [1, 2, 3].map((temperatureC, i) => ({
+    observedAt: new Date(Date.now() - (3 - i) * 3600000).toISOString(), temperatureC,
+  }));
+  const svg = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1, null, { key: 'station-9' });
+  assert.match(svg, /data-detail-key="station-9" data-detail-metric="temperatureC" data-detail-source="local"/);
+  assert.match(svg, /role="button" tabindex="0"/);
 });
