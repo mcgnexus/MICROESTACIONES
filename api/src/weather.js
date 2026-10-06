@@ -203,6 +203,17 @@ function isFresh(snapshot) {
   return snapshot && Date.now() - new Date(snapshot.fetchedAt).getTime() < WEATHER_TTL_MS;
 }
 
+export function aemetConfigForDevice(device) {
+  const location = [device.name, device.publicZone].filter(Boolean).join(' ')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isHuescar = /(^|\W)huescar(\W|$)/.test(location);
+  return {
+    municipalityCode: device.aemetMunicipalityCode || (isHuescar ? '18098' : null),
+    stationId: device.aemetStationId || (isHuescar ? '5051X' : null),
+    warningArea: device.aemetWarningArea || (isHuescar ? '611803' : null),
+  };
+}
+
 export async function weatherForDevice(device) {
   if (device.latitude == null || device.longitude == null) {
     return { configured: false, location: device.publicZone || null, message: 'Configura las coordenadas de la estación para consultar el tiempo externo.' };
@@ -211,15 +222,17 @@ export async function weatherForDevice(device) {
   const cached = Object.fromEntries(rows.map((row) => [row.provider, { ...row.payload, fetchedAt: row.fetchedAt }]));
   let openMeteo = cached.open_meteo;
   let aemet = cached.aemet;
-  const stale = !isFresh(openMeteo) || (process.env.AEMET_API_KEY && (device.aemetMunicipalityCode || device.aemetStationId || device.aemetWarningArea) && !isFresh(aemet));
+  const aemetConfig = aemetConfigForDevice(device);
+  const hasAemetConfig = Object.values(aemetConfig).some(Boolean);
+  const stale = !isFresh(openMeteo) || (process.env.AEMET_API_KEY && hasAemetConfig && !isFresh(aemet));
   const errors = [];
   if (stale) {
     const jobs = [fetchOpenMeteo(device.latitude, device.longitude).then(async (value) => {
       await saveSnapshot(device.id, 'open_meteo', value);
       openMeteo = value;
     }).catch(() => errors.push('Open-Meteo no está disponible temporalmente.'))];
-    if (process.env.AEMET_API_KEY && (device.aemetMunicipalityCode || device.aemetStationId || device.aemetWarningArea)) {
-      jobs.push(fetchAemet({ municipalityCode: device.aemetMunicipalityCode, stationId: device.aemetStationId, warningArea: device.aemetWarningArea }).then(async (value) => {
+    if (process.env.AEMET_API_KEY && hasAemetConfig) {
+      jobs.push(fetchAemet(aemetConfig).then(async (value) => {
         if (value) {
           await saveSnapshot(device.id, 'aemet', value);
           aemet = value;
@@ -232,9 +245,9 @@ export async function weatherForDevice(device) {
   const openData = openMeteo || null;
   const aemetMissing = [
     !process.env.AEMET_API_KEY ? 'API key AEMET_API_KEY' : null,
-    !device.aemetMunicipalityCode ? 'código municipal' : null,
-    !device.aemetStationId ? 'indicativo de estación observadora' : null,
-    !device.aemetWarningArea ? 'área de avisos' : null,
+    !aemetConfig.municipalityCode ? 'código municipal' : null,
+    !aemetConfig.stationId ? 'indicativo de estación observadora' : null,
+    !aemetConfig.warningArea ? 'área de avisos' : null,
   ].filter(Boolean);
   return {
     configured: true,

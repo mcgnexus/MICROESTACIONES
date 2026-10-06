@@ -2,7 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
+  aemetConfigForDevice,
 } from './weather.js';
+
+test('Huéscar devices receive AEMET municipality, observation, and warning-area defaults', () => {
+  assert.deepEqual(aemetConfigForDevice({ name: 'Microestación', publicZone: 'Huéscar, Granada' }), {
+    municipalityCode: '18098', stationId: '5051X', warningArea: '611803',
+  });
+  assert.deepEqual(aemetConfigForDevice({ name: 'Huéscar Norte', publicZone: null, aemetStationId: 'CUSTOM' }), {
+    municipalityCode: '18098', stationId: 'CUSTOM', warningArea: '611803',
+  });
+  assert.deepEqual(aemetConfigForDevice({ name: 'Otra estación', publicZone: 'Baza' }), {
+    municipalityCode: null, stationId: null, warningArea: null,
+  });
+});
 
 test('Open-Meteo normalization includes current weather, hourly rain and wind, and daily outlook', () => {
   const result = normalizeOpenMeteo({

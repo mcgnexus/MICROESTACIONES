@@ -287,7 +287,8 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   const hours = { '24h': 24, '7d': 168, '30d': 720 }[period];
   if (!hours) return res.status(400).json({ error: 'period_must_be_24h_7d_or_30d' });
   const devices = await sql`SELECT d.id, d.name, d.latitude, d.longitude, d.coverage_km, d.last_seen_at,
-      d.owner, d.location_type, d.public_zone, d.altitude, d.sensors, d.firmware_version, d.publish_permission,
+      d.owner, d.location_type, d.public_zone, d.aemet_municipality_code, d.aemet_station_id,
+      d.aemet_warning_area, d.altitude, d.sensors, d.firmware_version, d.publish_permission,
       c.config, st.last_contact, st.last_valid_data, st.battery_mv, st.battery_level,
       st.firmware_version AS status_firmware_version, st.config_version, st.pending_samples, st.updated_at
     FROM devices d JOIN subscriber_devices sd ON sd.device_id = d.id
