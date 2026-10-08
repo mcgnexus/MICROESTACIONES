@@ -173,7 +173,7 @@ test('initial state starts on the cold night with its default threshold', () => 
 
 test('the landing page exposes the simulation as a public section with its route', async () => {
   const { readFile } = await import('node:fs/promises');
-  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="demo-agricola"/);
   assert.match(html, /data-farm-sim/);
   assert.match(html, /SIMULACIÓN/);

@@ -982,15 +982,16 @@ if (!isServerless) {
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const siteUrl = siteOrigin(process.env.PUBLIC_SITE_URL);
-// El build firma el shell con hash en public/dist. Si existe, la portada se
-// sirve desde ahí (assets inmutables); en desarrollo sin build, public/.
+// El HTML fuente vive en views/ (fuera de public/ para que Vercel no lo sirva
+// estático en '/' sin las referencias con hash). El build lo procesa a
+// public/dist/index.html; sin build, se sirve el fuente tal cual.
 const renderPage = async (file) => {
   let html;
   if (file === 'index.html') {
     try {
       html = await readFile(new URL('../public/dist/index.html', import.meta.url), 'utf8');
     } catch {
-      html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+      html = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
     }
   } else {
     html = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');

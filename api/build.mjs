@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 const publicDir = fileURLToPath(new URL('./public/', import.meta.url));
+const rootDir = fileURLToPath(new URL('./', import.meta.url));
 const distDir = join(publicDir, 'dist');
 const assetsDir = join(distDir, 'assets');
 
@@ -52,9 +53,10 @@ const cssHash = createHash('sha1').update(cssMin).digest('hex').slice(0, 12);
 const cssUrl = `/dist/assets/app-${cssHash}.css`;
 await writeFile(join(assetsDir, cssUrl.split('/').pop()), cssMin);
 
-// HTML: reescribe las referencias del shell a los assets firmados. El resto
-// (marcadores de soporte, metadatos SEO) lo sigue procesando el servidor.
-const html = await readFile(join(publicDir, 'index.html'), 'utf8');
+// HTML: reescribe las referencias del shell a los assets firmados. El fuente
+// vive en views/; el resultado va a public/dist para que el servidor (y el
+// estático de Vercel, si lo alcanza) sirvan las URLs con hash.
+const html = await readFile(join(rootDir, 'views', 'index.html'), 'utf8');
 const rewritten = html
   .replace('href="/app.css"', `href="${cssUrl}"`)
   .replace('src="/app.js"', `src="${jsUrl}"`);

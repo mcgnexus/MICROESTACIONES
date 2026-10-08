@@ -8,7 +8,7 @@ const publicDir = new URL('../public/', import.meta.url);
 test('PWA has a standalone Spanish manifest with install icons', async () => {
   const [manifestText, html, icon192, icon512] = await Promise.all([
     readFile(new URL('manifest.webmanifest', publicDir), 'utf8'),
-    readFile(new URL('index.html', publicDir), 'utf8'),
+    readFile(new URL('../views/index.html', import.meta.url), 'utf8'),
     readFile(new URL('pwa-192.png', publicDir)),
     readFile(new URL('pwa-512.png', publicDir)),
   ]);

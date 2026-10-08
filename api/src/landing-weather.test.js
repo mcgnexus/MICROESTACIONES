@@ -94,7 +94,7 @@ test('the three-hour graph only draws supplied real points and has an explicit e
 });
 
 test('public landing has loading containers and a single access request form, without sample readings', async () => {
-  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="local-weather-state"/);
   assert.match(html, /id="public-comparison"/);
   assert.match(html, /id="public-evolution"/);
@@ -105,7 +105,7 @@ test('public landing has loading containers and a single access request form, wi
 });
 
 test('the big weather card is the first element of the public landing section', async () => {
-  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
   const section = html.slice(html.indexOf('id="tiempo-local"'), html.indexOf('id="comparacion-aemet"'));
   const card = section.indexOf('id="local-weather-card"');
   const loading = section.indexOf('id="local-weather-state"');

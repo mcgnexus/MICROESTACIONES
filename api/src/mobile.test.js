@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 
 const publicDir = new URL('../public/', import.meta.url);
 const read = (name) => readFile(new URL(name, publicDir), 'utf8');
+const readView = (name) => readFile(new URL(`../views/${name}`, import.meta.url), 'utf8');
 
 test('el viewport permite cubrir el notch y la barra respeta la zona segura', async () => {
-  const [html, css] = await Promise.all([read('index.html'), read('app.css')]);
+  const [html, css] = await Promise.all([readView('index.html'), read('app.css')]);
   assert.match(html, /name="viewport" content="[^"]*viewport-fit=cover/);
   assert.match(css, /\.topbar \{ padding-top: max\(8px, env\(safe-area-inset-top\)\)/);
   assert.match(css, /\.mobile-tab-bar[^}]*env\(safe-area-inset-bottom/);
