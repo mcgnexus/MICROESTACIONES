@@ -77,6 +77,12 @@ test('rendered state cards distinguish last contact from stale measurements', ()
     lastContact: '2026-01-01T10:00:00Z', batteryLevel: 'ok',
   } })]);
   assert.match(html, /datos antiguos/i);
+  // Las lecturas antiguas permanecen visibles, con tono de aviso y su título
+  // cambiado; los riesgos, en cambio, no se estiman con datos viejos.
+  assert.match(html, /Última temperatura/);
+  assert.match(html, /Última humedad/);
+  assert.match(html, /datos están anticuados/);
+  assert.match(html, /18 °C/);
   assert.match(html, /sin lectura actual/i);
 });
 

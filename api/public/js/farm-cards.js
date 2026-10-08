@@ -266,23 +266,31 @@ export function renderStateCards(devices, now = new Date()) {
   const station = assessStation(primary);
   const sensors = primary.device?.sensors || {};
   const readingsFresh = primary.status?.dataFreshness === 'fresh';
-  const temperature = readingsFresh ? primary.latest?.temperatureC : null;
-  const humidity = readingsFresh ? primary.latest?.humidityPct : null;
-  const reading = (icon, title, value, unit, since, hasSensor = true) => stateCard({
-    icon, title,
-    tone: hasSensor && value != null ? 'ok' : 'muted',
+  // Las lecturas se muestran aunque estén anticuadas: cambia el tono, el
+  // título y el aviso, pero una medida vieja es mejor que un guion.
+  const lastReading = primary.latest?.isValidated === false
+    ? ((primary.history || []).at(-1) || primary.latest)
+    : primary.latest;
+  const temperature = lastReading?.temperatureC ?? null;
+  const humidity = lastReading?.humidityPct ?? null;
+  const lastSeen = lastReading?.observedAt ?? null;
+  const reading = (icon, freshTitle, staleTitle, value, unit, since, hasSensor = true) => stateCard({
+    icon,
+    title: readingsFresh ? freshTitle : staleTitle,
+    tone: hasSensor && value != null ? (readingsFresh ? 'ok' : 'warn') : 'muted',
     nature: hasSensor && value != null ? 'real' : null,
     value: !hasSensor ? 'sin sensor' : value == null ? 'sin dato' : `${numberText(value)} ${unit}`.trim(),
     since,
     meaning: !hasSensor ? 'La estación no tiene este sensor.'
-      : value == null ? (readingsFresh ? 'Aún no hay una medición reciente.' : 'No hay medición válida en este periodo.')
-        : 'Última medición de la estación.',
+      : value == null ? (readingsFresh ? 'Aún no hay una medición reciente.' : 'No hay medición válida registrada en el periodo.')
+        : readingsFresh ? 'Última medición de la estación.' : 'Última medición disponible: los datos están anticuados.',
     action: !hasSensor ? 'No aplica.'
-      : value == null ? 'Comprueba la conexión antes de usar estos datos.' : 'Sin acción.',
+      : value == null ? 'Comprueba la conexión antes de usar estos datos.'
+        : readingsFresh ? 'Sin acción.' : 'No la tomes como tiempo actual.',
   });
   return `<div class="state-grid">
-    ${reading('🌡️', 'Temperatura actual', temperature, '°C', primary.latest?.observedAt, sensors.temperature !== false)}
-    ${reading('💧', 'Humedad actual', humidity, '%', primary.latest?.observedAt, sensors.humidity !== false)}
+    ${reading('🌡️', 'Temperatura actual', 'Última temperatura', temperature, '°C', lastSeen, sensors.temperature !== false)}
+    ${reading('💧', 'Humedad actual', 'Última humedad', humidity, '%', lastSeen, sensors.humidity !== false)}
     ${stateCard({ icon: '❄️', title: 'Riesgo de helada', tone: frost.tone, value: frost.value, since: frost.since, meaning: frost.meaning, action: frost.action, nature: frost.nature })}
     ${stateCard({ icon: '🔥', title: 'Riesgo de calor', tone: heat.tone, value: heat.value, since: heat.since, meaning: heat.meaning, action: heat.action, nature: heat.nature })}
     ${stateCard({ icon: '⛈️', title: 'Riesgo de tormenta', tone: storm.tone, value: storm.value, since: storm.since, meaning: storm.meaning, action: storm.action, nature: storm.nature })}
