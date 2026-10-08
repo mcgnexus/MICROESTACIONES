@@ -99,10 +99,11 @@ export async function renderStations(root) {
               <p class="updated">${escapeText(meta)}</p></div>
             <div class="station-tags">
               ${station.active ? connectivityBadge(status.connectivity) : '<span class="badge badge-muted">Desactivada</span>'}
+              ${status.dataFreshness === 'stale' ? '<span class="badge badge-warn">Datos antiguos</span>' : status.dataFreshness === 'unknown' ? '<span class="badge badge-muted">Sin datos válidos</span>' : ''}
               ${station.publishPermission ? '<span class="badge badge-muted">Datos públicos</span>' : ''}
             </div>
           </div>
-          <p class="coverage">Último contacto: ${dateText(status.lastContact)} · batería ${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)}) · configuración v${status.configVersion}</p>
+          <p class="coverage">Último contacto: ${dateText(status.lastContact)} · último dato válido: ${dateText(status.lastValidData)} · batería ${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)}) · configuración v${status.configVersion}</p>
           <div class="row-actions">${actions}</div>
         </article>`;
       }).join('') : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
@@ -281,10 +282,13 @@ function renderEstado(content, detail) {
     ['Reglas de aviso', detail.alertRuleCount],
     ['Versiones de configuración', detail.configVersionCount],
   ];
+  // La ficha de configuración y reglas queda fuera del rol de demostración.
+  const staffRows = new Set(['Configuración aplicada', 'Muestras pendientes', 'Reglas de aviso', 'Versiones de configuración']);
+  const visibleRows = canEdit() ? rows : rows.filter(([label]) => !staffRows.has(label));
   content.innerHTML = `<section class="panel">
     <div class="section-heading"><div><p class="eyebrow">ESTADO OPERATIVO</p><h2>Ficha técnica y de estado</h2></div>
       ${canEdit() ? '<a class="button-link" href="#/estaciones">Editar desde el listado</a>' : ''}</div>
-    <dl class="detail-grid">${rows
+    <dl class="detail-grid">${visibleRows
       .map(([label, value]) => `<dt>${label}</dt><dd>${escapeText(value ?? '—')}</dd>`).join('')}</dl>
     <h3>Sensores</h3><ul class="plain-list">${sensorState}</ul>
   </section>`;
@@ -294,12 +298,17 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
   const detail = await api(`/api/v1/stations/${encodeURIComponent(stationId)}`);
   const station = detail.station;
   const status = detail.status || {};
-  const availableTabs = isAdmin() ? TABS : TABS.filter(([key]) => key !== 'estadisticas');
+  // El rol de demostración solo ve lectura: sin configuración, control remoto
+  // ni estadísticas de operación. El operador mantiene configuración; el
+  // análisis estadístico queda para administración.
+  const availableTabs = isAdmin() ? TABS
+    : canEdit() ? TABS.filter(([key]) => key !== 'estadisticas')
+      : TABS.filter(([key]) => ['resumen', 'estado', 'mediciones', 'avisos'].includes(key));
   const activeTab = availableTabs.some(([key]) => key === tab) ? tab : 'resumen';
   const link = (key) => `#/estaciones/${encodeURIComponent(station.id)}/${key}`;
 
   // El control remoto es una pantalla propia con su propia cabecera.
-  if (tab === 'remoto') {
+  if (tab === 'remoto' && canEdit()) {
     await renderRemoteControl(root, station.id, station);
     return;
   }
@@ -313,9 +322,9 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
       </div>
       <div class="station-tags">
         ${station.active ? connectivityBadge(status.connectivity) : '<span class="badge badge-muted">Desactivada</span>'}
-        <span class="badge badge-muted">Config v${status.configVersion ?? 0}</span>
+        ${canEdit() ? `<span class="badge badge-muted">Config v${status.configVersion ?? 0}</span>` : ''}
         <span class="badge badge-muted">${batteryLabel(status.batteryLevel)}</span>
-        <a class="button-link" href="#/estaciones/${encodeURIComponent(station.id)}/remoto">Control remoto</a>
+        ${canEdit() ? `<a class="button-link" href="#/estaciones/${encodeURIComponent(station.id)}/remoto">Control remoto</a>` : ''}
       </div>
     </div>
     <nav class="tabs">${availableTabs.map(([key, label]) =>

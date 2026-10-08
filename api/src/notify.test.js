@@ -3,8 +3,19 @@ import assert from 'node:assert/strict';
 import {
   MAX_ATTEMPTS, backoffSeconds, agingText, renderAlertMessage, renderVerificationMessage,
   renderLeadConfirmation, renderLeadNotice, isQuietHour, recipientWants,
-  sendWhatsApp, sendEmail, whatsappProvider, emailProvider,
+  sendWhatsApp, sendEmail, whatsappProvider, emailProvider, dispatchOutbox,
 } from './notify.js';
+import { enqueueCommercialMessage, renderCommercialMessage } from './consent.js';
+
+function fakeClient(responses) {
+  const calls = [];
+  const fn = async (strings, ...values) => {
+    calls.push({ text: strings.join('?'), values });
+    return responses.shift() ?? [];
+  };
+  fn.calls = calls;
+  return fn;
+}
 
 test('backoff grows, caps at one hour, and never overflows', () => {
   assert.equal(backoffSeconds(0), 30);
@@ -120,4 +131,43 @@ test('the console provider marks the send as done', async () => {
 
 test('the attempt cap is small enough to stop retrying a dead address', () => {
   assert.ok(MAX_ATTEMPTS >= 3 && MAX_ATTEMPTS <= 10);
+});
+
+test('a commercial message is cancelled when consent no longer holds', async () => {
+  const row = {
+    id: 1, kind: 'commercial', channel: 'email', address: 'finca@example.test',
+    subject: 'Ofertas', body: 'texto', attempts: 0, alertId: null, subscriberId: 5, leadId: null,
+  };
+  // Las dos primeras respuestas son el barrido de caducados y reclamos vencidos.
+  const client = fakeClient([[], [], [row], [/* sin consentimiento vigente */], []]);
+  const result = await dispatchOutbox({ client });
+  assert.equal(result.processed, 1);
+  assert.equal(result.cancelled, 1);
+  assert.equal(result.sent, 0);
+  assert.equal(result.expired, 0);
+  assert.match(client.calls.at(-1).text, /status = 'cancelled'/);
+});
+
+test('a commercial message with live consent is attempted, not cancelled', async () => {
+  const row = {
+    id: 2, kind: 'commercial', channel: 'email', address: 'finca@example.test',
+    subject: 'Ofertas', body: 'texto', attempts: 0, alertId: null, subscriberId: 6, leadId: null,
+  };
+  const granted = [{ action: 'granted', textVersion: '2026-10-07', source: 'account', recordedAt: new Date() }];
+  const client = fakeClient([[], [], [row], granted, []]);
+  const result = await dispatchOutbox({ client });
+  assert.equal(result.cancelled, 0);
+  assert.equal(result.processed, 1);
+  assert.equal(result.expired, 0);
+});
+
+test('enqueuing a commercial message validates the channel and stores it as commercial', async () => {
+  const client = fakeClient([[]]);
+  const { subject, body } = renderCommercialMessage({ body: 'Hola' });
+  await enqueueCommercialMessage(client, { subscriberId: 4, channel: 'email', address: 'a@b.es', subject, body });
+  const insert = client.calls.at(-1);
+  assert.match(insert.text, /INSERT INTO notification_outbox/);
+  assert.equal(insert.values[0], 'commercial');
+  assert.match(body, /BAJA/);
+  await assert.rejects(() => enqueueCommercialMessage(client, { subscriberId: 4, channel: 'sms', address: 'x', subject, body }));
 });

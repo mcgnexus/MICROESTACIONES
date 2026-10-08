@@ -10,11 +10,13 @@ export const toneLabel = (tone) => TONE_LABELS[tone] || TONE_LABELS.muted;
 
 // Frase y tono de una estación a partir de su estado y su última lectura.
 export function plainDeviceStatus({ status = {}, latest = {} } = {}) {
-  const temperature = latest?.temperatureC;
+  const temperature = status.dataFreshness === 'stale' ? null : latest?.temperatureC;
   if (status.connectivity === 'offline' || status.connectivity === 'degraded') {
     return { tone: status.connectivity === 'offline' ? 'alert' : 'warn',
       text: status.connectivity === 'offline' ? 'Sin conexión con la estación' : 'Conexión intermitente' };
   }
+  if (status.dataFreshness === 'stale') return { tone: 'warn', text: 'Últimas mediciones antiguas' };
+  if (status.dataFreshness === 'unknown') return { tone: 'muted', text: 'Sin mediciones válidas' };
   if (status.batteryLevel === 'critical') return { tone: 'alert', text: 'Batería crítica: puede dejar de enviar' };
   if (temperature != null && Number(temperature) <= TEMP_FROST_C) {
     return { tone: 'alert', text: `Riesgo de helada (${numberText(temperature)} °C)` };

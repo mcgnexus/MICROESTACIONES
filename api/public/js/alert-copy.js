@@ -1,6 +1,16 @@
 // Texto comprensible para las alertas: qué pasa, dónde, cuándo, de dónde sale,
 // cómo de grave está y en qué estado está. Nada de "warning" o "extreme".
+//
+// Cada tarjeta declara los cinco datos de la taxonomía (categoría, fuente, fecha,
+// estado y vigencia) y, sobre todo, de qué clase de afirmación se trata: real,
+// previsto, calculado o simulado. La explicación cita siempre el dato observado
+// o la previsión que origina el aviso; nunca promete "detectamos que viene…".
 import { escapeText, dateText, numberText } from './ui.js';
+import {
+  classifyNotice, coverageCaveat, validityText, NOTICE_CATEGORIES,
+} from './notice-taxonomy.js';
+
+export { coverageCaveat };
 
 export const CATEGORY_LABELS = {
   frost: 'Riesgo de helada', heat: 'Riesgo de calor', storm: 'Riesgo de tormenta',
@@ -50,51 +60,76 @@ export function alertTitle(alert, zone = null) {
   return zone ? `${base} — ${zone}` : base;
 }
 
+// Explicación: cita el dato observado o la previsión que origina el aviso y,
+// solo después, qué puede hacer el usuario. Nunca una promesa general.
 export function alertExplanation(alert) {
   const category = alertCategory(alert);
   const value = alertValue(alert);
+  const origin = classifyNotice(alert).origin;
   switch (category) {
     case 'frost':
       return value == null
-        ? 'Posible helada. Aviso preventivo: revisa las medidas de protección de tu cultivo.'
-        : `Temperatura prevista o medida de ${numberText(value)} °C. Aviso preventivo: revisa las medidas de protección de tu cultivo.`;
+        ? `${origin} Aviso preventivo sin valor numérico: revisa las medidas de protección de tu cultivo.`
+        : `${origin} Aviso preventivo: revisa las medidas de protección de tu cultivo.`;
     case 'heat':
-      return 'Temperatura y humedad elevadas durante varias horas. Revisa sombra, agua y ventilación del ganado.';
+      return `${origin} Temperatura y humedad elevadas durante varias horas. Revisa sombra, agua y ventilación del ganado.`;
     case 'storm':
-      return `${alert.message}. La tormenta se muestra como aviso oficial o riesgo estimado, no como detección local.`;
+      return `${origin} La tormenta se muestra como aviso oficial o riesgo estimado, no como detección local.`;
     case 'wind':
-      return `${alert.message}. Revisa invernaderos, cubiertas y el ganado expuesto.`;
+      return `${origin} Revisa invernaderos, cubiertas y el ganado expuesto.`;
     case 'humidity':
-      return `${alert.message}. Revisa la ventilación y el riesgo de hongos.`;
+      return `${origin} Revisa la ventilación y el riesgo de hongos.`;
     default:
-      return alert.message || 'Aviso de tu estación.';
+      return `${origin}${alert.message ? ` ${alert.message}.` : ''}`.trim();
   }
 }
 
-export function alertMeta(alert, { zone = null } = {}) {
+// Los cinco datos de la taxonomía, en una sola línea legible.
+export function alertMeta(alert, { zone = null, engineVerified = true } = {}) {
+  const meta = classifyNotice({ ...alert, engineVerified });
   return [
     `Estación: ${alert.deviceName || alert.deviceId || '—'}`,
     zone ? `Zona: ${zone}` : null,
+    `Categoría: ${meta.categoryLabel}`,
     `Hora: ${dateText(alert.observedAt)}${alertSince(alert) ? ` (${alertSince(alert)})` : ''}`,
-    `Origen: ${alertOrigin(alert)}`,
+    `Fuente: ${meta.sourceLabel}`,
+    meta.official ? 'Aviso oficial' : null,
+    `Tipo: ${meta.natureLabel} — ${meta.natureHint}`,
+    `Estado: ${meta.stateLabel}`,
+    `Vigencia: ${validityText(meta.category, alert.closedAt)}`,
     `Nivel: ${alertLevel(alert)}`,
   ].filter(Boolean);
 }
 
+// Insignia con la naturaleza: real, previsto, calculado o simulado.
+function natureBadge(meta) {
+  const tone = meta.nature === 'real' ? 'valid'
+    : meta.nature === 'previsto' ? 'warn'
+      : meta.nature === 'simulado' ? 'muted' : 'muted';
+  return `<span class="badge badge-${tone}" title="${escapeText(meta.natureHint)}">${escapeText(meta.natureLabel)}</span>`;
+}
+
 // Una tarjeta comprensible por alerta.
-export function renderAlertCard(alert, { zone = null, technical = false } = {}) {
+export function renderAlertCard(alert, { zone = null, technical = false, engineVerified = true } = {}) {
   const status = alertStatus(alert);
+  const meta = classifyNotice({ ...alert, engineVerified });
   const tone = status.key !== 'active' ? 'muted' : (Number(alert.level) === 1 ? 'alert' : 'warn');
+  // El detalle técnico (regla, destinatario, canal) solo para administración.
   const technicalBlock = technical && alert.ruleSnapshot
     ? `<details class="alert-card-tech"><summary>Detalle técnico</summary><pre>${escapeText(JSON.stringify(alert.ruleSnapshot, null, 2))}</pre></details>`
+    : '';
+  const engineBlock = meta.requiresEngine && !engineVerified
+    ? '<p class="hint">Aviso de umbral local oculto: el motor de avisos no está comprobado en esta instalación.</p>'
     : '';
   return `<article class="alert-card tone-${tone}">
     <div class="alert-card-head">
       <h3>${escapeText(alertTitle(alert, zone))}</h3>
       <span class="overview-tag tone-${tone}">${escapeText(status.label)}</span>
+      ${natureBadge(meta)}
     </div>
     <p class="alert-card-explain">${escapeText(alertExplanation(alert))}</p>
-    <ul class="alert-card-meta">${alertMeta(alert, { zone }).map((line) => `<li>${escapeText(line)}</li>`).join('')}</ul>
+    <ul class="alert-card-meta">${alertMeta(alert, { zone, engineVerified }).map((line) => `<li>${escapeText(line)}</li>`).join('')}</ul>
+    ${engineBlock}
     ${technicalBlock}
   </article>`;
 }
@@ -108,9 +143,39 @@ export function zoneByDevice(farms = []) {
   return map;
 }
 
-export function renderAlertsList(alerts, farms = [], { technical = false } = {}) {
-  const zones = zoneByDevice(farms);
-  if (!alerts.length) return '<p class="empty">No hay alertas para estos filtros.</p>';
-  return `<div class="alert-cards">${alerts.map((alert) =>
-    renderAlertCard(alert, { zone: zones.get(alert.deviceId) || null, technical })).join('')}</div>`;
+// Advertencia que acompaña a un listado vacío: un listado sin avisos no es un
+// listado sin riesgo cuando faltan datos o la previsión está caída.
+export function caveatBlock(caveat) {
+  if (!caveat) return '';
+  return `<p class="${caveat.tone === 'warn' ? 'warn-box' : 'empty'}">Sin avisos que mostrar, pero <strong>esto no significa que no haya riesgo</strong>: ${escapeText(caveat.text)}</p>`;
 }
+
+// Listado de tarjetas. `caveat` (de coverageCaveat) y `engineVerified` llegan
+// del panel; sin ellos no se afirma nada sobre la ausencia de riesgo.
+export function renderAlertsList(alerts, farms = [], {
+  technical = false, caveat = null, engineVerified = true,
+} = {}) {
+  const zones = zoneByDevice(farms);
+  // Con el motor sin comprobado, un aviso de umbral local no se presenta como tal.
+  const visible = engineVerified
+    ? alerts
+    : alerts.filter((alert) => classifyNotice({ ...alert, engineVerified }).category !== 'threshold');
+  const hidden = alerts.length - visible.length;
+  if (!visible.length) {
+    const engineNote = hidden > 0
+      ? `<p class="hint">${hidden} aviso(s) de umbral local ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
+      : '';
+    return `<p class="empty">No hay avisos para estos filtros.</p>${caveatBlock(caveat)}${engineNote}`;
+  }
+  const extra = hidden > 0
+    ? `<p class="hint">${hidden} aviso(s) de umbral local ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
+    : '';
+  return `${extra}<div class="alert-cards">${visible.map((alert) =>
+    renderAlertCard(alert, { zone: zones.get(alert.deviceId) || null, technical, engineVerified })).join('')}</div>`;
+}
+
+export const categorySummary = (category) => {
+  const entry = NOTICE_CATEGORIES[category];
+  if (!entry) return null;
+  return { category, label: entry.label, description: entry.description, nature: entry.nature };
+};

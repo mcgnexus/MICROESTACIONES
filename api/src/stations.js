@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { sql } from './db.js';
-import { requireSubscriber, requireRole, requireStationAccess, csrfGuard } from './auth.js';
+import { requireSubscriber, requireRole, requireStationAccess, csrfGuard, accessibleDeviceIds } from './auth.js';
 import { audit } from './audit.js';
 import { CONFIG_DEFAULTS } from './device-config.js';
 import { ensureSystemRules, batteryImpact } from './alert-engine.js';
-import { statisticsFor } from './statistics.js';
+import { statisticsFor, demoAnalysisFor } from './statistics.js';
+import { connectivityFor, dataFreshnessFor } from './station-status.js';
 
 const router = Router();
 
@@ -62,21 +63,13 @@ const stationSelect = sql`SELECT ${deviceColsJoined}, c.config,
   LEFT JOIN device_configs c ON c.device_id = d.id
   LEFT JOIN device_status s ON s.device_id = d.id`;
 
-// Conectividad derivada del último contacto y el intervalo de medida configurado.
-export function connectivityFor(lastContact, intervalSeconds) {
-  if (!lastContact) return 'unknown';
-  const ageMs = Date.now() - new Date(lastContact).getTime();
-  const interval = Math.max(10, Number(intervalSeconds) || 900) * 1000;
-  if (ageMs <= 2 * interval) return 'online';
-  if (ageMs <= 10 * interval) return 'degraded';
-  return 'offline';
-}
-
+// Conectividad y actualidad de datos se calculan por separado al construir la respuesta.
 export function statusPayload(row, config) {
   return {
     lastContact: row.lastContact ?? null,
     lastValidData: row.lastValidData ?? null,
-    connectivity: connectivityFor(row.lastContact, config?.interval_normal_s),
+    connectivity: connectivityFor(row.lastContact, config?.sync_interval_s),
+    dataFreshness: dataFreshnessFor(row.lastValidData, config?.interval_normal_s),
     batteryMv: row.batteryMv ?? null,
     batteryLevel: row.batteryLevel ?? 'unknown',
     firmwareVersion: row.statusFirmwareVersion ?? row.firmwareVersion ?? null,
@@ -113,11 +106,10 @@ export function stationPayload(row) {
 
 // Listado con estado operativo; el ámbito lo decide el rol del suscriptor.
 export async function listStations(userId, role) {
-  const rows = role === 'admin'
-    ? await sql`${stationSelect} ORDER BY d.name`
-    : await sql`${stationSelect}
-        JOIN subscriber_devices sd ON sd.device_id = d.id AND sd.subscriber_id = ${userId}
-        ORDER BY d.name`;
+  const scope = accessibleDeviceIds({ id: userId, role });
+  const rows = scope
+    ? await sql`${stationSelect} WHERE d.id IN ${scope} ORDER BY d.name`
+    : await sql`${stationSelect} ORDER BY d.name`;
   return rows.map((row) => stationPayload({
     ...row,
     status: statusPayload(row, row.config ?? {}),
@@ -154,7 +146,7 @@ router.get('/:id', requireSubscriber, requireStationAccess, async (req, res) => 
   const [versions] = await sql`SELECT count(*)::integer AS count FROM device_config_versions WHERE device_id = ${row.id}`;
   const [measurements] = await sql`SELECT count(*)::integer AS total,
       count(*) FILTER (WHERE is_validated AND deleted_at IS NULL)::integer AS valid,
-      max(observed_at) AS last_observed
+      max(observed_at) FILTER (WHERE is_validated AND deleted_at IS NULL) AS last_observed
     FROM measurements WHERE device_id = ${row.id}`;
   const [rules] = await sql`SELECT count(*)::integer AS count FROM alert_rules WHERE device_id = ${row.id} AND enabled`;
   res.json({
@@ -210,21 +202,37 @@ router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, as
   });
 });
 
-// Informe estadístico del periodo: solo datos validados y no borrados.
-router.get('/:id/statistics', requireSubscriber, requireRole('admin'), requireStationAccess, async (req, res) => {
+// Informe estadístico del periodo: solo datos validados y no borrados. El
+// control de atípicos (Q de Dixon) es una herramienta de operación: solo se
+// incluye para admin/operador. Los usuarios registrados ven el informe sin él.
+router.get('/:id/statistics', requireSubscriber, requireStationAccess, async (req, res) => {
   const to = req.query.to ? new Date(String(req.query.to)) : new Date();
   const from = req.query.from
     ? new Date(String(req.query.from))
     : new Date(to.getTime() - 7 * 24 * 3600 * 1000);
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ error: 'invalid_range' });
   if (from >= to) return res.status(400).json({ error: 'invalid_range' });
+  const staff = ['admin', 'operator'].includes(req.subscriber.role);
   res.json(await statisticsFor(req.stationId, {
-    from, to, includeCommunicationAlerts: true, includeDixonQ: true,
+    from, to, includeCommunicationAlerts: staff, includeDixonQ: staff,
   }));
 });
 
+// Análisis ampliado del panel de demostración: medias con hora, resúmenes
+// diarios, punto de rocío calculado y comparación histórica con AEMET.
+router.get('/:id/demo-analysis', requireSubscriber, requireStationAccess, async (req, res) => {
+  const to = req.query.to ? new Date(String(req.query.to)) : new Date();
+  const from = req.query.from
+    ? new Date(String(req.query.from))
+    : new Date(to.getTime() - 24 * 3600 * 1000);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ error: 'invalid_range' });
+  if (from >= to) return res.status(400).json({ error: 'invalid_range' });
+  res.json(await demoAnalysisFor(req.stationId, { from, to }));
+});
+
 // Coste medido de la excepción de envío urgente sobre la batería de la estación.
-router.get('/:id/urgent-impact', requireSubscriber, requireStationAccess, async (req, res) => {
+// Es una herramienta de operación: no forma parte del panel de demostración.
+router.get('/:id/urgent-impact', requireSubscriber, requireRole('operator'), requireStationAccess, async (req, res) => {
   const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${req.stationId}`;
   const config = configRow?.config ?? {};
   const directives = await sql`SELECT id::text AS id, reason, issued_at, released_at,

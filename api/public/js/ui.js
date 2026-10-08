@@ -17,6 +17,7 @@ export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 export async function api(path, options = {}) {
   const response = await fetch(path, {
+    cache: 'no-store',
     credentials: 'same-origin',
     ...options,
     headers: {
@@ -24,6 +25,9 @@ export async function api(path, options = {}) {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...options.headers,
     },
+  }).catch(() => {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('api-unavailable'));
+    throw new Error('Sin conexión con el servidor. Inténtalo cuando recuperes la conexión.');
   });
   if (response.status === 401) onUnauthorized();
   if (!response.ok) {

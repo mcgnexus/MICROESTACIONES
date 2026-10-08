@@ -32,7 +32,7 @@ test('strange readings pass the contract so they can be stored with trace', () =
   const parsed = measurementSchema.safeParse({ ...base, temp_c: 101 });
   assert.equal(parsed.success, true);
   const evaluated = evaluateMeasurement(parsed.data);
-  assert.equal(evaluated.is_validated, false);
+  assert.equal(evaluated.is_validated, true, 'the remaining valid channels make the sample usable');
   assert.equal(evaluated.columns.temperature_c, null);
   assert.deepEqual(evaluated.raw_payload, { temp_c: 101 });
   assert.equal(evaluated.validation_flags & VFLAG.TEMP, VFLAG.TEMP);
@@ -54,7 +54,30 @@ test('valid measurements are kept validated and time without reference is exclud
 test('device flag without valid bit marks the channel invalid but keeps the value', () => {
   // 0b01101 = temp, presión y batería válidas; humedad (bit 1) no válida.
   const evaluated = evaluateMeasurement({ ...base, flags: 0b01101, quality: 2 });
-  assert.equal(evaluated.is_validated, false);
-  assert.equal(evaluated.columns.humidity_pct, 55);
+  assert.equal(evaluated.is_validated, true, 'valid channels remain usable independently');
+  assert.equal(evaluated.columns.humidity_pct, null);
+  assert.deepEqual(evaluated.raw_payload, { hum_pct: 55 });
+  assert.equal(evaluated.valid_values.temp_c, 20.5);
   assert.equal(evaluated.validation_flags & VFLAG.HUM, VFLAG.HUM);
+});
+
+test('an impossible channel is excluded while other valid channels remain admissible', () => {
+  const evaluated = evaluateMeasurement({ ...base, temp_c: 151 });
+  assert.equal(evaluated.columns.temperature_c, null);
+  assert.equal(evaluated.columns.humidity_pct, 55);
+  assert.equal(evaluated.is_validated, true);
+  assert.deepEqual(evaluated.valid_values, { hum_pct: 55, press_pa: 100800, batt_mv: 3800 });
+});
+
+test('future and unreferenced timestamps cannot feed current data or alerts', () => {
+  const now = new Date('2026-10-07T12:00:00Z');
+  const futureTs = now.getTime() / 1000 + 301;
+  const future = evaluateMeasurement({ ...base, ts: futureTs }, { now });
+  assert.equal(future.time_valid, false);
+  assert.equal(future.is_validated, false);
+  assert.equal(future.raw_payload.timestamp, futureTs);
+  const noTime = evaluateMeasurement({ ...base, quality: 0 }, { now });
+  assert.equal(noTime.time_valid, false);
+  assert.equal(noTime.valid_values.temp_c, 20.5);
+  assert.equal(noTime.raw_payload.quality, 0);
 });

@@ -2,10 +2,24 @@ import {
   $, api, escapeText, dateText, numberText, pressureText, canEdit, session,
   METRIC_LABELS, COMPARATOR_LABELS, CHANNEL_LABELS, ALERT_LEVELS,
 } from './ui.js';
-import { renderAlertsList } from './alert-copy.js';
+import { renderAlertsList, coverageCaveat } from './alert-copy.js';
+import { WHATSAPP_MANUAL_NOTE } from './notice-taxonomy.js';
 
-const DELIVERY_LABELS = { pending: 'pendiente', sent: 'enviado', delivered: 'entregado', failed: 'fallido', bounced: 'rebotado' };
+const DELIVERY_LABELS = { pending: 'pendiente', sent: 'enviado', delivered: 'entregado', failed: 'fallido', bounced: 'rebotado', manual: 'manual' };
 const CATEGORY_LABELS = { frost: 'Heladas', heat: 'Calor', storm: 'Tormentas', wind: 'Viento', humidity: 'Humedad', general: 'General' };
+
+// Nota de entrega: mientras el WhatsApp siga en modo manual, no se anuncia como
+// un envío automático. El proveedor llega de /api/v1/public-config; si no llegó,
+// no se afirma nada sobre la entrega.
+function deliveryNote() {
+  const provider = session.support?.whatsappDelivery;
+  if (!provider) return '';
+  if (provider === 'manual') return `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`;
+  if (provider === 'disabled') {
+    return '<p class="hint">Aún no hay entrega por WhatsApp configurada: los avisos quedan en la aplicación.</p>';
+  }
+  return '<p class="hint">Los avisos salen por los canales que hayas autorizado y verificado; puedes darte de baja cuando quieras.</p>';
+}
 
 // Antigüedad de la medida: con lotes de 30 min un aviso no es "de ahora".
 export function ageText(seconds) {
@@ -88,18 +102,37 @@ function ruleRow(rule, editable) {
 }
 
 // Tableta de avisos + reglas para una estación concreta.
+// El rol de demostración ve tarjetas comprensibles; la tabla técnica con
+// destinatario, canal, regla y entrega es para administración y operación.
 export async function renderStationAlertsTab(content, stationId) {
   const editable = canEdit();
-  const [alerts, rules] = await Promise.all([
-    api(`/api/v1/alerts?device_id=${encodeURIComponent(stationId)}&status=all&limit=100`),
-    api(`/api/v1/alerts/rules?device_id=${encodeURIComponent(stationId)}`),
-  ]);
+  // Las reglas son operativas: solo se piden cuando toca verlas.
+  const alerts = await api(`/api/v1/alerts?device_id=${encodeURIComponent(stationId)}&status=all&limit=100`);
+  if (!editable) {
+    const notice = alerts.not_subscribed
+      ? '<p class="hint">Estás viendo esta estación por la demostración, pero no estás suscrito a sus avisos: los avisos solo llegan a quien tiene la estación concedida.</p>'
+      : '';
+    content.innerHTML = `<section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">AVISOS DE LA ESTACIÓN</p><h2>Qué se ha observado</h2></div></div>
+      ${renderAlertsList(alerts.alerts, session.me?.farms || [], {
+        technical: false, engineVerified: alerts.engine_verified !== false,
+      })}
+      ${notice}
+      <p class="hint">Cada aviso indica su categoría, su fuente, su fecha, su estado y su vigencia, y si es un dato real,
+        una previsión, un cálculo o una simulación. Las reglas y los destinatarios no se muestran en la demostración.</p>
+      ${deliveryNote()}
+    </section>`;
+    return;
+  }
+  const rules = await api(`/api/v1/alerts/rules?device_id=${encodeURIComponent(stationId)}`);
   content.innerHTML = `<section class="panel">
     <div class="section-heading"><div><p class="eyebrow">AVISOS DE LA ESTACIÓN</p><h2>Historial de avisos</h2></div></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Nivel</th><th>Aviso</th><th>Estación</th><th>Dato</th><th>Fuente</th><th>Destinatario</th><th>Estado</th><th></th></tr></thead>
       <tbody>${alerts.alerts.map((alert) => alertRow(alert, editable)).join('') || '<tr><td colspan="8">Sin avisos registrados.</td></tr>'}</tbody>
     </table></div>
+    ${alerts.engine_verified === false ? '<p class="warn-box">El motor de avisos no está comprobado en esta instalación: los avisos de umbral local no se presentan como tales.</p>' : ''}
+    ${deliveryNote()}
   </section>
   ${rulesSection(rules.rules || [], stationId, editable)}
   <p class="error" data-alert-error role="alert"></p>`;
@@ -228,8 +261,9 @@ export async function renderAlertsCenter(root) {
       <p class="error" data-alert-error role="alert"></p>
       <p class="coverage" data-counts></p>
       <div data-rows></div>
+      <p data-delivery-note></p>
     </section>
-    <section class="panel" data-rules></section>`;
+    <section class="panel${editable ? '' : ' hidden'}" data-rules></section>`;
 
   const stations = (await api('/api/v1/stations')).stations;
   $('[data-filter="device"]', root).innerHTML = '<option value="">Todas</option>'
@@ -244,10 +278,19 @@ export async function renderAlertsCenter(root) {
     if (device) params.set('device_id', device);
     try {
       const data = await api(`/api/v1/alerts?${params}`);
-      $('[data-rows]', root).innerHTML = renderAlertsList(data.alerts, session.me?.farms || [], { technical: editable });
-      $('[data-counts]', root).textContent = `${data.counts.open} activas · ${data.counts.closed} cerradas`;
-      $('[data-rules]', root).innerHTML = rulesSection(
-        (await api('/api/v1/alerts/rules')).rules || [], device || stations[0]?.id, editable);
+      // Un listado vacío no significa "sin riesgo": si faltan lecturas, se dice.
+      const caveat = coverageCaveat(stations);
+      $('[data-rows]', root).innerHTML = renderAlertsList(data.alerts, session.me?.farms || [], {
+        technical: editable, caveat, engineVerified: data.engine_verified !== false,
+      });
+      $('[data-counts]', root).textContent = `${data.counts.open} activas · ${data.counts.closed} cerradas`
+        + (data.engine_verified === false ? ' · motor de avisos sin comprobar' : '');
+      // Las reglas son configuración operativa: fuera del rol de demostración.
+      if (editable) {
+        $('[data-rules]', root).innerHTML = rulesSection(
+          (await api('/api/v1/alerts/rules')).rules || [], device || stations[0]?.id, true);
+      }
+      $('[data-delivery-note]', root).innerHTML = deliveryNote();
     } catch (error) {
       $('[data-alert-error]', root).textContent = `No se pudieron cargar los avisos: ${error.message}`;
     }
@@ -279,7 +322,8 @@ export async function renderAlertsCenter(root) {
     }
   };
 
-  $('[data-rules]', root).addEventListener('submit', async (event) => {
+  const rulesPanel = $('[data-rules]', root);
+  if (rulesPanel) rulesPanel.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
     const device = $('[data-filter="device"]', root).value || stations[0]?.id;

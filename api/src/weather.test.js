@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
   aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
+  compareTemperatures, mergeAemetSnapshot, resolveAemetWarnings, isAemetCapPayload, aemetPairWindowMs,
 } from './weather.js';
 
 test('AEMET sky returns a single representative description', () => {
@@ -33,7 +34,9 @@ test('AEMET proximity reports distance and altitude difference against the micro
   );
   assert.ok(proximity.distanceKm > 0 && proximity.distanceKm < 6);
   assert.equal(proximity.aemetAltitudeM, 1101);
+  assert.equal(proximity.aemetAltitudeSource, 'ficha de estación AEMET 5051X');
   assert.equal(proximity.microAltitudeM, 953);
+  assert.equal(proximity.microAltitudeSource, 'altitud configurada en la ficha de estación');
   assert.equal(proximity.altitudeDifferenceM, 148);
   assert.equal(aemetProximityForDevice({ latitude: null, longitude: null }, { stationId: '5051X' }), null);
 });
@@ -100,4 +103,91 @@ test('AEMET station observations convert wind from m/s and CAP warnings retain o
   const warnings = parseAemetWarnings('<alert><info><event>Viento</event><headline>Rachas fuertes</headline><severity>Moderate</severity><area><areaDesc>Zona norte</areaDesc></area></info></alert>');
   assert.equal(warnings[0].event, 'Viento');
   assert.equal(warnings[0].area, 'Zona norte');
+});
+
+test('AEMET observation timestamps use Madrid time when the provider omits an offset', () => {
+  const winter = normalizeAemetObservation([{ idema: '5051X', fint: '2026-01-15T10:00:00', ta: '4' }], '5051X');
+  const summer = normalizeAemetObservation([{ idema: '5051X', fint: '2026-07-15T10:00:00', ta: '24' }], '5051X');
+  assert.equal(winter.observedAt, '2026-01-15T09:00:00.000Z');
+  assert.equal(summer.observedAt, '2026-07-15T08:00:00.000Z');
+  assert.equal(normalizeAemetObservation([], '5051X'), null);
+  const now = new Date('2026-10-07T12:00:00Z');
+  assert.equal(normalizeAemetObservation([
+    { idema: '5051X', fint: '2026-10-07T12:06:00Z', ta: '30' },
+  ], '5051X', { now }), null);
+});
+
+test('temperature comparison pairs nearest timestamps only inside the ten-minute window and keeps signed results', () => {
+  assert.equal(aemetPairWindowMs('5'), 5 * 60 * 1000);
+  assert.equal(aemetPairWindowMs('0'), 10 * 60 * 1000);
+  assert.equal(aemetPairWindowMs('90'), 60 * 60 * 1000);
+  const local = { temperatureC: 14.2, observedAt: '2026-10-07T12:05:00Z', location: 'Vega de Huéscar' };
+  const observations = {
+    observations: [
+      { stationId: '5051X', temperatureC: 13.7, observedAt: '2026-10-07T12:00:00Z' },
+      { stationId: '5051X', temperatureC: 12.0, observedAt: '2026-10-07T11:40:00Z' },
+    ],
+  };
+  const warmer = compareTemperatures(local, observations);
+  assert.equal(warmer.state, 'matched');
+  assert.equal(warmer.aemet.temperatureC, 13.7);
+  assert.equal(warmer.differenceC, 0.5);
+  assert.equal(warmer.timeOffsetSeconds, 300);
+  assert.equal(compareTemperatures({ ...local, temperatureC: 12 }, observations).differenceC, -1.7);
+  const old = compareTemperatures(local, { observations: [
+    { stationId: '5051X', temperatureC: 13.7, observedAt: '2026-10-07T11:54:00Z' },
+  ] });
+  assert.equal(old.state, 'no_pair');
+  assert.equal(old.differenceC, null);
+  assert.equal(old.local.observedAt, local.observedAt);
+  assert.equal(old.aemet.observedAt, '2026-10-07T11:54:00Z');
+  assert.equal(compareTemperatures(local, null).state, 'missing');
+});
+
+test('provider failure retains last usable AEMET values and marks each component stale', () => {
+  const previous = {
+    observation: { stationId: '5051X', temperatureC: 8 }, observationFetchedAt: '2026-10-07T10:00:00Z',
+    forecast: { days: [{ date: '2026-10-08' }] }, forecastFetchedAt: '2026-10-07T10:00:00Z',
+    warnings: [{ identifier: 'alert-1', event: 'Viento', expires: '2026-10-07T13:00:00Z' }],
+    warningsFetchedAt: '2026-10-07T10:00:00Z',
+  };
+  const merged = mergeAemetSnapshot(previous, {
+    fetchedAt: '2026-10-07T12:00:00Z', errors: ['fallo AEMET'],
+    observationAvailable: false, forecastAvailable: false, warningsAvailable: false,
+  });
+  assert.equal(merged.observation.temperatureC, 8);
+  assert.equal(merged.forecast.days.length, 1);
+  assert.equal(merged.warnings[0].identifier, 'alert-1');
+  assert.equal(merged.observationStatus, 'stale');
+  assert.equal(merged.warningsStatus, 'stale');
+});
+
+test('a successful empty CAP response means no current warnings; malformed content is not a clear result', () => {
+  assert.equal(isAemetCapPayload(''), true);
+  assert.equal(isAemetCapPayload([]), true);
+  assert.equal(isAemetCapPayload('<alert><status>Actual</status></alert>'), true);
+  assert.equal(isAemetCapPayload('gateway temporarily unavailable'), false);
+  const empty = mergeAemetSnapshot({ warnings: [{ identifier: 'old' }] }, {
+    warnings: [], warningsAvailable: true, warningsFetchedAt: '2026-10-07T12:00:00Z',
+    warningsCheckedAt: '2026-10-07T12:00:00Z', fetchedAt: '2026-10-07T12:00:00Z', errors: [],
+  });
+  assert.deepEqual(empty.warnings, []);
+  assert.equal(empty.warningsStatus, 'current');
+});
+
+test('CAP parsing filters expired and out-of-area alerts, and applies cancellation references', () => {
+  const now = new Date('2026-10-07T12:00:00Z');
+  const alert = `<alert><identifier>wind-1</identifier><sender>AEMET</sender><sent>2026-10-07T11:00:00Z</sent><status>Actual</status><msgType>Alert</msgType><info><event>Viento</event><headline>Rachas fuertes</headline><onset>2026-10-07T11:00:00Z</onset><expires>2026-10-07T14:00:00Z</expires><area><areaDesc>Huéscar</areaDesc><polygon>37.7,-2.8 38.0,-2.8 38.0,-2.4 37.7,-2.4 37.7,-2.8</polygon></area></info></alert>`;
+  const cancelled = `<alert><identifier>cancel-1</identifier><sender>AEMET</sender><sent>2026-10-07T11:30:00Z</sent><status>Actual</status><msgType>Cancel</msgType><references>AEMET,wind-1,2026-10-07T11:00:00Z</references></alert>`;
+  const update = alert.replace('wind-1', 'wind-2').replace('11:00:00Z</sent>', '11:15:00Z</sent>')
+    .replace('<msgType>Alert</msgType>', '<msgType>Update</msgType>')
+    .replace('<expires>2026-10-07T14:00:00Z</expires>', '<expires>2026-10-07T15:00:00Z</expires>')
+    .replace('<references>', '<references>').replace('</msgType>', '</msgType><references>AEMET,wind-1,2026-10-07T11:00:00Z</references>');
+  assert.equal(resolveAemetWarnings([alert], { now, areaCode: '611803', latitude: 37.86, longitude: -2.6 }).length, 1);
+  assert.equal(resolveAemetWarnings([alert, cancelled], { now, areaCode: '611803', latitude: 37.86, longitude: -2.6 }).length, 0);
+  assert.equal(resolveAemetWarnings([update, alert], { now, areaCode: '611803', latitude: 37.86, longitude: -2.6 })[0].identifier, 'wind-2');
+  assert.equal(resolveAemetWarnings([alert], { now, areaCode: '611803', latitude: 40, longitude: -3 }).length, 0);
+  const expired = alert.replace('2026-10-07T14:00:00Z', '2026-10-07T11:59:00Z');
+  assert.equal(resolveAemetWarnings([expired], { now, latitude: 37.86, longitude: -2.6 }).length, 0);
+  assert.deepEqual(resolveAemetWarnings([], { now }), []);
 });

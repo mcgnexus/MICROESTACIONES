@@ -8,7 +8,7 @@ import {
 const item = (over = {}) => ({
   device: { id: 'a', name: 'Huéscar' },
   latest: { temperatureC: 18, humidityPct: 55, observedAt: '2026-01-01T10:00:00Z' },
-  status: { connectivity: 'online', batteryLevel: 'ok', lastContact: '2026-01-01T10:00:00Z' },
+  status: { connectivity: 'online', batteryLevel: 'ok', dataFreshness: 'fresh', lastContact: '2026-01-01T10:00:00Z' },
   weather: { advisories: [], aemet: { warnings: [] } },
   ...over,
 });
@@ -39,9 +39,45 @@ test('storm risk reports official warnings and estimated risk, never local detec
 test('connectivity and station state map to advice', () => {
   assert.equal(assessConnectivity(item({ status: { connectivity: 'offline' } })).tone, 'alert');
   assert.equal(assessConnectivity(item()).tone, 'ok');
-  assert.equal(assessStation(item({ status: { batteryLevel: 'critical' } })).tone, 'alert');
-  assert.equal(assessStation(item({ status: { batteryLevel: 'low' } })).tone, 'warn');
+  assert.equal(assessStation(item({ status: { batteryLevel: 'critical', dataFreshness: 'fresh' } })).tone, 'alert');
+  assert.equal(assessStation(item({ status: { batteryLevel: 'low', dataFreshness: 'fresh' } })).tone, 'warn');
   assert.equal(assessStation(item()).tone, 'ok');
+});
+
+test('no measurements or no sensor never shows a reassuring state', () => {
+  const noData = item({ status: { connectivity: 'unknown', dataFreshness: 'unknown', lastContact: null } });
+  assert.equal(assessStation(noData).tone, 'muted');
+  assert.equal(assessStation(noData).value, 'sin datos');
+  assert.equal(assessFrost(noData).tone, 'muted');
+  assert.equal(assessHeat(noData).tone, 'muted');
+
+  const noTemp = item({ device: { id: 'a', name: 'Huéscar', sensors: { temperature: false } } });
+  assert.equal(assessFrost(noTemp).tone, 'muted');
+  assert.equal(assessFrost(noTemp).value, 'sin sensor');
+  const html = renderStateCards([noTemp]);
+  assert.match(html, /sin sensor/i);
+  assert.doesNotMatch(html, /Sin riesgo de helada/);
+});
+
+test('stale local temperature is never described as a current risk or an all-clear', () => {
+  const stale = item({
+    latest: { temperatureC: -5, observedAt: '2026-01-01T08:00:00Z' },
+    status: { connectivity: 'online', dataFreshness: 'stale', lastValidData: '2026-01-01T08:00:00Z' },
+  });
+  assert.equal(assessFrost(stale).tone, 'muted');
+  assert.match(assessFrost(stale).value, /sin lectura actual/);
+  assert.equal(assessHeat(stale).tone, 'muted');
+  assert.equal(assessConnectivity(stale).tone, 'warn');
+  assert.equal(assessStation(stale).value, 'datos antiguos');
+});
+
+test('rendered state cards distinguish last contact from stale measurements', () => {
+  const html = renderStateCards([item({ status: {
+    connectivity: 'online', dataFreshness: 'stale', lastValidData: '2026-01-01T08:00:00Z',
+    lastContact: '2026-01-01T10:00:00Z', batteryLevel: 'ok',
+  } })]);
+  assert.match(html, /datos antiguos/i);
+  assert.match(html, /sin lectura actual/i);
 });
 
 test('state cards render the seven main cards with advice', () => {
@@ -50,6 +86,34 @@ test('state cards render the seven main cards with advice', () => {
     assert.match(html, new RegExp(title));
   }
   assert.match(html, /state-action/);
+});
+
+test('risk cards say whether the claim is real, forecast or calculated', () => {
+  // Medida local → real.
+  assert.equal(assessFrost(item({ latest: { temperatureC: -3, observedAt: 'x' } })).nature, 'real');
+  assert.equal(assessHeat(item({ latest: { temperatureC: 40, observedAt: 'x' } })).nature, 'real');
+  // Previsión externa → previsto, con el proveedor nombrado.
+  const forecastItem = item({
+    latest: { temperatureC: 8, observedAt: 'x' },
+    weather: { advisories: [], aemet: { warnings: [], forecast: { days: [{ temperatureMinC: -1 }] } } },
+  });
+  const forecast = assessFrost(forecastItem);
+  assert.equal(forecast.nature, 'previsto');
+  assert.match(forecast.meaning, /AEMET prevé/);
+  // Estimación propia sobre la previsión → calculado.
+  const estimated = item({
+    weather: { advisories: [{ kind: 'helada', text: 'Riesgo orientativo', date: '2026-01-02' }], aemet: { warnings: [] } },
+  });
+  assert.equal(assessFrost(estimated).nature, 'calculado');
+  // Sin medición no se afirma nada: no aparece ninguna naturaleza.
+  const stale = assessFrost(item({
+    status: { connectivity: 'online', dataFreshness: 'stale', lastValidData: '2026-01-01T08:00:00Z' },
+  }));
+  assert.equal(stale.nature, undefined);
+  // Y la tarjeta renderizada muestra la insignia con la pista.
+  const html = renderStateCards([forecastItem]);
+  assert.match(html, /Previsión externa o aviso oficial[^"]*">Previsto</);
+  assert.match(html, /Dato observado o medido[^"]*">Real</);
 });
 
 test('next risk prefers an open alert, then the nearest advisory', () => {

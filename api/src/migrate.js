@@ -114,6 +114,70 @@ const upgrades = [
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS consent_at timestamptz`,
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS pilot_requests jsonb NOT NULL DEFAULT '[]'::jsonb`,
 
+  // Acceso sin contraseña: la cuenta puede no tener hash y el email es único
+  // ignorando mayúsculas/espacios. Si ya hubiera duplicados normalizados, el
+  // índice falla y obliga a resolverlos a mano antes de continuar.
+  `ALTER TABLE subscribers ALTER COLUMN password_hash DROP NOT NULL`,
+  `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS email_normalized text GENERATED ALWAYS AS (lower(btrim(email))) STORED`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS subscribers_email_normalized_idx ON subscribers(email_normalized)`,
+  `DO $$ BEGIN
+     CREATE TABLE magic_links (
+       id bigserial PRIMARY KEY,
+       email text NOT NULL,
+       token_hash text NOT NULL UNIQUE,
+       return_path text,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       expires_at timestamptz NOT NULL,
+       consumed_at timestamptz
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS magic_links_email_idx ON magic_links(email, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS magic_links_expiry_idx ON magic_links(expires_at)`,
+  // El enlace de acceso puede recoger, por separado, el consentimiento publicitario
+  // y el origen de captación; se aplican a la cuenta cuando se verifica.
+  `ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS commercial_consent boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS acquisition jsonb NOT NULL DEFAULT '{}'::jsonb`,
+
+  // Cuenta verificada, perfil opcional y libro de consentimientos. Separa el
+  // acceso (cuenta) del permiso publicitario (consent_records).
+  `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS email_verified_at timestamptz`,
+  `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS acquisition jsonb NOT NULL DEFAULT '{}'::jsonb`,
+  `DO $$ BEGIN
+     CREATE TABLE subscriber_profiles (
+       subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+       municipality text,
+       activity text CHECK (activity IS NULL OR activity IN ('agricultura','ganaderia','mixta','otra')),
+       crop_or_livestock text,
+       interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion')),
+       updated_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  // El catálogo de interés creció (futura_instalacion): se refresca el CHECK
+  // porque en bases existentes la tabla ya estaba creada con la lista anterior.
+  `ALTER TABLE subscriber_profiles DROP CONSTRAINT IF EXISTS subscriber_profiles_interest_check`,
+  `DO $$ BEGIN
+     ALTER TABLE subscriber_profiles ADD CONSTRAINT subscriber_profiles_interest_check
+       CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion'));
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN
+     CREATE TABLE consent_records (
+       id bigserial PRIMARY KEY,
+       subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
+       lead_id bigint REFERENCES farm_leads(id) ON DELETE CASCADE,
+       purpose text NOT NULL CHECK (purpose IN ('service','commercial')),
+       channel text NOT NULL CHECK (channel IN ('email','whatsapp')),
+       action text NOT NULL CHECK (action IN ('granted','revoked')),
+       text_version text NOT NULL,
+       source text NOT NULL DEFAULT 'web',
+       ip_address text,
+       user_agent text,
+       recorded_at timestamptz NOT NULL DEFAULT now(),
+       CHECK ((subscriber_id IS NULL) <> (lead_id IS NULL))
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS consent_records_subject_idx
+     ON consent_records(subscriber_id, lead_id, purpose, channel, recorded_at DESC)`,
+
   // Captación pública de fincas: alta sin cuenta, revisada por administración.
   `DO $$ BEGIN
      CREATE TABLE farm_leads (
@@ -124,7 +188,7 @@ const upgrades = [
        activity text NOT NULL DEFAULT 'agricultura' CHECK (activity IN ('agricultura','ganaderia','mixta','otra')),
        zone text,
        crop_or_livestock text,
-       interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general')),
+       interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion')),
        notes text,
        admin_notes text,
        consent boolean NOT NULL DEFAULT false,
@@ -137,6 +201,16 @@ const upgrades = [
      );
    EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
   `CREATE INDEX IF NOT EXISTS farm_leads_status_idx ON farm_leads(status, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS prospect_tracking (
+    id bigserial PRIMARY KEY,
+    subscriber_id bigint UNIQUE REFERENCES subscribers(id) ON DELETE CASCADE,
+    lead_id bigint UNIQUE REFERENCES farm_leads(id) ON DELETE CASCADE,
+    status text CHECK (status IN ('registrado','interes_declarado','contacto_solicitado','contactado','archivado')),
+    notes text, next_action text, next_action_at timestamptz,
+    installation_interest boolean, retain_until timestamptz,
+    CHECK ((subscriber_id IS NULL) <> (lead_id IS NULL)))`,
+  `ALTER TABLE farm_leads ADD COLUMN IF NOT EXISTS campaign jsonb NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE farm_leads ADD COLUMN IF NOT EXISTS next_contact_at timestamptz`,
 
   // Migración de la solicitud antigua (municipality/farm_type/crop, estados en inglés)
   // al modelo de leads actual, conservando los datos ya recibidos.
@@ -180,7 +254,7 @@ const upgrades = [
    EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
   `DO $$ BEGIN
      ALTER TABLE farm_leads ADD CONSTRAINT farm_leads_interest_check
-       CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general'));
+       CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion'));
    EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
 
   // Finca, estaciones asociadas y destinatarios de avisos.
@@ -256,18 +330,41 @@ const upgrades = [
    EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
   `CREATE INDEX IF NOT EXISTS notification_outbox_due_idx ON notification_outbox(status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS notification_outbox_alert_idx ON notification_outbox(alert_id)`,
-  // La cola de entrega también admite la confirmación al visitante y el aviso interno.
+  // La cola de entrega también admite la confirmación al visitante, el aviso
+  // interno y los mensajes comerciales (novedades y ofertas).
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS lead_id bigint REFERENCES farm_leads(id) ON DELETE SET NULL`,
   `ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_kind_check`,
   `DO $$ BEGIN
      ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_kind_check
-       CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice'));
+       CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice','commercial'));
    EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
   // Modo piloto: el WhatsApp se envía a mano, así que el envío queda en 'manual'.
+  // 'cancelled' aparta un mensaje comercial cuando se revoca el consentimiento.
+  // 'expired' lo aparta cuando ha caducado: nunca se envía un aviso viejo.
   `ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_status_check`,
   `DO $$ BEGIN
      ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_status_check
-       CHECK (status IN ('pending','sending','sent','delivered','failed','manual'));
+       CHECK (status IN ('pending','sending','sent','delivered','failed','manual','cancelled','expired'));
    EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  // Exclusión entre trabajadores, caducidad y separación entre "aceptado por el
+  // proveedor" (sent_at) y "entregado" (delivered_at, por webhook).
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS claimed_by text`,
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS claimed_at timestamptz`,
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS expires_at timestamptz`,
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
+  // Rezonda lo que ya estaba en cola sin caducidad: un aviso o un código viejo
+  // no se envía. Solo se rellena lo que sigue pendiente.
+  `UPDATE notification_outbox SET expires_at = created_at + CASE kind
+      WHEN 'alert' THEN interval '4 hours'
+      WHEN 'contact_verification' THEN interval '15 minutes'
+      ELSE interval '7 days' END
+    WHERE expires_at IS NULL AND status IN ('pending','sending','manual')`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_commercial_idx
+     ON notification_outbox(subscriber_id, lead_id, channel) WHERE kind = 'commercial'`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_claim_idx
+     ON notification_outbox(status, claimed_at) WHERE status = 'sending'`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_expiry_idx
+     ON notification_outbox(expires_at) WHERE status IN ('pending','sending')`,
 
   // Diseño de alertas: categoría, cooldown, recuperación explícita y último aviso.
   `ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'general'`,
@@ -321,6 +418,24 @@ const upgrades = [
     payload jsonb NOT NULL,
     PRIMARY KEY (device_id, provider)
   )`,
+  // Serie histórica de observaciones AEMET para la comparación temporal.
+  `DO $$ BEGIN
+     CREATE TABLE aemet_observations (
+       id bigserial PRIMARY KEY,
+       device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       station_id text NOT NULL,
+       observed_at timestamptz NOT NULL,
+       temperature_c real,
+       humidity_pct real,
+       pressure_hpa real,
+       precipitation_mm real,
+       wind_kmh real,
+       wind_gust_kmh real,
+       fetched_at timestamptz NOT NULL DEFAULT now(),
+       UNIQUE (device_id, station_id, observed_at)
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS aemet_observations_device_idx ON aemet_observations(device_id, observed_at DESC)`,
 
   // Estado operativo, historial de configuración y auditoría.
   `DO $$ BEGIN
@@ -412,6 +527,27 @@ const seeds = [
   // Primer suscriptor pasa a administrador para no perder acceso de gestión.
   `UPDATE subscribers SET role = 'admin' WHERE id = (SELECT min(id) FROM subscribers) AND role = 'viewer'
      AND NOT EXISTS (SELECT 1 FROM subscribers WHERE role = 'admin')`,
+  // Sin tocar datos de salud ni inventarlos: la cuenta se marca verificada solo
+  // si consta que consumió un enlace de acceso (prueba de control del correo).
+  `UPDATE subscribers s SET email_verified_at = m.consumed_at
+     FROM (SELECT DISTINCT ON (email) email, consumed_at FROM magic_links
+           WHERE consumed_at IS NOT NULL ORDER BY email, consumed_at) m
+     WHERE m.email = s.email_normalized AND s.email_verified_at IS NULL`,
+  // Los consentimientos anteriores se conservan como hechos históricos, con su
+  // versión original y bajo finalidad de SERVICIO: la aceptación antigua era para
+  // atender la solicitud o recibir avisos, no para publicidad. Nadie pasa a estar
+  // autorizado para publicidad por el simple hecho de migrar.
+  `INSERT INTO consent_records (subscriber_id, purpose, channel, action, text_version, source, recorded_at)
+     SELECT s.id, 'service', 'email', 'granted', 'legacy-v0', 'migration', coalesce(s.consent_at, s.created_at)
+     FROM subscribers s
+     WHERE s.communication_consent = true
+       AND NOT EXISTS (SELECT 1 FROM consent_records c
+         WHERE c.subscriber_id = s.id AND c.purpose = 'service' AND c.source = 'migration')`,
+  `INSERT INTO consent_records (lead_id, purpose, channel, action, text_version, source, recorded_at)
+     SELECT l.id, 'service', 'whatsapp', 'granted', 'legacy-lead-v0', 'lead', coalesce(l.consent_at, l.created_at)
+     FROM farm_leads l
+     WHERE l.consent = true
+       AND NOT EXISTS (SELECT 1 FROM consent_records c WHERE c.lead_id = l.id)`,
 ];
 
 // Ejecuta una sentencia intentando siempre dejar la lista utilizable:

@@ -1,5 +1,5 @@
 import express from 'express';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -7,9 +7,10 @@ import { sql } from './db.js';
 import { randomToken, sha256, verifyPassword } from './security.js';
 import { clearLoginAttempts, consumeLoginAttempt, loginRateLimitKeys } from './login-rate-limit.js';
 import { measurementSchema, hasAnyValue } from './contracts.js';
-import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies } from './auth.js';
+import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies, accessibleDeviceIds, alertableDeviceIds } from './auth.js';
+import { alertEngineVerified } from './env.js';
 import { evaluateMeasurement, VFLAG } from './validation.js';
-import { evaluateMeasurementRules, evaluateSystemRules, releaseDirectives, pendingDirectiveIds, alertAge } from './alert-engine.js';
+import { evaluateMeasurementRules, releaseDirectives, pendingDirectiveIds, alertAge } from './alert-engine.js';
 import { audit } from './audit.js';
 import { csvCell } from './csv.js';
 import stationsRouter, { statusPayload } from './stations.js';
@@ -17,13 +18,34 @@ import configsRouter from './configs.js';
 import alertsRouter from './alerts.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 import { weatherForDevice } from './weather.js';
+import { dewPointCelsius } from './statistics.js';
 import adminRouter from './admin.js';
 import accountRouter from './account.js';
 import contactsRouter from './contacts.js';
 import farmsRouter from './farms.js';
 import publicRouter from './public.js';
-import { leadSchema, isHoneypot, leadRateLimitKeys, leadColumns } from './leads.js';
-import { dispatchOutbox, enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
+import analyticsRouter, { countMetric, markMetric, metricFailure } from './analytics.js';
+import { PUBLIC_PAGES, publicMetadata, siteOrigin, sitemapXml } from './seo.js';
+import { completedAgriculturalProfile } from './analytics-policy.js';
+import {
+  leadSchema, isHoneypot, leadRateLimitKeys, leadColumns,
+  commercialConsentChannels, serviceConsentChannels,
+} from './leads.js';
+import { enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
+import {
+  runScheduledPasses, schedulerConfig, schedulerRequestTick, startScheduler,
+} from './scheduler.js';
+import {
+  verifyMetaSignature, verifySvixSignature, verifyTwilioSignature,
+  parseDeliveryEvents, applyProviderStatus,
+} from './webhooks.js';
+import { effectiveConfig } from './device-config.js';
+import { classifyMeasurementTime } from './measurement-policy.js';
+import { normalizeAcquisition, recordConsent } from './consent.js';
+import {
+  MAGIC_REQUEST_MAX_ATTEMPTS, consumeMagicLink, deliverMagicLink, issueMagicLink,
+  normalizeEmail, resolvePasswordlessAccount, safeReturnPath,
+} from './magic-link.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -31,8 +53,12 @@ const sessionDays = Math.max(1, Math.min(30, Number(process.env.SESSION_TTL_DAYS
 const cookieSecure = process.env.COOKIE_SECURE !== 'false';
 app.disable('x-powered-by');
 if (process.env.TRUST_PROXY === 'true' || process.env.VERCEL) app.set('trust proxy', 1);
-app.use(express.json({ limit: '64kb', strict: true }));
-app.use(express.urlencoded({ extended: false, limit: '32kb' }));
+
+// El cuerpo crudo se conserva para verificar las firmas de los webhooks: una
+// firma se calcula sobre los bytes recibidos, no sobre el objeto ya parseado.
+const captureRawBody = (req, _res, buf) => { req.rawBody = buf; };
+app.use(express.json({ limit: '64kb', strict: true, verify: captureRawBody }));
+app.use(express.urlencoded({ extended: false, limit: '32kb', verify: captureRawBody }));
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Referrer-Policy', 'same-origin');
@@ -42,18 +68,43 @@ app.use((req, res, next) => {
   next();
 });
 
+// Ejecución programada. Va ANTES de todas las rutas: si se monta después, la
+// ruta que responde se come la petición y el middleware nunca se ejecuta (era el
+// defecto que ataba los detectores y la cola a las visitas al panel). Es un
+// respaldo; el mecanismo normal es el temporizador o el cron.
+app.use(schedulerRequestTick());
+app.use('/api/v1/metrics', analyticsRouter);
+
 app.get('/health', async (_req, res) => {
   await sql`SELECT 1`;
   res.json({ status: 'ok' });
 });
 
 // Datos públicos de contacto para la landing y el panel (no expone secretos).
+// `whatsappDelivery` no es un secreto: dice cómo se entrega hoy para no anunciar
+// como automático algo que aún envía una persona.
 app.get('/api/v1/public-config', (_req, res) => {
   res.json({
     supportPhone: process.env.SUPPORT_PHONE || null,
     supportWhatsapp: process.env.SUPPORT_WHATSAPP || null,
+    whatsappDelivery: (process.env.WHATSAPP_PROVIDER || 'disabled').toLowerCase(),
+    emailDelivery: (process.env.EMAIL_PROVIDER || 'disabled').toLowerCase(),
   });
 });
+
+// Crea la sesión y fija la cookie HttpOnly. El token nunca viaja en el cuerpo de
+// la respuesta ni se guarda en el cliente. Se aplica la cookie después de que la
+// transacción que crea la sesión haya confirmado.
+async function createSession(client, subscriberId) {
+  const token = randomToken();
+  await client`INSERT INTO web_sessions (token_hash, subscriber_id, expires_at)
+    VALUES (${sha256(token)}, ${subscriberId}, now() + (${sessionDays} * interval '1 day'))`;
+  return token;
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie', `tr_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionDays * 86400}${cookieSecure ? '; Secure' : ''}`);
+}
 
 app.post('/api/auth/login', async (req, res) => {
   const parsed = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(256) }).safeParse(req.body);
@@ -62,14 +113,102 @@ app.post('/api/auth/login', async (req, res) => {
   const rateLimitKeys = loginRateLimitKeys(req.ip || req.socket.remoteAddress, email);
   if (await consumeLoginAttempt(sql, rateLimitKeys)) return res.status(429).json({ error: 'too_many_attempts' });
   const [subscriber] = await sql`SELECT id, email, password_hash, role FROM subscribers WHERE email = ${email} AND active = true`;
-  const valid = subscriber && await verifyPassword(parsed.data.password, subscriber.passwordHash);
+  // Un alta sin contraseña no tiene hash: queda fuera del login con contraseña.
+  const valid = subscriber && subscriber.passwordHash && await verifyPassword(parsed.data.password, subscriber.passwordHash);
   if (!valid) return res.status(401).json({ error: 'invalid_credentials' });
   await clearLoginAttempts(sql, rateLimitKeys);
-  const token = randomToken();
-  await sql`INSERT INTO web_sessions (token_hash, subscriber_id, expires_at)
-    VALUES (${sha256(token)}, ${subscriber.id}, now() + (${sessionDays} * interval '1 day'))`;
-  res.setHeader('Set-Cookie', `tr_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionDays * 86400}${cookieSecure ? '; Secure' : ''}`);
+  setSessionCookie(res, await createSession(sql, subscriber.id));
   res.json({ email: subscriber.email, role: subscriber.role });
+});
+
+// Acceso sin contraseña: se pide un enlace de un solo uso. La respuesta es
+// siempre la misma para no revelar si el contacto existe ni si el envío tuvo éxito.
+app.post('/api/auth/magic/request', csrfGuard, async (req, res) => {
+  const parsed = z.object({
+    email: z.string().email().max(254),
+    next: z.string().max(200).optional(),
+    // Publicidad y captación son opcionales y no condicionan el acceso.
+    commercial_consent: z.boolean().optional(),
+    acquisition: z.record(z.string(), z.unknown()).optional(),
+  }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const email = normalizeEmail(parsed.data.email);
+  const returnPath = safeReturnPath(parsed.data.next);
+  const acquisition = normalizeAcquisition(parsed.data.acquisition);
+  const ip = req.ip || req.socket.remoteAddress;
+  const keys = [
+    sha256(`magic:ip:${String(ip || 'unknown').slice(0, 200)}`),
+    sha256(`magic:email:${email}`),
+  ];
+  if (await consumeLoginAttempt(sql, keys, MAGIC_REQUEST_MAX_ATTEMPTS)) {
+    return res.status(202).json({ status: 'sent' });
+  }
+  try {
+    // Las cuentas privilegiadas no acceden por enlace: se evita enviar un enlace
+    // que no podrán usar. La respuesta sigue siendo indistinguible.
+    const [privileged] = await sql`SELECT 1 FROM subscribers
+      WHERE email_normalized = ${email} AND role <> 'viewer'`;
+    if (privileged) return res.status(202).json({ status: 'sent' });
+    const issued = await issueMagicLink(sql, {
+      email, returnPath, ip,
+      commercialConsent: Boolean(parsed.data.commercial_consent),
+      acquisition,
+    });
+    if (issued.status === 'created') {
+      await countMetric(sql, 'access_requested', acquisition).catch(metricFailure);
+      // El envío no bloquea la respuesta: el token ya está guardado como hash.
+      await deliverMagicLink(email, siteUrl, issued.token, returnPath).catch(() => {});
+    }
+  } catch (error) {
+    console.error('acceso por enlace:', error.message);
+  }
+  res.status(202).json({ status: 'sent' });
+});
+
+// Verificación: consume el enlace de forma atómica y abre una sesión `viewer`.
+// Nunca eleva privilegios: una cuenta admin/operator debe usar su contraseña.
+app.post('/api/auth/magic/verify', csrfGuard, async (req, res) => {
+  const parsed = z.object({ token: z.string().min(16).max(200) }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_token' });
+  const ip = req.ip || req.socket.remoteAddress || null;
+  const userAgent = String(req.get('user-agent') || '').slice(0, 200) || null;
+  let outcome = null;
+  await sql.begin(async (tx) => {
+    const link = await consumeMagicLink(tx, { token: parsed.data.token });
+    if (!link) return;
+    const account = await resolvePasswordlessAccount(tx, link.email);
+    outcome = { link, account, sessionToken: null };
+    if (account.status !== 'privileged') {
+      outcome.sessionToken = await createSession(tx, account.subscriber.id);
+      // Pulsar el enlace demuestra que el correo es del interesado: es la
+      // verificación de la cuenta, independiente de la publicidad.
+      await tx`UPDATE subscribers SET email_verified_at = coalesce(email_verified_at, now())
+        WHERE id = ${account.subscriber.id}`;
+      if (account.status === 'created' && Object.keys(link.acquisition).length) {
+        await tx`UPDATE subscribers SET acquisition = ${tx.json(link.acquisition)}
+          WHERE id = ${account.subscriber.id}`;
+      }
+      // La casilla de novedades se aplicó al pedir el enlace; aquí se registra
+      // como consentimiento vigente con la versión actual del texto.
+      if (link.commercialConsent) {
+        await recordConsent(tx, {
+          subscriberId: account.subscriber.id, purpose: 'commercial', channel: 'email',
+          action: 'granted', source: 'magic_link', ip, userAgent,
+        });
+      }
+      await audit(tx, req, 'access.magic_link', 'subscriber', String(account.subscriber.id),
+        null, { created: account.status === 'created', return_path: link.returnPath });
+    }
+  });
+  if (!outcome) return res.status(400).json({ error: 'link_invalid_or_expired' });
+  if (outcome.account.status === 'privileged') {
+    return res.status(403).json({ error: 'password_login_required' });
+  }
+  await markMetric(sql, 'contact_verified', { subscriberId: outcome.account.subscriber.id }).catch(metricFailure);
+  if (outcome.link.commercialConsent) await markMetric(sql, 'commercial_authorized', { subscriberId: outcome.account.subscriber.id }).catch(metricFailure);
+  setSessionCookie(res, outcome.sessionToken);
+  const subscriber = outcome.account.subscriber;
+  res.json({ email: subscriber.email, role: subscriber.role, plan: subscriber.plan, next: outcome.link.returnPath });
 });
 
 app.post('/api/auth/logout', async (req, res) => {
@@ -89,20 +228,53 @@ app.post('/api/v1/leads', async (req, res) => {
   const keys = leadRateLimitKeys(req.ip || req.socket.remoteAddress, parsed.data.phone);
   if (await consumeLoginAttempt(sql, keys, 5)) return res.status(429).json({ error: 'too_many_requests' });
   const lead = leadColumns(parsed.data);
-  await sql`INSERT INTO farm_leads (name, phone, email, activity, zone, crop_or_livestock, interest,
-      notes, consent, consent_at, source)
-    VALUES (${lead.name}, ${lead.phone}, ${lead.email}, ${lead.activity}, ${lead.zone},
-      ${lead.crop_or_livestock}, ${lead.interest}, ${lead.notes}, true, now(), ${lead.source})`;
+  const ip = req.ip || req.socket.remoteAddress || null;
+  const userAgent = String(req.get('user-agent') || '').slice(0, 200) || null;
+  // El alta y sus consentimientos se guardan juntos: la solicitud (servicio) es
+  // obligatoria; las novedades y ofertas solo si la casilla venía marcada.
+  const inserted = await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${`lead:${lead.phone}`}))`;
+    const [duplicate] = await tx`SELECT id FROM farm_leads WHERE phone = ${lead.phone}
+      AND created_at > now() - interval '24 hours' AND name = ${lead.name}
+      AND email IS NOT DISTINCT FROM ${lead.email} AND interest IS NOT DISTINCT FROM ${lead.interest}`;
+    if (duplicate) return false;
+    const [created] = await tx`INSERT INTO farm_leads (name, phone, email, activity, zone, crop_or_livestock, interest,
+        notes, consent, consent_at, source, campaign)
+      VALUES (${lead.name}, ${lead.phone}, ${lead.email}, ${lead.activity}, ${lead.zone},
+        ${lead.crop_or_livestock}, ${lead.interest}, ${lead.notes}, true, now(), ${lead.source},
+        ${tx.json(lead.campaign)}) RETURNING id`;
+    for (const channel of serviceConsentChannels(parsed.data)) {
+      await recordConsent(tx, { leadId: created.id, purpose: 'service', channel, action: 'granted', source: 'lead', ip, userAgent });
+    }
+    for (const channel of commercialConsentChannels(parsed.data)) {
+      await recordConsent(tx, { leadId: created.id, purpose: 'commercial', channel, action: 'granted', source: 'lead', ip, userAgent });
+    }
+    return created.id;
+  });
   // La confirmación y el aviso interno se encolan sin bloquear la respuesta: el
   // lead ya está guardado aunque el proveedor de email todavía no esté listo.
-  enqueueLeadMessages(sql, parsed.data).catch((error) => console.error('aviso de lead:', error.message));
+  if (inserted) enqueueLeadMessages(sql, parsed.data).catch((error) => console.error('aviso de lead:', error.message));
+  if (inserted) {
+    const subject = { leadId: inserted, acquisition: lead.campaign };
+    await markMetric(sql, 'access_requested', subject).catch(metricFailure);
+    if (parsed.data.commercial_consent) await markMetric(sql, 'commercial_authorized', subject).catch(metricFailure);
+    if (lead.interest === 'futura_instalacion') await markMetric(sql, 'installation_interest', subject).catch(metricFailure);
+    if (completedAgriculturalProfile({ municipality: lead.zone, activity: lead.activity, cropOrLivestock: lead.crop_or_livestock, interest: lead.interest })) {
+      await markMetric(sql, 'agricultural_profile_completed', subject).catch(metricFailure);
+    }
+  }
   res.status(201).json({ received: true });
 });
 
 // ---------------------------------------------------------------------------
-// Webhook de WhatsApp: da de baja a quien responde BAJA/STOP.
+// Webhook de WhatsApp: estados de entrega del proveedor y altas/bajas.
+// Autenticado por FIRMA del proveedor: con `WHATSAPP_APP_SECRET` se exige
+// `X-Hub-Signature-256` sobre el cuerpo crudo; con Twilio, `X-Twilio-Signature`.
+// Sin ninguna de las dos configuradas no se acepta nada.
 // ---------------------------------------------------------------------------
 const WHATSAPP_WEBHOOK_TOKEN = process.env.WHATSAPP_WEBHOOK_TOKEN || null;
+const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || null;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || null;
 
 app.get('/api/v1/whatsapp/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -115,11 +287,32 @@ app.get('/api/v1/whatsapp/webhook', (req, res) => {
 });
 
 app.post('/api/v1/whatsapp/webhook', async (req, res) => {
-  const provided = req.get('x-webhook-token') || req.query.token;
-  if (WHATSAPP_WEBHOOK_TOKEN && provided !== WHATSAPP_WEBHOOK_TOKEN) {
+  const body = req.body || {};
+
+  // 1) Autenticación por firma del proveedor (preferente) o token compartido.
+  if (WHATSAPP_APP_SECRET) {
+    if (!verifyMetaSignature(req.rawBody, req.get('x-hub-signature-256'), WHATSAPP_APP_SECRET)) {
+      return res.status(401).json({ error: 'bad_signature' });
+    }
+  } else if (body.From && TWILIO_AUTH_TOKEN) {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    if (!verifyTwilioSignature(url, body, req.get('x-twilio-signature'), TWILIO_AUTH_TOKEN)) {
+      return res.status(401).json({ error: 'bad_signature' });
+    }
+  } else if (!WHATSAPP_WEBHOOK_TOKEN || (req.get('x-webhook-token') || req.query.token) !== WHATSAPP_WEBHOOK_TOKEN) {
     return res.status(403).json({ error: 'forbidden' });
   }
-  const body = req.body || {};
+
+  // 2) Estados de entrega: `delivered` solo lo declara el proveedor aquí.
+  const events = parseDeliveryEvents(body);
+  const statuses = [];
+  for (const event of events) {
+    statuses.push(await applyProviderStatus(sql, {
+      providerMessageId: event.messageId, status: event.status, error: event.error,
+    }));
+  }
+
+  // 3) Mensajes entrantes: BAJA/STOP retiran el consentimiento.
   const messages = [];
   for (const entry of body.entry || []) { // formato Meta
     for (const change of entry.changes || []) {
@@ -135,7 +328,29 @@ app.post('/api/v1/whatsapp/webhook', async (req, res) => {
   for (const message of messages) {
     if (message.text) results.push(await handleInboundWhatsApp(sql, message.from, message.text));
   }
-  res.json({ received: messages.length, results });
+  res.json({ received: messages.length, statuses, results });
+});
+
+// Webhook de correo (Resend, esquema SVIX): separa "aceptado" de "entregado".
+app.post('/api/v1/email/webhook', async (req, res) => {
+  const secret = process.env.RESEND_WEBHOOK_SECRET;
+  if (!secret) return res.status(503).json({ error: 'webhook_not_configured' });
+  const ok = verifySvixSignature({
+    rawBody: req.rawBody,
+    id: req.get('svix-id'),
+    timestamp: req.get('svix-timestamp'),
+    signature: req.get('svix-signature'),
+    secret,
+  });
+  if (!ok) return res.status(401).json({ error: 'bad_signature' });
+  const events = parseDeliveryEvents(req.body || {});
+  const statuses = [];
+  for (const event of events) {
+    statuses.push(await applyProviderStatus(sql, {
+      providerMessageId: event.messageId, status: event.status, error: event.error,
+    }));
+  }
+  res.json({ received: events.length, statuses });
 });
 
 // ---------------------------------------------------------------------------
@@ -188,11 +403,15 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
     // las que se creen ahora son para el siguiente despertar del equipo.
     const pendingDirectives = await pendingDirectiveIds(tx, req.deviceId);
     const [configRow] = await tx`SELECT config FROM device_configs WHERE device_id = ${req.deviceId}`;
-    const config = configRow?.config ?? {};
+    const config = effectiveConfig(configRow?.config ?? {});
     let highest = null;
     let lastBattery = null;
-    let insertedAny = false;
+    let insertedCurrentValid = false;
     let appliedConfigVersion = null;
+    const [latestValid] = await tx`SELECT max(observed_at) AS observed_at FROM measurements
+      WHERE device_id = ${req.deviceId} AND is_validated AND deleted_at IS NULL`;
+    let newestEvaluatedAt = latestValid?.observedAt ? new Date(latestValid.observedAt).getTime() : 0;
+    const nowMs = Date.now();
 
     for (const record of parsed.data) {
       const observedAt = new Date(record.ts * 1000);
@@ -200,6 +419,11 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
       // se confirma más abajo para que el equipo la retire de su cola.
       if (hasAnyValue(record)) {
         const evaluated = evaluateMeasurement(record);
+        const observedMs = observedAt.getTime();
+        const timeClass = classifyMeasurementTime({ observedAt, now: new Date(nowMs),
+          newestObservedAt: newestEvaluatedAt ? new Date(newestEvaluatedAt) : null,
+          measurementIntervalSeconds: config.interval_normal_s, timeValid: evaluated.time_valid });
+        const currentAndOrdered = evaluated.is_validated && timeClass === 'current';
         const [inserted] = await tx`INSERT INTO measurements
           (device_id, sequence, observed_at, time_quality, temperature_c, humidity_pct, pressure_pa, battery_mv,
            flags, alert_level, lux, source, is_validated, validation_flags, raw_payload, invalidated_reason)
@@ -210,28 +434,27 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
             ${evaluated.is_validated}, ${evaluated.validation_flags},
             ${evaluated.raw_payload ? tx.json(evaluated.raw_payload) : null}, ${evaluated.invalidated_reason})
           ON CONFLICT (device_id, sequence, observed_at) DO NOTHING RETURNING id`;
-        if (evaluated.columns.battery_mv != null) lastBattery = evaluated.columns.battery_mv;
+        if (currentAndOrdered && evaluated.columns.battery_mv != null) lastBattery = evaluated.columns.battery_mv;
 
         if (inserted) {
-          insertedAny = true;
-          if (record.alert > 0) {
-            const dedupeKey = createHash('sha256')
-              .update(`${req.deviceId}:${record.sequence}:${record.ts}:${record.alert}`).digest('hex');
-            const summary = record.alert === 1 ? 'Alerta prioritaria de la estación' : 'Aviso de la estación';
-            await tx`INSERT INTO alerts (device_id, measurement_id, dedupe_key, level, message, value, observed_at)
-              VALUES (${req.deviceId}, ${inserted.id}, ${dedupeKey}, ${record.alert}, ${summary},
-                ${tx.json({ temp_c: record.temp_c ?? null, hum_pct: record.hum_pct ?? null, press_pa: record.press_pa ?? null, batt_mv: record.batt_mv ?? null })}, ${observedAt})
-              ON CONFLICT (dedupe_key) DO NOTHING`;
+          if (currentAndOrdered) {
+            insertedCurrentValid = true;
+            newestEvaluatedAt = observedMs;
           }
-          // Motor de avisos: la regla solo dispara si la condición se sostiene
-          // (min_duration_s) y se recupera con margen (recovery_margin).
-          await evaluateMeasurementRules(tx, {
-            deviceId: req.deviceId,
-            measurementId: inserted.id,
-            values: record,
-            at: observedAt,
-            config,
-          });
+          // `record.alert` se conserva en measurements como dato legado del
+          // firmware, pero no crea un segundo incidente fuera del motor. Los
+          // avisos locales salen solo de alert_rules/evaluateMeasurementRules,
+          // que deduplica por episodio y encola una vez por destinatario.
+          // Solo datos temporalmente actuales y canales válidos llegan al motor.
+          if (currentAndOrdered) {
+            await evaluateMeasurementRules(tx, {
+              deviceId: req.deviceId,
+              measurementId: inserted.id,
+              values: evaluated.valid_values,
+              at: observedAt,
+              config,
+            });
+          }
         }
       }
       // Confirmación de la configuración: el equipo declara qué versión tiene
@@ -255,7 +478,7 @@ app.post('/api/measurements', requireDevice, async (req, res) => {
     await tx`UPDATE devices SET last_seen_at = now() WHERE id = ${req.deviceId}`;
     // Este envío ya ha dado la oportunidad de subir la medida crítica antes de tiempo.
     await releaseDirectives(tx, req.deviceId, { batteryMv: lastBattery, ids: pendingDirectives });
-    if (insertedAny) {
+    if (insertedCurrentValid) {
       await tx`UPDATE device_status s SET last_valid_data = (
           SELECT max(m.observed_at) FROM measurements m
           WHERE m.device_id = ${req.deviceId} AND m.is_validated AND m.deleted_at IS NULL)
@@ -359,22 +582,26 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
   const period = req.query.period || '24h';
   const hours = { '24h': 24, '7d': 168, '30d': 720 }[period];
   if (!hours) return res.status(400).json({ error: 'period_must_be_24h_7d_or_30d' });
+  // Ámbito en servidor: el usuario registrado solo ve las estaciones concedidas
+  // y las autorizadas para la demostración; nunca todas las privadas.
+  const scope = accessibleDeviceIds(req.subscriber);
+  const scopeCondition = scope ? sql`AND d.id IN ${scope}` : sql``;
   const devices = await sql`SELECT d.id, d.name, d.latitude, d.longitude, d.coverage_km, d.last_seen_at,
       d.owner, d.location_type, d.public_zone, d.aemet_municipality_code, d.aemet_station_id,
       d.aemet_warning_area, d.altitude, d.sensors, d.firmware_version, d.publish_permission,
       c.config, st.last_contact, st.last_valid_data, st.battery_mv, st.battery_level,
       st.firmware_version AS status_firmware_version, st.config_version, st.pending_samples, st.updated_at
-    FROM devices d JOIN subscriber_devices sd ON sd.device_id = d.id
+    FROM devices d
     LEFT JOIN device_configs c ON c.device_id = d.id
     LEFT JOIN device_status st ON st.device_id = d.id
-    WHERE sd.subscriber_id = ${req.subscriber.id} AND d.active = true ORDER BY d.name`;
+    WHERE d.active = true ${scopeCondition} ORDER BY d.name`;
   const deviceIds = devices.map((device) => device.id);
   const [latestRows, historyRows, summaryRows, forecastRows, nearbyCandidates, trendRows] = deviceIds.length
     ? await Promise.all([
       sql`SELECT DISTINCT ON (device_id) device_id, sequence, observed_at, received_at, time_quality,
           temperature_c, humidity_pct, pressure_pa, battery_mv, lux, source, flags, alert_level,
           is_validated, validation_flags, invalidated_reason
-        FROM measurements WHERE device_id = ANY(${deviceIds}) AND deleted_at IS NULL
+        FROM measurements WHERE device_id = ANY(${deviceIds}) AND is_validated AND deleted_at IS NULL
         ORDER BY device_id, observed_at DESC, received_at DESC`,
       // Reduce a maximum de 500 puntos por estación, conservando el periodo y sus extremos.
       sql`WITH ranked AS (
@@ -481,7 +708,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
     const forecasts = forecastsByDevice.get(device.id) ?? [];
 
     // Cobertura: cuántos datos faltan frente a lo esperado por el intervalo configurado.
-    const intervalSeconds = Number(config.interval_normal_s) || 900;
+    const intervalSeconds = Number(config.interval_normal_s) || 360;
     const expected = Math.max(1, Math.floor((hours * 3600) / intervalSeconds));
     const coveragePct = Math.min(100, Math.round((summary.validCount / expected) * 1000) / 10);
 
@@ -507,6 +734,10 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
       },
       status: statusPayload(device, config),
       latest: latest || null,
+      // Indicador CALCULADO a partir de temperatura y humedad del último dato
+      // válido; se etiqueta como tal en la interfaz.
+      dewPointC: latest && latest.temperatureC != null && latest.humidityPct != null
+        ? dewPointCelsius(latest.temperatureC, latest.humidityPct) : null,
       history,
       trendHistory: trendHistoryByDevice.get(device.id) ?? [],
       // El row llega camelizado por el transform de columna: el resumen se expone en snake_case.
@@ -523,17 +754,25 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
       weather: weatherByDevice.get(device.id),
     };
   });
+  // Los avisos tienen ámbito propio: no se heredan de la estación de la
+  // demostración, que solo da acceso a las mediciones.
+  const alertScope = alertableDeviceIds(req.subscriber);
   const alerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
-      a.value, a.source, a.observed_at, a.created_at, a.recipient, a.channel, a.delivery_status,
-      a.closed_at, a.acknowledged_at, a.rule_snapshot, a.auto_resolved
+      a.value, a.source, a.category, a.observed_at, a.created_at, a.recipient, a.channel, a.delivery_status,
+      a.closed_at, a.acknowledged_at, a.rule_id::text AS rule_id, a.rule_snapshot, a.auto_resolved
     FROM alerts a JOIN devices d ON d.id = a.device_id
-    JOIN subscriber_devices sd ON sd.device_id = d.id
-    WHERE sd.subscriber_id = ${req.subscriber.id}
+    WHERE ${alertScope ? sql`d.id IN ${alertScope}` : sql`TRUE`}
       ${req.subscriber.role === 'admin' ? sql`` : sql`AND ${NON_COMMUNICATION_ALERT}`}
     ORDER BY a.created_at DESC LIMIT 50`;
   // Cada aviso declara la antigüedad de la medida que lo originó y cuánto tardó
-  // en llegar: con lotes de 30 min, no es lo mismo un aviso de ahora que de hace media hora.
-  res.json({ period, devices: response, alerts: alerts.map((alert) => ({ ...alert, ...alertAge(alert) })) });
+  // en llegar: con lotes de 30 min, no es lo mismo un aviso de ahora que de hace
+  // media hora. `engine_verified` indica si el motor está comprobado aquí.
+  res.json({
+    period,
+    devices: response,
+    alerts: alerts.map((alert) => ({ ...alert, ...alertAge(alert) })),
+    engine_verified: alertEngineVerified(),
+  });
 });
 
 // Filtro común: rango de fechas + dispositivo, limitado siempre a las estaciones del suscriptor.
@@ -547,7 +786,7 @@ function measurementQuery(req) {
 
   const conditions = [];
   if (role !== 'admin') {
-    conditions.push(sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`);
+    conditions.push(sql`m.device_id IN ${accessibleDeviceIds(req.subscriber)}`);
   }
   if (deviceId) conditions.push(sql`m.device_id = ${deviceId}`);
   if (from) conditions.push(sql`m.observed_at >= ${from}`);
@@ -595,7 +834,7 @@ app.get('/api/v1/measurements/:id', requireSubscriber, async (req, res) => {
   if (!/^\d{1,18}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_id' });
   const scope = req.subscriber.role === 'admin'
     ? sql`TRUE`
-    : sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+    : sql`m.device_id IN ${accessibleDeviceIds(req.subscriber)}`;
   const rows = await sql`SELECT ${MEASUREMENT_COLUMNS}, m.raw_payload, s.email AS validated_by_email
     FROM measurements m JOIN devices d ON d.id = m.device_id
     LEFT JOIN subscribers s ON s.id = m.validated_by
@@ -616,7 +855,7 @@ app.patch('/api/v1/measurements/:id/validate', requireSubscriber, requireRole('o
 
   const scope = req.subscriber.role === 'admin'
     ? sql`TRUE`
-    : sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+    : sql`m.device_id IN ${accessibleDeviceIds(req.subscriber)}`;
   const rows = await sql`SELECT m.id::text AS id, m.device_id, m.is_validated, m.validation_flags, m.invalidated_reason,
       m.observed_at, m.sequence
     FROM measurements m WHERE m.id = ${req.params.id}::bigint AND ${scope}`;
@@ -670,7 +909,7 @@ app.delete('/api/v1/measurements/:id', requireSubscriber, requireRole('operator'
   if (!/^\d{1,18}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_id' });
   const scope = req.subscriber.role === 'admin'
     ? sql`TRUE`
-    : sql`m.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`;
+    : sql`m.device_id IN ${accessibleDeviceIds(req.subscriber)}`;
   const removed = await sql`UPDATE measurements m SET deleted_at = now(), deleted_by = ${req.subscriber.id}
     WHERE m.id = ${req.params.id}::bigint AND m.deleted_at IS NULL AND ${scope}
     RETURNING m.id::text AS id, m.device_id, m.sequence::text AS sequence, m.observed_at`;
@@ -692,88 +931,53 @@ app.use('/api/v1/public', publicRouter);
 app.use('/api/v1', accountRouter);
 
 // ---------------------------------------------------------------------------
-// Detectores de sistema (sin comunicación, batería baja)
+// Ejecución programada: detectores de sistema y cola de entrega
 // ---------------------------------------------------------------------------
-// En un proceso largo se evalúan con un temporizador. En Vercel el código solo
-// vive durante una petición, así que la pasada se dispara desde las peticiones
-// reales, con anti-reintentos para no repetirla en cada llamada. Sin ninguna de
-// las dos, una estación que deja de enviar nunca generaría aviso.
-const SYSTEM_EVAL_MS = Math.max(30, Number(process.env.SYSTEM_EVAL_INTERVAL_S || 60)) * 1000;
-let systemPass = null;
-let lastSystemPass = 0;
-
-async function runSystemPass() {
-  if (systemPass) return systemPass;
-  systemPass = evaluateSystemRules()
-    .then((outcomes) => {
-      lastSystemPass = Date.now();
-      if (outcomes.length) console.log(`detectores: ${outcomes.map((o) => `${o.deviceId}/${o.change}`).join(', ')}`);
-      return outcomes;
-    })
-    .catch((error) => { console.error('pasada de detectores:', error.message); return []; })
-    .finally(() => { systemPass = null; });
-  return systemPass;
-}
-
+// El mecanismo normal es independiente de las visitas al panel:
+//   · proceso largo      → temporizadores (`startScheduler`).
+//   · servidor sin cron  → `POST /api/v1/maintenance/scheduler` con `CRON_SECRET`.
+//   · respaldo           → `schedulerRequestTick`, montado al principio de la
+//                           aplicación y disponible para cualquier petición de la
+//                           API, no solo para el panel.
+// Antes las dos pasadas vivían en middlewares montados DESPUÉS de las rutas, así
+// que las peticiones que respondían (dashboard incluido) nunca los alcanzaban.
+// El orden está corregido, pero no se depende de él: ver `scheduler.js`.
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-if (process.env.SYSTEM_EVAL_DISABLED !== 'true') {
-  if (!isServerless) {
-    const systemTimer = setInterval(runSystemPass, SYSTEM_EVAL_MS);
-    systemTimer.unref();
-    const systemKick = setTimeout(runSystemPass, 5000);
-    systemKick.unref();
-  } else {
-    app.use((req, res, next) => {
-      // Solo con tráfico real del panel, y como mucho una vez por intervalo.
-      if (!req.path.startsWith('/api/v1/')) return next();
-      if (Date.now() - lastSystemPass < SYSTEM_EVAL_MS) return next();
-      runSystemPass().catch(() => {});
-      next();
-    });
-  }
+// Disparo para un cron externo (Vercel Cron o crontab). Autenticado con un
+// secreto compartido por cabecera; sin secreto configurado no se abre a nadie.
+const CRON_SECRET = process.env.CRON_SECRET || null;
+
+function sameSecret(provided, expected) {
+  const a = Buffer.from(String(provided || ''), 'utf8');
+  const b = Buffer.from(String(expected || ''), 'utf8');
+  if (a.length === 0 || a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
-// ---------------------------------------------------------------------------
-// Entrega de avisos y códigos (WhatsApp, email)
-// ---------------------------------------------------------------------------
-// La cola se procesa igual que los detectores: temporizador en proceso largo y
-// pasada ligada a peticiones reales en Vercel, con anti-reintentos por intervalo.
-const OUTBOX_EVAL_MS = Math.max(30, Number(process.env.OUTBOX_EVAL_INTERVAL_S || 60)) * 1000;
-let outboxPass = null;
-let lastOutboxPass = 0;
-
-async function runOutboxPass() {
-  if (outboxPass) return outboxPass;
-  outboxPass = dispatchOutbox()
-    .then((result) => {
-      lastOutboxPass = Date.now();
-      if (result.processed) console.log(`entrega: ${result.sent} enviados, ${result.failed} fallidos`);
-      return result;
-    })
-    .catch((error) => { console.error('pasada de entrega:', error.message); return { processed: 0, sent: 0, failed: 0 }; })
-    .finally(() => { outboxPass = null; });
-  return outboxPass;
+async function cronScheduler(req, res) {
+  if (!CRON_SECRET) return res.status(503).json({ error: 'cron_not_configured' });
+  const provided = (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.get('x-cron-secret');
+  if (!sameSecret(provided, CRON_SECRET)) return res.status(403).json({ error: 'forbidden' });
+  // Vercel Functions tienen maxDuration=30 s en este proyecto: una sola fila por
+  // invocación evita agotar el presupuesto en varios timeouts de proveedor.
+  const result = await runScheduledPasses({ force: true, outboxLimit: isServerless ? 1 : undefined });
+  res.json(result);
 }
 
-if (process.env.OUTBOX_DISPATCH_DISABLED !== 'true') {
-  if (!isServerless) {
-    const outboxTimer = setInterval(runOutboxPass, OUTBOX_EVAL_MS);
-    outboxTimer.unref();
-    const outboxKick = setTimeout(runOutboxPass, 8000);
-    outboxKick.unref();
-  } else {
-    app.use((req, res, next) => {
-      if (!req.path.startsWith('/api/v1/')) return next();
-      if (Date.now() - lastOutboxPass < OUTBOX_EVAL_MS) return next();
-      runOutboxPass().catch(() => {});
-      next();
-    });
-  }
+// Vercel Cron hace GET; cron externo también puede usar POST.
+app.get('/api/v1/maintenance/scheduler', cronScheduler);
+app.post('/api/v1/maintenance/scheduler', cronScheduler);
+
+if (!isServerless) {
+  const stopScheduler = startScheduler({ config: schedulerConfig() });
+  // El temporizador se detiene si el proceso se va a cerrar con orden.
+  process.once('SIGTERM', stopScheduler);
+  process.once('SIGINT', stopScheduler);
 }
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
-const siteUrl = (process.env.PUBLIC_SITE_URL || 'https://tecrural-microestacion.vercel.app').replace(/\/+$/, '');
+const siteUrl = siteOrigin(process.env.PUBLIC_SITE_URL);
 const renderPage = async (file) => (await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8'))
   .replaceAll('__SITE_URL__', siteUrl)
   .replaceAll('__SUPPORT_PHONE__', process.env.SUPPORT_PHONE || '')
@@ -782,21 +986,20 @@ const renderPage = async (file) => (await readFile(new URL(`../public/${file}`, 
 // SEO: robots y sitemap con el dominio real del despliegue.
 app.get('/robots.txt', (_req, res) => {
   res.type('text/plain').send(
-    `User-agent: *\nAllow: /\nDisallow: /panel\nDisallow: /admin\nDisallow: /cuenta\nDisallow: /api/\n\nSitemap: ${siteUrl}/sitemap.xml\n`);
+    `User-agent: *\nAllow: /\nDisallow: /panel\nDisallow: /estaciones\nDisallow: /avisos\nDisallow: /admin\nDisallow: /cuenta\nDisallow: /entrar\nDisallow: /api/\n\nSitemap: ${siteUrl}/sitemap.xml\n`);
 });
 
 app.get('/sitemap.xml', (_req, res) => {
-  const pages = ['/', '/como-funciona', '/zonas', '/solicitar-piloto', '/privacidad', '/aviso-legal', '/cookies', '/contacto'];
-  const urls = pages.map((path) => `  <url><loc>${siteUrl}${path}</loc><changefreq>weekly</changefreq></url>`).join('\n');
-  res.type('application/xml').send(
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`);
+  res.type('application/xml').send(sitemapXml(siteUrl));
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
+app.get('/index.html', async (_req, res) => res.type('html').send(publicMetadata(await renderPage('index.html'), '/', siteUrl)));
+app.get(['/privacidad.html', '/cookies.html', '/aviso-legal.html', '/contacto.html'], (req, res) => res.redirect(301, req.path.replace(/\.html$/, '')));
 app.use(express.static(publicDir, { index: false, maxAge: 0 }));
 
 // Rutas de la SPA (misma página) y páginas estáticas, con el dominio inyectado.
-const SPA_ROUTES = new Set(['/', '/panel', '/estaciones', '/avisos', '/admin', '/cuenta',
+const SPA_ROUTES = new Set([...Object.keys(PUBLIC_PAGES), '/panel', '/estaciones', '/avisos', '/admin', '/cuenta',
   '/como-funciona', '/zonas', '/alertas', '/solicitar-piloto', '/entrar']);
 const STATIC_PAGES = {
   '/privacidad': 'privacidad.html',
@@ -813,7 +1016,9 @@ app.get('*path', async (req, res, next) => {
       return;
     }
     if (SPA_ROUTES.has(path)) {
-      res.type('html').send(await renderPage('index.html'));
+      let html = publicMetadata(await renderPage('index.html'), path, siteUrl);
+      if (!PUBLIC_PAGES[path] || req.query.token) html = html.replace('content="index, follow"', 'content="noindex, nofollow"');
+      res.type('html').send(html);
       return;
     }
     res.status(404).type('html').send(await renderPage('404.html'));

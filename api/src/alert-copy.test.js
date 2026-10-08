@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   alertStatus, alertTitle, alertExplanation, alertMeta, alertCategory,
-  renderAlertsList, zoneByDevice,
+  renderAlertsList, zoneByDevice, caveatBlock,
 } from '../public/js/alert-copy.js';
+import { classifyNotice, RISK_NATURES } from '../public/js/notice-taxonomy.js';
 
 const alert = (over = {}) => ({
   id: '1', deviceId: 'a', deviceName: 'Huéscar', level: 2, message: 'Helada',
-  value: { value: 1.8 }, category: 'frost', source: 'station_measurement',
+  value: { value: 1.8 }, category: 'frost', source: 'station_measurement', ruleId: '7',
   observedAt: '2026-01-05T05:30:00Z', ageSeconds: 720, closedAt: null,
   ...over,
 });
@@ -37,13 +38,50 @@ test('heat explanation mentions shade, water and ventilation', () => {
   assert.match(text, /ventilación/i);
 });
 
-test('metadata includes station, zone, time, origin and level', () => {
+test('metadata includes category, station, zone, time, source, state, validity and level', () => {
   const meta = alertMeta(alert({ level: 1 }), { zone: 'Vega' }).join(' · ');
   assert.match(meta, /Estación: Huéscar/);
   assert.match(meta, /Zona: Vega/);
-  assert.match(meta, /Origen: Medición de tu estación/);
+  assert.match(meta, /Categoría: Umbral local/);
+  assert.match(meta, /Fuente: Medición de tu estación/);
+  assert.match(meta, /Tipo: Real/);
+  assert.match(meta, /Estado: Activa/);
+  assert.match(meta, /Vigencia: /);
   assert.match(meta, /Nivel: Prioritario/);
   assert.match(meta, /hace 12 min/);
+});
+
+test('the explanation cites the datum or forecast that originates the notice', () => {
+  // Nada de "detectamos que viene una helada": siempre la fuente y el valor.
+  const measured = alertExplanation(alert());
+  assert.match(measured, /Medida de 1,8 °C/);
+  assert.doesNotMatch(measured, /detectamos/i);
+  const forecast = alertExplanation(alert({ source: 'external_forecast', value: null }));
+  assert.match(forecast, /Previsión externa/);
+  const estimate = alertExplanation(alert({ source: 'estimate', value: { value: -1 } }));
+  assert.match(estimate, /Estimación propia calculada sobre la previsión: -1 °C/);
+});
+
+test('a notice can be classified as real, forecast, calculated or simulated', () => {
+  const cases = [
+    [{ source: 'station_measurement', ruleId: '1' }, 'real', 'Umbral local'],
+    [{ source: 'external_forecast' }, 'previsto', 'Riesgo por previsión externa'],
+    [{ source: 'estimate' }, 'calculado', 'Riesgo por previsión externa'],
+    [{ simulated: true }, 'simulado', 'Aviso agrícola simulado'],
+  ];
+  for (const [input, nature, label] of cases) {
+    const meta = classifyNotice(input);
+    assert.equal(meta.nature, nature, JSON.stringify(input));
+    assert.equal(meta.categoryLabel, label);
+    assert.ok(meta.sourceLabel && meta.stateLabel && meta.origin, 'fuente, estado y origen obligatorios');
+  }
+  const messages = [
+    classifyNotice({ kind: 'commercial' }),
+    classifyNotice({ kind: 'access' }),
+  ];
+  for (const meta of messages) assert.equal(meta.nature, 'comunicacion');
+  // Las cuatro que hay que distinguir de un vistazo están etiquetadas.
+  assert.deepEqual(RISK_NATURES, ['real', 'previsto', 'calculado', 'simulado']);
 });
 
 test('the category falls back to the rule snapshot', () => {

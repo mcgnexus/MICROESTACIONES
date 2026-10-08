@@ -35,10 +35,17 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 - `POST /api/measurements` — lote de hasta 32 lecturas, con `Authorization: Bearer <token>`. Valida los datos, persiste usando `(device_id, sequence, observed_at)` como clave idempotente y responde `{ "ack_through": n }`. La secuencia acepta el `uint32` persistente del firmware. Un registro sin ningún canal (sensor caído en ese ciclo) se confirma igualmente sin crear fila, para que no bloquee el lote.
 - `GET /api/config` — configuración vigente del dispositivo, autenticada con el mismo token.
 - `POST /api/v1/forecasts` — ingesta autenticada de hasta 240 puntos de previsión, con `FORECAST_INGEST_TOKEN` del lado servidor.
-- `POST /api/auth/login`, `POST /api/auth/logout` — sesión privada del panel; cookie `HttpOnly`, `SameSite=Strict` y `Secure` en producción.
-- `POST /api/v1/leads` — captación pública de fincas (CTA "Solicitar piloto"), sin sesión y sin crear cuenta. Campos: nombre, teléfono WhatsApp, email, actividad (`agricultura`, `ganaderia`, `mixta`, `otra`), zona, cultivo o ganado, interés (`heladas`, `calor`, `tormentas`, `viento`, `humedad`, `general`), notas y consentimiento. Limita por IP y teléfono y descarta bots con un campo trampa. Al guardar, encola un email de confirmación al visitante (si dejó email) y un aviso interno a los administradores activos y a `ADMIN_NOTICE_EMAIL` si está configurado. El visitante no necesita cuenta: se crea después, desde administración, cuando el piloto avanza.
-- `GET /api/v1/admin/leads`, `PATCH /api/v1/admin/leads/:id` — bandeja de solicitudes y su estado (`nuevo`, `contactado`, `interesado`, `piloto_activo`, `cliente`, `descartado`), solo administración.
+- `POST /api/auth/login`, `POST /api/auth/logout` — sesión privada del panel; cookie `HttpOnly`, `SameSite=Strict` y `Secure` en producción. Las cuentas creadas por enlace de acceso no tienen contraseña y no pueden iniciar sesión por esta vía.
+- `POST /api/auth/magic/request` — solicita un enlace de acceso de un solo uso por email. La respuesta es siempre genérica (no revela si el contacto existe). Limita por IP y email y respeta `MAGIC_RESEND_COOLDOWN_SECONDS` entre reenvíos.
+- `POST /api/auth/magic/verify` — consume el enlace de forma atómica, abre una sesión y devuelve `{ email, role, plan, next }`. El token caduca (`MAGIC_LINK_TTL_MINUTES`), se guarda solo como hash y se usa una sola vez. Crea cuentas nuevas como `viewer`/`free` sin estaciones; nunca concede rol `admin` ni `operator` (esas cuentas deben entrar con contraseña) y no habilita el envío de alertas. El destino `next` se limita a rutas internas conocidas.
+- `POST /api/v1/leads` — captación pública de fincas (CTA "Solicitar piloto"), sin sesión y sin crear cuenta. Campos: nombre, teléfono WhatsApp, email, actividad (`agricultura`, `ganaderia`, `mixta`, `otra`), zona, cultivo o ganado, interés (`heladas`, `calor`, `tormentas`, `viento`, `humedad`, `general`, `futura_instalacion`), notas y consentimiento. La publicidad es una casilla aparte (`commercial_consent`), opcional y sin marcar. `campaign` se sanea a un conjunto limitado de parámetros (utm_*/ref). Limita por IP y teléfono y descarta bots con un campo trampa. Al guardar, registra los consentimientos en el libro (`service` siempre; `commercial` solo si se autorizó) y encola un email de confirmación al visitante (si dejó email) y un aviso interno a los administradores activos y a `ADMIN_NOTICE_EMAIL` si está configurado. El visitante no necesita cuenta: se crea después, desde administración, cuando el piloto avanza, y esa conversión **no** concede publicidad.
+- `GET /api/v1/admin/leads`, `PATCH /api/v1/admin/leads/:id` — bandeja de solicitudes con estado (`nuevo`, `contactado`, `interesado`, `piloto_activo`, `cliente`, `descartado`), captación, publicidad por canal y fecha de próximo contacto (`next_contact_at`), solo administración.
+- `GET/PUT /api/v1/account/profile` — perfil opcional del suscriptor (municipio, actividad, cultivo o especie, interés). Rellenarlo no condiciona el acceso.
+- `GET/POST /api/v1/account/consents` — consentimiento publicitario por canal (finalidad `commercial`). El acceso y la demo funcionan sin autorizarlo. La revocación registra el hecho y cancela los mensajes comerciales pendientes de ese canal.
+- `POST /api/v1/admin/subscribers/:id/consents`, `POST /api/v1/admin/leads/:id/consents` — administración concede o revoca publicidad por canal.
 - `GET /api/v1/dashboard?period=24h|7d|30d` — última lectura, estado, series históricas, resúmenes, previsiones externas disponibles y estaciones cercanas para las estaciones vinculadas al suscriptor.
+- `GET /api/v1/stations/:id/demo-analysis?from=&to=` — análisis de solo lectura para el panel de demostración: mínimas, máximas y medias **con su hora**, resúmenes diarios, punto de rocío **calculado** (método y límites explícitos) y comparación histórica con AEMET. Si no hay 30 días de datos, indica el periodo realmente disponible.
+- **Ámbito de demostración (servidor)**: el rol `viewer` del registro público solo accede a las estaciones concedidas explícitamente y a las autorizadas para la demostración (`publish_permission = true`), nunca a todas las privadas. El ámbito se aplica en dashboard, mediciones, exportación CSV, detalle, avisos y estadísticas. El rol de demostración es de solo lectura: sin configuración, control remoto, reglas ni administración.
 - `GET /api/v1/alerts` — avisos asociados a las estaciones de la suscripción.
 - `GET /api/v1/contacts`, `PUT /api/v1/contacts/:channel` — destinatarios de aviso (`whatsapp`, `email`) con autorización y revocación por canal.
 - `POST /api/v1/contacts/:channel/verify`, `POST /api/v1/contacts/:channel/confirm` — verificación por código OTP. Solo se guarda el hash del código y caduca en 10 minutos; el envío real por WhatsApp/email llega con el despachador de la Fase 3. Para probar sin proveedor, activa `OTP_DEBUG=true` en desarrollo (la respuesta incluye `devCode`).
@@ -46,11 +53,22 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 - `GET /api/v1/admin/outbox`, `POST /api/v1/admin/outbox/dispatch` — cola de entrega y disparo manual del despacho (solo administración).
 - `GET /api/v1/public/stations`, `GET /api/v1/public/summary` — datos públicos agregados de las estaciones que han autorizado compartir información (nombre/zona, temperatura, humedad, última lectura). **Nunca** coordenadas exactas ni datos personales.
 - `POST /api/v1/alerts/:id/test` — envío de prueba de una alerta a la dirección indicada (solo administración).
-- `POST /api/v1/whatsapp/webhook` — procesa mensajes entrantes de WhatsApp; `BAJA`/`STOP` revoca el consentimiento del contacto (`opted_out_at`).
+- `POST /api/v1/whatsapp/webhook` — estados de entrega del proveedor (firma obligatoria) y mensajes entrantes; `BAJA`/`STOP` revoca el consentimiento del contacto (`opted_out_at`).
+- `POST /api/v1/email/webhook` — estados de entrega de Resend (esquema SVIX). Firma obligatoria.
+- `GET|POST /api/v1/maintenance/scheduler` — ejecuta las pasadas programadas (detectores + cola). Autenticado con `CRON_SECRET`; sin secreto responde `503`. Es el punto de entrada de Vercel Cron o de un cron externo.
 - `POST /api/v1/admin/maintenance/retention` — ejecuta la retención de datos (además de `npm run retention`).
+- `POST /api/v1/admin/maintenance/scheduler` — dispara las pasadas a mano (solo administración).
+- `GET /api/v1/admin/maintenance/limits` — frecuencia, límites HTTP, caducidades y estado del planificador; no expone secretos.
 - `GET /api/v1/public-config` — datos públicos de contacto (teléfono de soporte); no expone secretos.
 - `POST /api/v1/admin/leads/:id/activate` — activación guiada: crea el suscriptor desde una solicitud y devuelve la contraseña temporal una sola vez.
 - `POST /api/v1/admin/subscribers/:id/test-message` — envía un mensaje de prueba por el canal configurado del suscriptor.
+
+### Contrato de identidad, tiempo y estado de la estación
+
+- La identidad de muestra que usa hoy el firmware se conserva: `(device_id, sequence, ts)`, equivalente a la clave de almacenamiento `(device_id, sequence, observed_at)`. `sequence` es uint32 persistente en LittleFS; un reinicio normal conserva la secuencia y un reintento debe repetir exactamente el lote. Si se borra/formatea LittleFS, la secuencia puede reiniciar: el timestamp distingue la nueva muestra cuando es hora de epoch. Con `quality=0` el timestamp es uptime, así que un reinicio que borre LittleFS podría colisionar con una muestra anterior idéntica; el servidor la tratará como repetición idempotente, ya que el firmware actual no transmite un identificador de arranque. No se altera la identidad ni el ACK `ack_through` en esta fase.
+- Las muestras repetidas no se procesan dos veces. Las muestras desordenadas o históricas válidas se conservan como histórico, pero no abren ni resuelven alertas actuales. Solo una muestra con al menos un canal admisible, hora utilizable, timestamp reciente y posterior a la última muestra validada se evalúa por el motor.
+- Cada canal se valida por separado. Un valor imposible o un canal que el firmware marca inválido se pone a `NULL` en su columna, se conserva en `raw_payload` con sus flags/motivo y no llega al motor; los otros canales válidos de esa misma muestra siguen siendo utilizables. La hora sin referencia (`quality=0`) y timestamps más de 5 minutos en el futuro se guardan para diagnóstico, pero no cuentan como dato actual.
+- `last_contact` se actualiza al recibir una petición autenticada del equipo, también al consultar configuración. `last_valid_data` solo avanza con mediciones utilizables. La conexión se calcula con `sync_interval_s`: online hasta 1,5× el intervalo + 5 min, degradada hasta 3× + 5 min y desconectada después. La antigüedad de datos se calcula aparte desde `interval_normal_s`.
 
 ## SEO y confianza
 
@@ -62,13 +80,35 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 
 ## Sección de alertas comprensible
 
-La vista de alertas (`public/js/alert-copy.js`) muestra cada aviso como una tarjeta con **estación, zona, hora, origen, nivel, explicación y estado** (`activa`, `resuelta`, `descartada`), en lugar de códigos técnicos. Ejemplos: "Riesgo de helada — Vega · Temperatura prevista de 1,8 °C · Aviso preventivo…" o "Riesgo de estrés térmico · sombra, agua y ventilación del ganado".
+La vista de alertas (`public/js/alert-copy.js`) muestra cada aviso como una tarjeta con **estación, zona, hora, origen, nivel, explicación y estado** (`activa`, `resuelta`, `descartada`), en lugar de códigos técnicos. La explicación **cita siempre el dato observado o la previsión que origina el aviso**; nunca promete "detectamos que viene una helada".
+
+## Avisos de esta versión (Fase 8)
+
+`public/js/notice-taxonomy.js` (importado también por `src/notify.js` y `src/magic-link.js`) define los avisos que existen en esta versión y lo que cada uno declara: **categoría, fuente, fecha, estado y vigencia**, más la clase de afirmación, que es lo que la aceptación pide poder distinguir de un vistazo:
+
+| Tipo | Categoría | Naturaleza | Comportamiento inicial |
+| --- | --- | --- | --- |
+| Datos antiguos o estación caída | `status` | real | Aviso de estado en la interfaz |
+| Riesgo por previsión externa | `forecast` | previsto (o `calculado` si es estimación propia) | Información orientativa con proveedor nombrado (AEMET / Open-Meteo) |
+| Umbral local real | `threshold` | real | Solo se muestra cuando el motor está comprobado (`ALERT_ENGINE_VERIFIED`) |
+| Aviso agrícola simulado | `simulated` | simulado | Solo dentro de `#/demo-agricola`; nunca llega al panel |
+| Novedades comerciales | `commercial` | comunicación | Solo con autorización específica por canal |
+| Enlace o código de acceso | `access` | comunicación | Comunicación necesaria para autenticar |
+
+Reglas que se aplican en servidor y en interfaz:
+
+- **"Sin avisos" nunca significa "sin riesgo"** cuando faltan datos o cae un proveedor: `coverageCaveat(devices)` devuelve los huecos (estaciones sin conexión, sin mediciones recientes, sin sensor de temperatura o con la previsión caída) y el panel, el centro de avisos y la tarjeta "próximo riesgo" lo muestran en lugar del "todo tranquilo". Si todos los datos están completos, se puede afirmar.
+- **El motor solo se presenta como tal cuando está comprobado**: `ALERT_ENGINE_VERIFIED` (por defecto `true`, `.env.example`) se expone como `engine_verified` en `/api/v1/dashboard` y `/api/v1/alerts`. Con `false`, los avisos con `rule_id` (umbral local) no se muestran a los visitantes y se indica cuántos se han ocultado. Las marcas enviadas por el propio equipo (sin regla) no son umbral local y siguen visibles.
+- **WhatsApp manual no se anuncia como automático**: `/api/v1/public-config` publica `whatsappDelivery` y, mientras sea `manual`, la cuenta y el centro de avisos muestran `WHATSAPP_MANUAL_NOTE`. Ningún cuerpo de mensaje promete entrega automática.
+- **Mensajes técnicos separados de la información útil**: la tabla con regla, destinatario, canal, entrega y JSON crudo solo se ve con rol `admin`/`operator`; el rol de demostración ve tarjetas con los cinco datos. Los avisos de comunicación (sin conexión) siguen reservados a administración.
+- **La naturaleza también se muestra en las tarjetas del panel**: cada tarjeta de riesgo lleva una insignia `Real`, `Previsto` o `Calculado` (o ninguna si no hay dato con el que afirmar algo), con la definición en el tooltip.
+- **Ámbito de avisos distinto al de datos**: `alertableDeviceIds` (`src/auth.js`) limita los avisos a las estaciones **concedidas**. Registrarse en la demostración no suscribe a los avisos de la estación urbana (`publish_permission`), y `recipientsForDevice` solo mira `subscriber_devices`/`farm_devices`, así que tampoco se da de alta en la cola de envíos.
 
 ## Página pública y panel privado
 
 La portada `/` es una web pública que no pide sesión; el login solo aparece al entrar en una sección privada. Rutas:
 
-- Públicas: `/` (portada), `/alertas`, `/como-funciona`, `/zonas` (comparación de tres zonas de medición), `/solicitar-piloto`, y el acceso `#/entrar`. La portada incluye el formulario de solicitud repetido en tres puntos y botones "Solicitar piloto" en cada sección; los formularios se generan en `app.js` para no duplicar identificadores.
+- Públicas: `/` (portada), `/alertas`, `/como-funciona`, `/zonas` (comparación de tres zonas de medición), `/demo-agricola` (demostración agrícola **simulada**), `/solicitar-piloto`, y el acceso `#/entrar`. La portada incluye el formulario de solicitud repetido en tres puntos y botones "Solicitar piloto" en cada sección; los formularios se generan en `app.js` para no duplicar identificadores.
 - Privadas: `#/panel`, `#/estaciones`, `#/avisos`, `#/admin`, `#/cuenta`. Sin sesión se muestra el login; con sesión, la portada redirige al panel.
 
 La SPA usa rutas hash; las rutas "bonitas" (`/panel`, `/zonas`…) se traducen a su equivalente hash al cargar.
@@ -102,11 +142,61 @@ El panel tiene dos modos:
 
 Las tormentas se muestran siempre como *avisos oficiales y riesgo estimado*: los sensores actuales no permiten una detección local precisa.
 
+## Demostración agrícola simulada (Fase 7)
+
+La portada incluye `#/demo-agricola`, una demostración interactiva para trasladar la utilidad urbana a una futura instalación en finca. Todo el cálculo ocurre en el navegador (`public/js/farm-sim.js`):
+
+- **Tres escenarios con datos ilustrativos**, generados a partir de puntos de control fijos y **completamente independientes de las mediciones reales**: *Noche fría* (descenso nocturno y cruce de umbral), *Jornada calurosa* (temperatura elevada sostenida) y *Zonas de una finca* (hondonada frente a zona alta).
+- **Umbral ajustable por escenario**: al mover el deslizador se recalcula la hora a la que se generaría el aviso, los tramos por encima o por debajo del umbral y su duración.
+- **En la noche fría se distinguen las tres fuentes**: previsión externa (ilustrativa), descenso observado (simulado) y umbral local (el que elige el visitante), con su curva y su hora de cruce por separado.
+- **En ganadería solo se habla de condiciones ambientales y riesgo orientativo de estrés térmico** (`heatStressNote`): temperatura por encima del umbral durante un tiempo, con recomendaciones genéricas de sombra, agua y ventilación. Nunca diagnostica un golpe de calor ni presenta el umbral como recomendación agronómica universal.
+- **El emplazamiento se explica en el propio escenario**: una estación representa su punto de medida y comparar sectores distintos exige un sensor en cada uno.
+- **La interacción no toca el servidor**: el módulo no hace `fetch`, no llama a `/api/`, no inserta avisos ni modifica configuraciones (lo cubre una prueba que inspecciona el código fuente). Tras explorar, se revela el formulario público de captación precargado con el interés `futura_instalacion`, para completar municipio, cultivo o ganado.
+
+## Ejecución programada y latencia esperada (Fase 9)
+
+Los detectores de sistema (desconexión, batería) y la cola de entrega ya **no dependen de las visitas al panel**. Hay tres caminos, y el orden del middleware también se corrigió (el *respaldo* estaba montado **después** de las rutas, así que las peticiones que respondían —el dashboard incluido— nunca lo alcanzaban; ahora va al principio de la aplicación):
+
+| Camino | Cuándo | Configuración |
+| --- | --- | --- |
+| Temporizador (`startScheduler`) | proceso largo (`npm start`, Node) | `SYSTEM_EVAL_INTERVAL_S`, `OUTBOX_EVAL_INTERVAL_S`, `OUTBOX_BATCH_SIZE` |
+| `GET\|POST /api/v1/maintenance/scheduler` | servidor sin proceso propio (Vercel Cron) | `CRON_SECRET`; sin secreto responde `503` |
+| `schedulerRequestTick` (respaldo, **desactivado por defecto**) | cualquier petición a `/api/…` | `SCHEDULER_REQUEST_TICK=true` lo activa |
+
+- **Frecuencia**: el plan contratado no admite disparos continuos. En un proceso largo el intervalo mínimo es **30 s** (`SCHEDULER_MIN_INTERVAL_MS`); por defecto, **60 s**. Un valor menor se sube al mínimo, no se respeta.
+- **En Vercel no se promete nada más rápido que el plan**: el `vercel.json` trae un cron **diario** (`0 6 * * *`), que es el mínimo del plan Hobby y tiene una precisión de **±59 min**. Si el plan sube a Pro, se puede cambiar el cron a `*/1 * * * *` o similar. Mientras tanto, la latencia máxima real de un aviso es de ~25 h.
+- **Latencia esperada**:
+  - proceso largo → hasta un intervalo (60 s) más la duración de la pasada;
+  - Vercel Hobby (cron diario) → **hasta ~25 h**;
+  - normalizador de lote → en Vercel cada invocación entrega **una sola fila** (`maxDuration` = 30 s) para no agotar el Function; el resto sale en la siguiente ejecución;
+  - reintentos fallidos → **30 s, 60 s, 120 s… hasta 1 h**, con un tope de 5 intentos.
+- `GET /api/v1/admin/maintenance/limits` devuelve la configuración vigente (intervalos, límites HTTP, caducidades y estado del planificador) sin exponer secretos; `POST /api/v1/admin/maintenance/scheduler` permite dispararla a mano.
+
+**Si necesitas menos latencia sin subir de plan**: el endpoint está protegido por `CRON_SECRET` y funciona con cualquier cron externo. Programa una llamada cada 1–5 min (`Authorization: Bearer $CRON_SECRET`) desde GitHub Actions, cron-job.org o similar; el cron diario de Vercel queda solo como red de seguridad. No se recomienda activar `SCHEDULER_REQUEST_TICK` para esto: haría depender el motor del tráfico del panel, que es justo lo que la Fase 9 elimina.
+
 ## Entrega de avisos
 
-Cuando se abre un aviso, el servidor lo encola en `notification_outbox` para cada suscriptor con un contacto **verificado y autorizado** (WhatsApp preferido sobre email) de esa estación o de su finca. Una pasada periódica entrega la cola con espera creciente (30 s, 60 s… hasta 1 h) y deja el estado en `alerts.delivery_status`. En Vercel la pasada se engancha a peticiones reales, como los detectores de sistema; en proceso largo corre por temporizador.
+Cuando se abre un aviso, el servidor lo encola en `notification_outbox` para cada suscriptor con un contacto **verificado y autorizado** (WhatsApp preferido sobre email) de esa estación o de su finca. La entrega corre en la pasada programada de arriba, con espera creciente (30 s, 60 s… hasta 1 h) y deja el estado en `alerts.delivery_status`.
+
+Garantías de la cola (`src/notify.js`):
+
+- **Exclusión entre trabajadores**: el reclamo usa `FOR UPDATE SKIP LOCKED` y marca `claimed_by`/`claimed_at`. Dos procesos no cogen la misma fila. Un reclamo que supera `SENDING_TIMEOUT_MS` (10 min, por encima del peor caso de un lote local) **no se reenvía a ciegas**: se marca `failed` con motivo «aceptación del proveedor incierta», para que un webhook tardío o un operador lo resuelva sin duplicar.
+- **Reintentos limitados y caducidad**: máximo 5 intentos con backoff (30 s, 60 s…), y cada mensaje guarda `expires_at` (`ALERT_MESSAGE_TTL_MINUTES`, `VERIFICATION_TTL_MINUTES`, `COMMERCIAL_MESSAGE_TTL_MINUTES`). Un barrido previo al reclamo aparta lo caducado como `expired`; **no se envía**.
+- **Revisión antes de enviar**: la publicidad revalida el consentimiento, los avisos revalidan que el contacto siga autorizado, verificado y sin darse de baja, y los códigos revalidan que la verificación siga viva. Lo revocado pasa a `cancelled`.
+- **Una vez por destinatario**: el incidente se deduplica por episodio (`alerts.dedupe_key`) y cada destinatario recibe **una** fila de cola. Las marcas de alerta del firmware ya no crean un segundo incidente: los avisos locales solo salen del motor de reglas.
+- **Aceptado ≠ entregado**: `sent` es que el proveedor aceptó la llamada (2xx + id); `delivered` solo lo declara el proveedor por webhook. `alerts.delivery_status` sigue la misma regla.
 
 Elige el proveedor con `WHATSAPP_PROVIDER` (`manual`, `disabled`, `console`, `meta`, `twilio`) y `EMAIL_PROVIDER` (`disabled`, `console`, `resend`). **Sin proveedor no se simula la entrega**: el envío queda pendiente y acaba en `failed`, visible en administración. En desarrollo, `console` imprime el mensaje por el log del servidor.
+
+### Webhooks de entrega autenticados
+
+Los webhooks confirman la entrega y exigen la **firma del proveedor** sobre el cuerpo crudo (`req.rawBody`):
+
+- `POST /api/v1/whatsapp/webhook` — `X-Hub-Signature-256` con `WHATSAPP_APP_SECRET` (Meta) o `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN`. Sin ninguno de los dos, solo se acepta con `WHATSAPP_WEBHOOK_TOKEN`; sin nada configurado, `403`. Sigue atendiendo los mensajes entrantes (`BAJA`/`STOP`).
+- `POST /api/v1/email/webhook` — esquema SVIX de Resend (`svix-id`, `svix-timestamp`, `svix-signature`) con `RESEND_WEBHOOK_SECRET` y tolerancia de 5 minutos. Sin secreto, `503`.
+- Firma inválida → `401 bad_signature`; el cuerpo no procesado no cambia ningún estado.
+
+Toda llamada externa sale con tiempo máximo en `src/http-limits.js`: `HTTP_TIMEOUT_MS` = 8 s para recibir cabeceras y `HTTP_MAX_MS` = 15 s para la llamada completa (incluido el cuerpo). Un 429 se reintenta desde la cola; un 5xx o un tiempo agotado **no** se reenvía a ciegas (el proveedor pudo aceptar el mensaje), se marca `failed` con motivo de resultado incierto y lo resuelve el webhook o una persona.
 
 ### Modo piloto: WhatsApp manual, email automático
 
@@ -117,7 +207,22 @@ El **email** de confirmación y de aviso funciona de forma automática con `EMAI
 El mismo canal entrega el código de verificación de contactos. Para probar la verificación sin proveedor, activa `OTP_DEBUG=true` en desarrollo.
 - `GET /health` — comprobación de servicio y conexión a Neon.
 
+## Verificación y publicación
+
+Scripts de aceptación contra un entorno de prueba local (servidor propio en un puerto libre, datos con prefijo que se limpian al terminar, sin comunicaciones reales):
+
+```sh
+npm run acceptance           # primera fase: identidad, config y ámbito
+npm run acceptance:phase13   # 12 recorridos de la Fase 13
+```
+
+Antes de desplegar, consulta `docs/publicacion.md`: migración aditiva e idempotente, copia de seguridad con Neon/PITR y `pg_dump`, comprobaciones posteriores y reversión.
+
 El panel consulta Open-Meteo para condiciones actuales estimadas y previsiones por hora/día de temperatura, lluvia y viento; cachea las respuestas durante 30 minutos. Las condiciones estimadas nunca se presentan como mediciones de la estación. Además, admite previsión municipal, observaciones de una estación convencional y avisos CAP oficiales de AEMET. Para activarlos, configura `AEMET_API_KEY` como secreto del servidor y completa en la ficha de la estación los códigos municipales, indicativo observador y área de avisos AEMET. Los avisos oficiales se muestran separados de los riesgos orientativos calculados desde la previsión y de los avisos generados por sensores.
+
+La comparación de temperatura local–AEMET usa la observación convencional más próxima a la última medición local válida, únicamente si ambas marcas temporales difieren como máximo ±10 minutos. El valor se puede ajustar con `AEMET_COMPARISON_WINDOW_MINUTES` (1–60; por defecto 10). La diferencia se define como microestación menos AEMET, por lo que puede ser positiva o negativa. Fuera de esa ventana se muestran ambas lecturas y sus horas, sin diferencia directa. La temperatura local de portada/panel no se sustituye por la observación AEMET. Las fechas AEMET sin zona horaria se interpretan en `Europe/Madrid`; las que incluyen offset conservan el instante declarado.
+
+Los avisos usan el resultado CAP del área configurada, filtran vigencia (`effective`/`onset`/`expires`), cancelaciones y actualizaciones por `references`, y verifican geometrías CAP `polygon`/`circle` contra las coordenadas privadas de la estación cuando el mensaje las incluye. El área consultada se conserva y se muestra. Una respuesta válida sin avisos significa “sin avisos vigentes”; una respuesta fallida conserva la última respuesta utilizable y muestra su antigüedad como obsoleta, no como confirmación de ausencia.
 
 Los riesgos orientativos usan umbrales generales (helada, calor, lluvia y rachas) y no son alertas oficiales ni recomendaciones específicas de un cultivo o especie ganadera. Verifica los criterios locales antes de tomar decisiones agronómicas o veterinarias.
 
@@ -126,7 +231,7 @@ La lista de estaciones cercanas incluye únicamente estaciones activas que han p
 ## Seguridad y privacidad
 
 - **El navegador nunca ve secretos**: claves de Neon, tokens de WhatsApp, claves de AEMET, tokens de correo y credenciales de estación viven solo en el entorno del servidor. El frontend habla únicamente con esta API.
-- **Consentimiento explícito y revocable**: se guarda con fecha (`consent_at`, `opted_in_at`); se revoca desde la cuenta o respondiendo `BAJA`/`STOP` por WhatsApp (`opted_out_at`).
+- **Consentimiento explícito y revocable**: los avisos se guardan con fecha (`opted_in_at`) y se revocan desde la cuenta o respondiendo `BAJA`/`STOP` por WhatsApp (`opted_out_at`). La publicidad vive aparte, en `consent_records`, con finalidad, canal, fecha y versión del texto (`CONSENT_TEXT_VERSION`); el acceso no depende de ella y la revocación cancela los envíos comerciales pendientes. Antes de enviar un mensaje comercial se revalida el consentimiento.
 - **Ubicación**: las rutas públicas no exponen coordenadas exactas; solo zona, lecturas y última conexión.
 - **Datos personales**: teléfonos y emails solo se muestran a su dueño y a administración; los leads y la cola están restringidos a `admin`.
 - **Retención**: `npm run retention` (o el endpoint admin) elimina leads no convertidos más antiguos que `LEAD_RETENTION_DAYS` (730 por defecto) y envíos cerrados más antiguos que `OUTBOX_RETENTION_DAYS` (90). Las mediciones no se tocan.
@@ -139,4 +244,6 @@ La lista de estaciones cercanas incluye únicamente estaciones activas que han p
 - No expongas el servidor directamente en HTTP. Configura `TRUST_PROXY=true` solo detrás de un proxy inverso de confianza.
 - Crea usuarios mediante el comando de aprovisionamiento; no hay registro público.
 - Los intentos de inicio de sesión se limitan por IP y correo normalizado en PostgreSQL (ventana de 15 minutos); ejecuta `npm run migrate` antes de desplegar cambios de esquema.
+- El acceso sin contraseña usa enlaces de un solo uso: token aleatorio de 32 bytes, guardado solo como hash, caducidad de 15 minutos y consumo atómico. El email es único ignorando mayúsculas y espacios (`subscribers.email_normalized`); si al migrar hay duplicados normalizados, la migración falla y hay que resolverlos a mano. `npm run retention` limpia enlaces de acceso con más de un día.
+- `EMAIL_PROVIDER=console` solo imprime el enlace de acceso fuera de producción; en producción ese proveedor no se considera una entrega válida. `OTP_DEBUG` se ignora en producción (también con `VERCEL_ENV=production`).
 - Antes de producción, configura proveedor externo, política de retención y revisa los límites de tarifa/uso de Neon.

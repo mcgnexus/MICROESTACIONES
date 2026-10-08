@@ -4,6 +4,7 @@ import { renderStations, renderStationDetail } from './js/stations.js';
 import { renderAlertsCenter } from './js/alerts.js';
 import { renderAdmin } from './js/admin.js';
 import { renderAccount } from './js/account.js';
+import { initAnalyticsChoice, homeMetric, lockedMetric } from './js/analytics.js';
 import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, initLanding } from './js/landing.js';
 
 const landingView = $('#landing-view');
@@ -19,8 +20,38 @@ const iosInstallHint = $('#ios-install-hint');
 let deferredInstallPrompt = null;
 let viewTeardown = () => {};
 
+const connectionNotice = document.createElement('p');
+connectionNotice.className = 'connection-notice hidden';
+connectionNotice.setAttribute('role', 'status');
+connectionNotice.setAttribute('aria-live', 'polite');
+document.body.prepend(connectionNotice);
+let connectionFailed = false;
+function showConnection() {
+  const offline = !navigator.onLine || connectionFailed;
+  connectionNotice.classList.toggle('hidden', !offline);
+  const times = [...document.querySelectorAll('time[datetime], [data-observed-at]')]
+    .map((el) => new Date(el.getAttribute('datetime') || el.dataset.observedAt).getTime()).filter(Number.isFinite);
+  const last = times.length ? ` Último dato visible: ${new Date(Math.max(...times)).toLocaleString('es-ES')}.` : ' Consulta la hora indicada junto a cada lectura visible.';
+  connectionNotice.textContent = offline ? `Sin conexión con datos actualizados. Las lecturas visibles son anteriores y no representan el estado actual.${last}` : '';
+  document.body.classList.toggle('data-offline', offline);
+}
+window.addEventListener('offline', showConnection);
+window.addEventListener('online', () => { connectionFailed = false; showConnection(); route(); });
+window.addEventListener('api-unavailable', () => { connectionFailed = true; showConnection(); });
+showConnection();
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  const pwaError = () => {
+    const notice = document.createElement('p'); notice.className = 'error'; notice.setAttribute('role', 'alert');
+    notice.textContent = 'No se pudo preparar o actualizar la aplicación sin conexión. Recarga con conexión para reintentar.';
+    connectionNotice.after(notice);
+  };
+  navigator.serviceWorker.register('/service-worker.js').then((registration) => {
+    registration.addEventListener('updatefound', () => {
+      const worker = registration.installing;
+      worker?.addEventListener('statechange', () => { if (worker.state === 'redundant') pwaError(); });
+    });
+    registration.update().catch(pwaError);
+  }).catch(pwaError);
 }
 
 const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -106,12 +137,20 @@ function highlightNav(section) {
   });
 }
 
+// Herramienta que el visitante quería abrir antes de autenticarse; se conserva
+// para devolverlo ahí tras verificar el enlace (destino interno validado).
+let pendingReturn = 'panel';
+
 async function route() {
   const { section, id, tab } = currentRoute();
+  homeMetric(!session.me && section === 'landing');
+  lockedMetric(!session.me && ['panel', 'estaciones', 'avisos'].includes(section));
   if (!session.me) {
     // La portada y las páginas públicas no piden sesión. Solo el panel y el
     // resto de secciones privadas muestran el login.
-    if (section === 'entrar' || PRIVATE_SECTIONS.has(section)) { showLogin(); return; }
+    if (section === 'entrar' || PRIVATE_SECTIONS.has(section)) {
+      pendingReturn = section; showLogin(); return;
+    }
     showLanding();
     if (PUBLIC_SECTIONS.has(section)) scrollToPublicSection(section);
     return;
@@ -132,18 +171,68 @@ async function route() {
     else if (section === 'cuenta') cleanup = await renderAccount(viewRoot);
     else cleanup = await renderPanel(viewRoot);
     if (typeof cleanup === 'function') viewTeardown = cleanup;
+    if (session.me?.role === 'viewer' && ['panel', 'estaciones', 'avisos'].includes(section)) {
+      api('/api/v1/metrics/activation', { method: 'POST', referrerPolicy: 'no-referrer', body: JSON.stringify({ tool: section }) }).catch(() => console.warn('No se pudo registrar la activación agregada.'));
+    }
   } catch (error) {
     if (error.message === 'authentication_required' || error.message === 'session_expired') { showLogin(); return; }
     viewRoot.innerHTML = '<section class="panel"><p class="error" data-route-error></p></section>';
     $('[data-route-error]', viewRoot).textContent = `No se pudo cargar la vista: ${error.message}`;
   }
   if (section !== 'panel') window.scrollTo({ top: 0 });
+  showConnection();
 }
 
 setUnauthorizedHandler(() => showLogin());
 
+// Captación: se toma una vez de la URL de llegada y se envía tal cual; el
+// servidor la sanea a un conjunto pequeño de parámetros conocidos.
+const acquisition = (() => {
+  const params = new URLSearchParams(location.search);
+  const out = {};
+  for (const key of ['source', 'medium', 'campaign', 'content', 'term', 'ref']) {
+    const value = params.get(key) ?? params.get(`utm_${key}`);
+    if (value) out[key] = value;
+  }
+  return out;
+})();
+
+// Solicitud de enlace de acceso. La respuesta es genérica por diseño. La casilla
+// de novedades es opcional y no condiciona el acceso.
+$('#magic-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const data = new FormData(event.currentTarget);
+  const button = event.currentTarget.querySelector('button[type="submit"], button');
+  if (button.disabled) return;
+  button.disabled = true;
+  const statusEl = $('#magic-status');
+  const errorEl = $('#magic-error');
+  errorEl.textContent = '';
+  statusEl.textContent = 'Enviando…';
+  try {
+    await api('/api/auth/magic/request', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: data.get('email'),
+        next: pendingReturn,
+        commercial_consent: data.get('marketing') === 'on',
+        acquisition,
+      }),
+    });
+    statusEl.textContent = 'Si la dirección puede recibir acceso, te hemos enviado un enlace. Revisa tu correo y la carpeta de spam.';
+  } catch {
+    statusEl.textContent = '';
+    errorEl.textContent = 'No se pudo solicitar el acceso. Inténtalo de nuevo en unos minutos.';
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"], button');
+  if (button.disabled) return;
+  button.disabled = true;
   const form = new FormData(event.currentTarget);
   $('#login-error').textContent = '';
   try {
@@ -153,6 +242,8 @@ $('#login-form').addEventListener('submit', async (event) => {
     else await route();
   } catch {
     $('#login-error').textContent = 'No se pudo iniciar sesión. Revisa tus credenciales.';
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -169,13 +260,45 @@ window.addEventListener('hashchange', () => route());
 const PATH_ROUTES = {
   '/panel': '#/panel', '/estaciones': '#/estaciones', '/avisos': '#/avisos', '/cuenta': '#/cuenta',
   '/como-funciona': '#/como-funciona', '/zonas': '#/zonas', '/alertas': '#/alertas',
-  '/solicitar-piloto': '#/solicitar-piloto', '/entrar': '#/entrar',
+  '/tiempo-local': '#/tiempo-local', '/comparacion-aemet': '#/comparacion-aemet', '/evolucion': '#/evolucion',
+  '/fincas': '#/fincas', '/herramientas': '#/herramientas', '/preguntas': '#/preguntas',
+  '/demo-agricola': '#/demo-agricola', '/demo': '#/demo-agricola', '/demostracion': '#/demo-agricola',
+  '/acceso-gratuito': '#/solicitar-piloto', '/solicitar-piloto': '#/solicitar-piloto', '/entrar': '#/entrar',
 };
 const pathRoute = PATH_ROUTES[location.pathname.replace(/\/+$/, '') || '/'];
 if (pathRoute && !location.hash) history.replaceState(null, '', `/${pathRoute}`);
+
+// Verifica un enlace de acceso si llega en la URL. El token se quita de la barra
+// de direcciones antes de enviarlo y nunca se guarda en el cliente.
+async function handleMagicReturn() {
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token');
+  if (!token) return false;
+  history.replaceState(null, '', '/entrar');
+  try {
+    const result = await api('/api/auth/magic/verify', { method: 'POST', body: JSON.stringify({ token }) });
+    await loadMe();
+    const destination = typeof result?.next === 'string' && result.next.startsWith('#/') ? result.next : '#/panel';
+    location.hash = destination;
+    return true;
+  } catch (error) {
+    showLogin();
+    const el = $('#magic-error');
+    if (el) {
+      el.textContent = error.message === 'link_invalid_or_expired'
+        ? 'El enlace no es válido, ya se usó o ha caducado. Pide uno nuevo.'
+        : error.message === 'password_login_required'
+          ? 'Esta cuenta se gestiona con contraseña. Entra con ella.'
+          : 'No se pudo completar el acceso con el enlace.';
+    }
+    return false;
+  }
+}
 
 try { session.support = await api('/api/v1/public-config'); } catch { session.support = null; }
 renderSupport();
 initLanding();
 try { await loadMe(); } catch { session.me = null; }
+await handleMagicReturn();
 await route();
+await initAnalyticsChoice();

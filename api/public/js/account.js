@@ -1,4 +1,5 @@
 import { $, api, escapeText, dateText, roleLabel, planLabel, session } from './ui.js';
+import { WHATSAPP_MANUAL_NOTE } from './notice-taxonomy.js';
 
 const CHANNELS = [
   { key: 'whatsapp', label: 'WhatsApp', placeholder: '+34 600 000 000', addressLabel: 'Teléfono de WhatsApp' },
@@ -70,22 +71,65 @@ export async function renderAccount(root) {
     <div class="page-heading"><div><p class="eyebrow">CUENTA</p><h1>${escapeText(me.email)}</h1></div></div>
     <p class="error" data-error role="alert"></p>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SUSCRIPCIÓN</p><h2>Perfil y consentimiento</h2></div></div>
+      <div class="section-heading"><div><p class="eyebrow">SUSCRIPCIÓN</p><h2>Tu cuenta</h2></div></div>
       <dl class="detail-grid">
         <dt>Rol</dt><dd>${escapeText(roleLabel(me.role))}</dd>
         <dt>Plan</dt><dd>${escapeText(planLabel(me.plan))}</dd>
         <dt>Estaciones</dt><dd>${me.stations.map((station) => escapeText(station.name)).join(', ') || 'sin estaciones vinculadas'}</dd>
-        <dt>Consentimiento de comunicaciones</dt><dd>${me.communicationConsent
-          ? `<span class="badge badge-valid">concedido ${dateText(me.consentAt)}</span>`
-          : '<span class="badge badge-invalid">no concedido</span>'}</dd>
+        <dt>Correo verificado</dt><dd>${me.emailVerifiedAt
+          ? `<span class="badge badge-valid">verificado ${dateText(me.emailVerifiedAt)}</span>`
+          : '<span class="badge badge-warn">pendiente</span>'}</dd>
       </dl>
-      <label class="check"><input type="checkbox" data-consent ${me.communicationConsent ? 'checked' : ''}>
-        Autorizar el envío de avisos por los canales configurados</label>
-      <p class="hint">Sin consentimiento solo recibirás avisos dentro del panel. Puedes revocarlo en cualquier momento.</p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">PUBLICIDAD</p><h2>Novedades y ofertas (opcional)</h2></div></div>
+      <p class="hint">Usar la demo no depende de esto. Marca solo los canales por los que quieras recibir novedades y ofertas sobre microestaciones. Puedes retirarlos cuando quieras.</p>
+      <div class="consent-grid">
+        ${CHANNELS.map((channel) => {
+          const granted = Boolean(me.consents?.commercial?.[channel.key]?.granted);
+          const available = channel.key === 'email' || Boolean(byChannel.whatsapp);
+          return `<label class="check"><input type="checkbox" data-commercial="${channel.key}"
+            ${granted ? 'checked' : ''} ${available ? '' : 'disabled'}> ${channel.label}${available ? '' : ' (añade el canal arriba)'}</label>`;
+        }).join('')}
+      </div>
+      <p class="hint">Texto informativo vigente: <strong>${escapeText(me.consentTextVersion || '')}</strong>. Al revocar, se cancelan los envíos comerciales pendientes.</p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">PERFIL OPCIONAL</p><h2>Para afinar tus avisos</h2></div></div>
+      <p class="hint">Rellenarlo es opcional: nos ayuda a ajustar los avisos a tu actividad y zona.</p>
+      <form data-profile-form class="rule-form">
+        <label>Municipio<input name="municipality" maxlength="120" value="${escapeText(me.profile?.municipality || '')}"></label>
+        <label>Actividad
+          <select name="activity">
+            <option value="">Selecciona…</option>
+            <option value="agricultura" ${me.profile?.activity === 'agricultura' ? 'selected' : ''}>Agricultura</option>
+            <option value="ganaderia" ${me.profile?.activity === 'ganaderia' ? 'selected' : ''}>Ganadería</option>
+            <option value="mixta" ${me.profile?.activity === 'mixta' ? 'selected' : ''}>Agricultura y ganadería</option>
+            <option value="otra" ${me.profile?.activity === 'otra' ? 'selected' : ''}>Otra</option>
+          </select>
+        </label>
+        <label>Cultivo o especie<input name="crop_or_livestock" maxlength="120" value="${escapeText(me.profile?.cropOrLivestock || '')}"></label>
+        <label>Interés principal
+          <select name="interest">
+            <option value="">Selecciona…</option>
+            <option value="heladas" ${me.profile?.interest === 'heladas' ? 'selected' : ''}>Heladas</option>
+            <option value="calor" ${me.profile?.interest === 'calor' ? 'selected' : ''}>Golpes de calor</option>
+            <option value="tormentas" ${me.profile?.interest === 'tormentas' ? 'selected' : ''}>Tormentas</option>
+            <option value="viento" ${me.profile?.interest === 'viento' ? 'selected' : ''}>Viento</option>
+            <option value="humedad" ${me.profile?.interest === 'humedad' ? 'selected' : ''}>Humedad</option>
+            <option value="general" ${me.profile?.interest === 'general' ? 'selected' : ''}>Información general</option>
+            <option value="futura_instalacion" ${me.profile?.interest === 'futura_instalacion' ? 'selected' : ''}>Futura instalación</option>
+          </select>
+        </label>
+        <button type="submit">Guardar perfil</button>
+      </form>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">DESTINATARIOS</p><h2>Canales de aviso</h2></div></div>
       <p class="hint">Añade tu WhatsApp o correo, autoriza el envío y verifica la dirección. Las alertas solo salen a contactos verificados y autorizados.</p>
+      ${session.support?.whatsappDelivery === 'manual'
+        ? `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`
+        : ''}
       ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key])).join('')}
     </section>
     <section class="panel">
@@ -110,7 +154,7 @@ export async function renderAccount(root) {
         <label>Cultivo o ganado<input name="crop" maxlength="160" value="${escapeText(prefs.crop || '')}"></label>
         <label>Umbral propio de helada (°C)<input type="number" step="0.5" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
         <label>Umbral propio de calor (°C)<input type="number" step="0.5" name="heat_c" value="${prefs.customThresholds?.heat_c ?? ''}"></label>
-        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias. Los umbrales propios quedan guardados como referencia para afinar tus avisos.</p>
+        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias. Los umbrales propios son orientativos: <strong>todavía no cambian las reglas que disparan los avisos</strong>; se guardan como referencia para afinarlos más adelante.</p>
         <button type="submit" class="span-all">Guardar preferencias</button>
       </form>
     </section>
@@ -135,15 +179,35 @@ export async function renderAccount(root) {
   const error = (message) => { $('[data-error]', root).textContent = message; };
   const refresh = async () => { session.me = await api('/api/v1/me'); await renderAccount(root); };
 
-  $('[data-consent]', root).addEventListener('change', async (event) => {
-    const checked = event.target.checked;
+  root.querySelectorAll('[data-commercial]').forEach((input) => {
+    input.addEventListener('change', async (event) => {
+      const channel = event.target.dataset.commercial;
+      const action = event.target.checked ? 'granted' : 'revoked';
+      try {
+        await api('/api/v1/account/consents', { method: 'POST', body: JSON.stringify({ purpose: 'commercial', channel, action }) });
+      } catch (err) {
+        event.target.checked = !event.target.checked;
+        error(err.message === 'channel_not_available'
+          ? 'Añade ese canal en «Canales de aviso» antes de autorizar publicidad por él.'
+          : `No se pudo guardar el consentimiento: ${err.message}`);
+      }
+    });
+  });
+
+  $('[data-profile-form]', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    error('');
     try {
-      await api('/api/v1/me', { method: 'PATCH', body: JSON.stringify({ communication_consent: checked }) });
-      session.me.communicationConsent = checked;
-      session.me.consentAt = checked ? new Date().toISOString() : null;
+      await api('/api/v1/account/profile', { method: 'PUT', body: JSON.stringify({
+        municipality: data.get('municipality') || null,
+        activity: data.get('activity') || null,
+        crop_or_livestock: data.get('crop_or_livestock') || null,
+        interest: data.get('interest') || null,
+      }) });
+      await refresh();
     } catch (err) {
-      event.target.checked = !checked;
-      error(`No se pudo guardar el consentimiento: ${err.message}`);
+      error(`No se pudo guardar el perfil: ${err.message}`);
     }
   });
 

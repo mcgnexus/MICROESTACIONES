@@ -11,7 +11,8 @@
     "create-user": "node src/create-user.js",
     "provision-device": "node src/provision-device.js",
     "test": "node --test",
-    "acceptance": "node acceptance.mjs"
+    "acceptance": "node acceptance.mjs",
+    "acceptance:phase13": "node acceptance-phase13.mjs"
   },
   "engines": { "node": ">=20" },
   "dependencies": {

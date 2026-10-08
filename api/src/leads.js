@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { sha256 } from './security.js';
+import { normalizeAcquisition } from './consent.js';
 
 export const ACTIVITIES = ['agricultura', 'ganaderia', 'mixta', 'otra'];
-export const INTERESTS = ['heladas', 'calor', 'tormentas', 'viento', 'humedad', 'general'];
+export const INTERESTS = ['heladas', 'calor', 'tormentas', 'viento', 'humedad', 'general', 'futura_instalacion'];
 export const LEAD_STATUSES = ['nuevo', 'contactado', 'interesado', 'piloto_activo', 'cliente', 'descartado'];
 
 // El teléfono se guarda normalizado (solo dígitos, prefijo internacional opcional)
@@ -15,8 +16,19 @@ const phoneSchema = z.string().trim().max(30)
   .transform(normalizePhone)
   .refine((value) => /^\+?\d{7,15}$/.test(value));
 
+const campaignSchema = z.object({
+  source: z.string().max(80).optional(),
+  medium: z.string().max(80).optional(),
+  campaign: z.string().max(80).optional(),
+  content: z.string().max(80).optional(),
+  term: z.string().max(80).optional(),
+  ref: z.string().max(80).optional(),
+}).strict();
+
 // Contrato del formulario público. `consent` debe ser literalmente true: sin permiso
-// explícito no se guarda la solicitud. `website` es un campo trampa invisible.
+// explícito no se guarda la solicitud. La publicidad es una casilla aparte y sin
+// marcar por defecto: `commercial_consent` es opcional e independiente del acceso.
+// `website` es un campo trampa invisible.
 export const leadSchema = z.object({
   name: z.string().trim().min(2).max(120),
   phone: phoneSchema,
@@ -27,6 +39,8 @@ export const leadSchema = z.object({
   interest: z.enum(INTERESTS).optional(),
   notes: z.string().trim().max(1000).optional(),
   consent: z.literal(true),
+  commercial_consent: z.boolean().optional(),
+  campaign: campaignSchema.optional(),
   website: z.string().max(200).optional(),
 }).strict();
 
@@ -41,6 +55,8 @@ export function leadRateLimitKeys(ip, phone) {
 }
 
 // Campos que se persisten, sin el campo trampa ni el consentimiento derivado.
+// La captación se sanea aquí (parámetros conocidos y con formato seguro): a la
+// base nunca llega un utm_* crudo ni desconocido.
 export function leadColumns(lead, source = 'web') {
   return {
     name: lead.name,
@@ -52,5 +68,18 @@ export function leadColumns(lead, source = 'web') {
     interest: lead.interest ?? null,
     notes: lead.notes ?? null,
     source,
+    campaign: normalizeAcquisition(lead.campaign),
   };
+}
+
+// Canales sobre los que el visitante quiere recibir novedades y ofertas. La
+// publicidad es opcional: sin la casilla marcada no hay ningún canal.
+export function commercialConsentChannels(lead) {
+  if (!lead?.commercial_consent) return [];
+  return lead.email ? ['whatsapp', 'email'] : ['whatsapp'];
+}
+
+// Canales por los que se autorizó a atender la solicitud (finalidad de servicio).
+export function serviceConsentChannels(lead) {
+  return lead.email ? ['whatsapp', 'email'] : ['whatsapp'];
 }

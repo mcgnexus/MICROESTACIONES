@@ -34,7 +34,9 @@ const cleanIncoming = (config) => Object.fromEntries(
   Object.entries(config).filter(([, value]) => value !== null),
 );
 
-router.get('/:id/config', requireSubscriber, requireStationAccess, async (req, res) => {
+// La configuración es una herramienta de operación: queda fuera del rol de
+// demostración (viewer).
+router.get('/:id/config', requireSubscriber, requireRole('operator'), requireStationAccess, async (req, res) => {
   const [device] = await sql`SELECT d.id, d.name, d.firmware_version, s.firmware_version AS status_firmware,
       s.config_version, s.last_contact
     FROM devices d LEFT JOIN device_status s ON s.device_id = d.id

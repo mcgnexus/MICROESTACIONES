@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   leadSchema, isHoneypot, leadRateLimitKeys, leadColumns, normalizePhone,
+  commercialConsentChannels, serviceConsentChannels,
   ACTIVITIES, INTERESTS, LEAD_STATUSES,
 } from './leads.js';
 
@@ -37,8 +38,20 @@ test('lead contract validates email, activity and interest options', () => {
 
 test('the catalogues match the brief', () => {
   assert.deepEqual(ACTIVITIES, ['agricultura', 'ganaderia', 'mixta', 'otra']);
-  assert.deepEqual(INTERESTS, ['heladas', 'calor', 'tormentas', 'viento', 'humedad', 'general']);
+  assert.deepEqual(INTERESTS,
+    ['heladas', 'calor', 'tormentas', 'viento', 'humedad', 'general', 'futura_instalacion']);
   assert.deepEqual(LEAD_STATUSES, ['nuevo', 'contactado', 'interesado', 'piloto_activo', 'cliente', 'descartado']);
+});
+
+test('a lead can express interest in a future installation', () => {
+  const parsed = leadSchema.parse({ ...base, interest: 'futura_instalacion', zone: 'Huéscar', crop_or_livestock: 'Olivar' });
+  assert.equal(parsed.interest, 'futura_instalacion');
+  const columns = leadColumns(parsed);
+  assert.equal(columns.interest, 'futura_instalacion');
+  assert.equal(columns.zone, 'Huéscar');
+  assert.equal(columns.crop_or_livestock, 'Olivar');
+  // Seguirá siendo una solicitud de servicio: la casilla comercial sigue aparte.
+  assert.equal(columns.commercial_consent, undefined);
 });
 
 test('honeypot submissions are detected without being stored', () => {
@@ -53,6 +66,24 @@ test('lead rate limit keys hash IP and phone without keeping personal data', () 
   assert.ok(keys.every((key) => /^[a-f0-9]{64}$/.test(key)));
   assert.deepEqual(keys, leadRateLimitKeys('192.0.2.15', '+34600123456'));
   assert.notDeepEqual(keys, leadRateLimitKeys('192.0.2.16', '+34600123456'));
+});
+
+test('advertising is a separate, unchecked-by-default option', () => {
+  const without = leadSchema.parse({ ...base });
+  assert.equal(without.commercial_consent, undefined);
+  assert.deepEqual(commercialConsentChannels(without), []);
+  const withEmail = leadSchema.parse({ ...base, email: 'finca@example.test', commercial_consent: true });
+  assert.deepEqual(commercialConsentChannels(withEmail), ['whatsapp', 'email']);
+  assert.deepEqual(serviceConsentChannels(withEmail), ['whatsapp', 'email']);
+  const onlyPhone = leadSchema.parse({ ...base, commercial_consent: true });
+  assert.deepEqual(commercialConsentChannels(onlyPhone), ['whatsapp']);
+});
+
+test('campaign parameters are validated and sanitized before storage', () => {
+  assert.equal(leadSchema.safeParse({ ...base, campaign: { other: 'x' } }).success, false);
+  const parsed = leadSchema.parse({ ...base, campaign: { source: 'Google Ads', medium: 'cpc' } });
+  assert.deepEqual(leadColumns(parsed).campaign, { source: 'googleads', medium: 'cpc' });
+  assert.deepEqual(leadColumns(leadSchema.parse({ ...base })).campaign, {});
 });
 
 test('lead columns keep the farm data, default the activity, and drop the honeypot', () => {

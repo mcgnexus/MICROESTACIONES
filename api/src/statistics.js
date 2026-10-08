@@ -5,6 +5,7 @@
 
 import { sql } from './db.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
+import { aemetPairWindowMs } from './weather.js';
 
 // La clave es la columna en la base de datos; `column` es como la devuelve el
 // cliente (camelCase) y `key` es como se expone en el informe.
@@ -37,11 +38,12 @@ const round = (value, digits) => (value == null ? null : Number(Number(value).to
 // Descripción de una serie temporal validada.
 export function describeSeries(points, { digits = 2 } = {}) {
   const usable = (points || [])
+    .filter((point) => point.value != null && point.value !== '')
     .map((point) => ({ t: new Date(point.at).getTime(), v: Number(point.value) }))
     .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
     .sort((a, b) => a.t - b.t);
   if (!usable.length) {
-    return { count: 0, min: null, max: null, avg: null, stddev: null, p10: null, p50: null, p90: null, trend: null };
+    return { count: 0, min: null, max: null, avg: null, stddev: null, p10: null, p50: null, p90: null, minAt: null, maxAt: null, trend: null };
   }
   const values = usable.map((point) => point.v);
   const sum = values.reduce((total, value) => total + value, 0);
@@ -50,6 +52,13 @@ export function describeSeries(points, { digits = 2 } = {}) {
   const sorted = [...values].sort((a, b) => a - b);
   const min = sorted[0];
   const max = sorted.at(-1);
+  // Hora de la mínima y la máxima: "cuándo", no solo "cuánto".
+  let minPoint = usable[0];
+  let maxPoint = usable[0];
+  for (const point of usable) {
+    if (point.v < minPoint.v) minPoint = point;
+    if (point.v > maxPoint.v) maxPoint = point;
+  }
 
   return {
     count: values.length,
@@ -60,7 +69,110 @@ export function describeSeries(points, { digits = 2 } = {}) {
     p10: round(quantile(sorted, 0.1), digits),
     p50: round(quantile(sorted, 0.5), digits),
     p90: round(quantile(sorted, 0.9), digits),
+    minAt: new Date(minPoint.t).toISOString(),
+    maxAt: new Date(maxPoint.t).toISOString(),
     trend: trendOf(points, { digits }),
+  };
+}
+
+// ---- Punto de rocío (indicador CALCULADO) ----------------------------------
+// No hay sensor de punto de rocío: se estima con la fórmula de Magnus a partir
+// de temperatura y humedad relativa del mismo registro. Se etiqueta como
+// calculado y se declaran sus límites para no confundirlo con una medida.
+export const DEW_POINT_METHOD = 'Fórmula de Magnus (a = 17,62; b = 243,12 °C) sobre temperatura y humedad relativa medidas en el mismo instante.';
+export const DEW_POINT_LIMITATIONS = [
+  'Es un valor calculado, no una lectura directa de ningún sensor.',
+  'Necesita temperatura y humedad del mismo registro; si falta una, no se calcula.',
+  'Pierde precisión en humedades muy altas (cerca de saturación) y en cambios bruscos.',
+];
+
+export function dewPointCelsius(temperatureC, humidityPct) {
+  if (temperatureC == null || temperatureC === '' || humidityPct == null || humidityPct === '') return null;
+  const temperature = Number(temperatureC);
+  const humidity = Number(humidityPct);
+  if (!Number.isFinite(temperature) || !Number.isFinite(humidity) || humidity <= 0 || humidity > 100) return null;
+  const a = 17.62;
+  const b = 243.12;
+  const gamma = (a * temperature) / (b + temperature) + Math.log(humidity / 100);
+  const dew = (b * gamma) / (a - gamma);
+  return Number.isFinite(dew) ? round(dew, 1) : null;
+}
+
+// ---- Resúmenes diarios -----------------------------------------------------
+const MADRID_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+export const madridDate = (value) => (value ? MADRID_DATE.format(new Date(value)) : null);
+
+// Agrupa una serie por día natural de Madrid y resume cada día. Sin datos de un
+// día, ese día no aparece: la ausencia es un hueco, no un valor.
+export function dailySummaries(points, { digits = 1 } = {}) {
+  const days = new Map();
+  for (const point of points || []) {
+    if (point.value == null || point.value === '') continue;
+    const time = new Date(point.at).getTime();
+    const value = Number(point.value);
+    if (!Number.isFinite(time) || !Number.isFinite(value)) continue;
+    const key = madridDate(point.at);
+    const day = days.get(key) ?? { date: key, values: [], minAt: null, maxAt: null, min: null, max: null };
+    day.values.push(value);
+    if (day.min == null || value < day.min) { day.min = value; day.minAt = new Date(time).toISOString(); }
+    if (day.max == null || value > day.max) { day.max = value; day.maxAt = new Date(time).toISOString(); }
+    days.set(key, day);
+  }
+  return [...days.values()].map((day) => ({
+    date: day.date,
+    count: day.values.length,
+    min: round(day.min, digits),
+    max: round(day.max, digits),
+    avg: round(day.values.reduce((total, value) => total + value, 0) / day.values.length, digits),
+    minAt: day.minAt,
+    maxAt: day.maxAt,
+  })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ---- Comparación temporal con AEMET ---------------------------------------
+// Empareja cada punto local con la observación AEMET más cercana dentro de la
+// ventana. Diferencia = microestación − AEMET. No empareja si excede la ventana.
+export function pairTemperatureSeries(localPoints, externalPoints, windowMs) {
+  const external = (externalPoints || [])
+    .filter((point) => point.temperatureC != null && point.temperatureC !== '' && point.observedAt
+      && Number.isFinite(Number(point.temperatureC)))
+    .map((point) => ({ t: new Date(point.observedAt).getTime(), value: Number(point.temperatureC) }))
+    .filter((point) => Number.isFinite(point.t));
+  const window = Number(windowMs) || 0;
+  const pairs = [];
+  for (const local of localPoints || []) {
+    if (local.value == null || local.value === '') continue;
+    const time = new Date(local.at).getTime();
+    const value = Number(local.value);
+    if (!Number.isFinite(time) || !Number.isFinite(value)) continue;
+    let best = null;
+    let bestGap = Infinity;
+    for (const candidate of external) {
+      const gap = Math.abs(candidate.t - time);
+      if (gap < bestGap) { bestGap = gap; best = candidate; }
+    }
+    if (!best || bestGap > window) continue;
+    pairs.push({
+      at: local.at,
+      local: round(value, 1),
+      aemet: round(best.value, 1),
+      differenceC: round(value - best.value, 1),
+      offsetSeconds: Math.round((time - best.t) / 1000),
+    });
+  }
+  const differences = pairs.map((pair) => pair.differenceC);
+  return {
+    matched: pairs.length,
+    windowMinutes: Math.max(1, Math.round(window / 60000)),
+    differenceDefinition: 'temperatura_microestacion_menos_AEMET',
+    differences: differences.length ? {
+      min: Math.min(...differences),
+      max: Math.max(...differences),
+      avg: round(differences.reduce((total, value) => total + value, 0) / differences.length, 2),
+    } : null,
+    pairs: pairs.slice(-200),
   };
 }
 
@@ -226,6 +338,107 @@ export async function statisticsFor(deviceId, { from, to, includeCommunicationAl
       'Solo se usan mediciones validadas y no borradas.',
       'La tendencia es una pendiente por hora; no implica causalidad.',
       'Estos sensores no miden lluvia, viento ni estado del cultivo: no se deducen de ellos.',
+    ],
+  };
+}
+
+// ---- Análisis para el panel de demostración --------------------------------
+// Reúne, con los datos validados del periodo, todo lo que el panel gratuito
+// ampliado necesita: mín/máx/medias con su hora, resúmenes diarios, punto de
+// rocío calculado y comparación histórica con AEMET. Solo lectura.
+export async function demoAnalysisFor(deviceId, { from, to }) {
+  const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${deviceId}`;
+  const config = configRow?.config ?? {};
+  const rows = await sql`SELECT observed_at, temperature_c, humidity_pct, pressure_pa
+    FROM measurements
+    WHERE device_id = ${deviceId} AND is_validated AND deleted_at IS NULL
+      AND observed_at >= ${from} AND observed_at < ${to}
+    ORDER BY observed_at ASC`;
+  const [counts] = await sql`SELECT count(*)::integer AS received,
+      count(*) FILTER (WHERE is_validated)::integer AS valid,
+      count(*) FILTER (WHERE NOT is_validated)::integer AS invalid
+    FROM measurements
+    WHERE device_id = ${deviceId} AND deleted_at IS NULL
+      AND observed_at >= ${from} AND observed_at < ${to}`;
+  const [availability] = await sql`SELECT min(observed_at) AS first, max(observed_at) AS last
+    FROM measurements WHERE device_id = ${deviceId} AND is_validated AND deleted_at IS NULL`;
+  const aemetRows = await sql`SELECT observed_at, temperature_c, station_id
+    FROM aemet_observations
+    WHERE device_id = ${deviceId} AND observed_at >= ${from} AND observed_at < ${to}
+    ORDER BY observed_at ASC`;
+
+  const pointSeries = (column) => rows
+    .filter((row) => row[column] != null)
+    .map((row) => ({ at: row.observedAt, value: row[column] }));
+
+  const temperaturePoints = pointSeries('temperatureC');
+  const humidityPoints = pointSeries('humidityPct');
+  const pressurePoints = pointSeries('pressurePa');
+  const metrics = {
+    temperature_c: { ...describeSeries(temperaturePoints, { digits: 1 }), label: 'Temperatura', unit: '°C' },
+    humidity_pct: { ...describeSeries(humidityPoints, { digits: 1 }), label: 'Humedad', unit: '%' },
+    pressure_pa: { ...describeSeries(pressurePoints, { digits: 0 }), label: 'Presión', unit: 'Pa' },
+  };
+
+  const dewPoints = rows
+    .filter((row) => row.temperatureC != null && row.humidityPct != null)
+    .map((row) => ({ at: row.observedAt, value: dewPointCelsius(row.temperatureC, row.humidityPct) }))
+    .filter((point) => point.value != null);
+
+  const now = to;
+  const hours = Math.max(1, Math.round((new Date(to) - new Date(from)) / 3600000));
+  const firstAvailable = availability?.first ? new Date(availability.first) : null;
+  const complete = Boolean(firstAvailable && firstAvailable <= new Date(from));
+  const availableHours = firstAvailable
+    ? Math.max(1, Math.round((now - firstAvailable) / 3600000))
+    : 0;
+
+  return {
+    deviceId,
+    from: new Date(from).toISOString(),
+    to: new Date(to).toISOString(),
+    hours,
+    samples: rows.length,
+    period: {
+      requestedHours: hours,
+      availableFrom: firstAvailable?.toISOString() ?? null,
+      availableHours,
+      complete,
+      note: complete
+        ? 'El periodo solicitado está cubierto por datos de la estación.'
+        : firstAvailable
+          ? `Solo hay datos desde ${firstAvailable.toISOString()}; se muestra el periodo disponible (${availableHours} h).`
+          : 'No hay mediciones válidas para esta estación en el periodo solicitado.',
+    },
+    coverage: coverageReport({
+      received: counts.received, valid: counts.valid, invalid: counts.invalid,
+      intervalSeconds: config.interval_normal_s, from, to,
+    }),
+    metrics,
+    weekly: {
+      dailyTemperature: dailySummaries(temperaturePoints),
+      dailyHumidity: dailySummaries(humidityPoints),
+    },
+    dewPoint: {
+      calculated: true,
+      value: dewPoints.length ? dewPoints.at(-1).value : null,
+      min: dewPoints.length ? Math.min(...dewPoints.map((point) => point.value)) : null,
+      max: dewPoints.length ? Math.max(...dewPoints.map((point) => point.value)) : null,
+      count: dewPoints.length,
+      method: DEW_POINT_METHOD,
+      limitations: DEW_POINT_LIMITATIONS,
+    },
+    aemet: {
+      provider: 'AEMET',
+      stationId: aemetRows.at(-1)?.stationId ?? null,
+      observations: aemetRows.length,
+      lastObservedAt: aemetRows.at(-1)?.observedAt ?? null,
+      comparison: pairTemperatureSeries(temperaturePoints, aemetRows, aemetPairWindowMs()),
+    },
+    limits: [
+      'Solo se usan mediciones validadas y no borradas.',
+      'El punto de rocío y las diferencias con AEMET son cálculos, no medidas directas.',
+      'AEMET es una referencia externa; no se mezcla con las series de la microestación.',
     ],
   };
 }

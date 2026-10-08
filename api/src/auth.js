@@ -45,17 +45,45 @@ export function csrfGuard(req, res, next) {
   next();
 }
 
-// La estación debe pertenecer al suscriptor (admin ve todas). 404 para no filtrar existencia.
+// Conjunto de estaciones a las que un suscriptor puede acceder, como subconsulta.
+// - admin: null (todas).
+// - viewer (registro público): sus estaciones concedidas MÁS las autorizadas para
+//   la demostración (`publish_permission`). Nunca todas las privadas.
+// - operator: solo las concedidas explícitamente.
+export function accessibleDeviceIds(subscriber) {
+  if (subscriber?.role === 'admin') return null;
+  if (subscriber?.role === 'viewer') {
+    return sql`(SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${subscriber.id}
+      UNION
+      SELECT d.id FROM devices d WHERE d.publish_permission = true AND d.active = true)`;
+  }
+  return sql`(SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${subscriber.id})`;
+}
+
+// La estación debe estar dentro del ámbito del suscriptor. 404 para no filtrar
+// la existencia de recursos privados ajenos.
 export async function requireStationAccess(req, res, next) {
   const stationId = req.params.id;
   if (!stationId) return res.status(400).json({ error: 'missing_station_id' });
-  if (req.subscriber.role === 'admin') {
-    req.stationId = stationId;
-    return next();
-  }
-  const [row] = await sql`SELECT 1 AS ok FROM subscriber_devices
-    WHERE subscriber_id = ${req.subscriber.id} AND device_id = ${stationId}`;
-  if (!row) return res.status(404).json({ error: 'station_not_found' });
+  const scope = accessibleDeviceIds(req.subscriber);
+  const rows = scope
+    ? await sql`SELECT 1 AS ok FROM devices d WHERE d.id = ${stationId} AND d.active = true AND d.id IN ${scope}`
+    : await sql`SELECT 1 AS ok FROM devices WHERE id = ${stationId}`;
+  if (!rows.length) return res.status(404).json({ error: 'station_not_found' });
   req.stationId = stationId;
   next();
+}
+
+// Ámbito de los AVISOS, distinto al de los datos.
+//
+// Ver la estación de la demostración no suscribe a nadie a sus avisos: el
+// registro público (`viewer`) solo recibe los avisos de las estaciones que se le
+// han concedido explícitamente. Nunca los de la estación urbana que únicamente
+// tiene `publish_permission`. Tampoco se le da de alta en la cola de envíos
+// (`recipientsForDevice` solo mira `subscriber_devices` y `farm_devices`).
+// - admin: null (todas, para depurar).
+// - el resto: solo estaciones concedidas.
+export function alertableDeviceIds(subscriber) {
+  if (subscriber?.role === 'admin') return null;
+  return sql`(SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${subscriber.id})`;
 }

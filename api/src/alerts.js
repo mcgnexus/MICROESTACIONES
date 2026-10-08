@@ -1,21 +1,31 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { sql } from './db.js';
-import { requireSubscriber, requireRole, csrfGuard } from './auth.js';
+import { requireSubscriber, requireRole, csrfGuard, accessibleDeviceIds, alertableDeviceIds } from './auth.js';
 import { audit } from './audit.js';
 import { alertAge } from './alert-engine.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
+import { alertEngineVerified } from './env.js';
 import { renderAlertMessage, sendWhatsApp, sendEmail } from './notify.js';
 
 const router = Router();
 
 const idSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:_-]{0,79}$/, 'identificador inválido');
 
+// Acceso a la estación: manda el ámbito de datos (para reglas y fichas).
 async function hasStationAccess(subscriber, deviceId) {
   if (subscriber.role === 'admin') return true;
-  const [row] = await sql`SELECT 1 AS ok FROM subscriber_devices
-    WHERE subscriber_id = ${subscriber.id} AND device_id = ${deviceId}`;
-  return !!row;
+  const scope = accessibleDeviceIds(subscriber);
+  const rows = await sql`SELECT 1 AS ok FROM devices d WHERE d.id = ${deviceId} AND d.id IN ${scope}`;
+  return rows.length > 0;
+}
+
+// Ámbito de avisos: ver la estación de la demostración no suscribe a los suyos.
+async function hasAlertAccess(subscriber, deviceId) {
+  if (subscriber.role === 'admin') return true;
+  const scope = alertableDeviceIds(subscriber);
+  const rows = await sql`SELECT 1 AS ok FROM devices d WHERE d.id = ${deviceId} AND d.id IN ${scope}`;
+  return rows.length > 0;
 }
 
 const ALERT_SELECT = sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
@@ -31,11 +41,21 @@ router.get('/', requireSubscriber, async (req, res) => {
   const channel = ['email', 'sms', 'webhook', 'push', 'in_app', 'whatsapp'].includes(req.query.channel) ? req.query.channel : null;
   const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '100', 10) || 100, 1), 500);
-  if (deviceId && !(await hasStationAccess(req.subscriber, deviceId))) {
-    return res.status(404).json({ error: 'station_not_found' });
+  if (deviceId) {
+    if (!(await hasStationAccess(req.subscriber, deviceId))) {
+      return res.status(404).json({ error: 'station_not_found' });
+    }
+    // Se ve la estación (demostración), pero no se está suscrito a sus avisos:
+    // se responde vacío en lugar de 404 para no dar a entender que algo falla.
+    if (!(await hasAlertAccess(req.subscriber, deviceId))) {
+      return res.json({
+        alerts: [], counts: { open: 0, closed: 0 },
+        engine_verified: alertEngineVerified(), not_subscribed: true,
+      });
+    }
   }
 
-  const conditions = [sql`a.device_id IN (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})`];
+  const conditions = [sql`a.device_id IN ${alertableDeviceIds(req.subscriber)}`];
   if (req.subscriber.role === 'admin') conditions.length = 0;
   else conditions.push(NON_COMMUNICATION_ALERT);
   if (status === 'open') conditions.push(sql`a.closed_at IS NULL`);
@@ -52,12 +72,17 @@ router.get('/', requireSubscriber, async (req, res) => {
           count(*) FILTER (WHERE closed_at IS NOT NULL)::integer AS closed FROM alerts`
     : sql`SELECT count(*) FILTER (WHERE a.closed_at IS NULL)::integer AS open,
           count(*) FILTER (WHERE a.closed_at IS NOT NULL)::integer AS closed
-        FROM alerts a WHERE a.device_id IN
-          (SELECT sd.device_id FROM subscriber_devices sd WHERE sd.subscriber_id = ${req.subscriber.id})
+        FROM alerts a WHERE a.device_id IN ${alertableDeviceIds(req.subscriber)}
           AND ${NON_COMMUNICATION_ALERT}`;
   const [counts] = await sql`${scopedAlerts}`;
   // Cada aviso lleva la antigüedad de su medida y el retraso de la entrega.
-  res.json({ alerts: rows.map((row) => ({ ...row, ...alertAge(row) })), counts });
+  // `engine_verified` indica si el motor de avisos está comprobado en esta
+  // instalación: sin él, los avisos de umbral local no se presentan como tales.
+  res.json({
+    alerts: rows.map((row) => ({ ...row, ...alertAge(row) })),
+    counts,
+    engine_verified: alertEngineVerified(),
+  });
 });
 
 // ---- Reglas de aviso -------------------------------------------------------
@@ -90,7 +115,8 @@ const ruleSchema = z.object({
   }
 });
 
-router.get('/rules', requireSubscriber, async (req, res) => {
+// Las reglas son configuración operativa: fuera del rol de demostración.
+router.get('/rules', requireSubscriber, requireRole('operator'), async (req, res) => {
   const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
   if (deviceId && !(await hasStationAccess(req.subscriber, deviceId))) {
     return res.status(404).json({ error: 'station_not_found' });
@@ -227,7 +253,8 @@ router.post('/:id/test', requireSubscriber, requireRole('admin'), csrfGuard, asy
   const { subject, body } = renderAlertMessage({
     farmName: device?.farmName ?? null, deviceName: device?.name ?? null,
     metric: alert.ruleSnapshot?.metric, value, message: alert.message, level: alert.level,
-    observedAt: alert.observedAt,
+    observedAt: alert.observedAt, source: alert.source ?? 'station_measurement',
+    category: alert.category ?? 'general', ruleSnapshot: alert.ruleSnapshot ?? null,
   });
   const result = parsed.data.channel === 'whatsapp'
     ? await sendWhatsApp(parsed.data.address, body)

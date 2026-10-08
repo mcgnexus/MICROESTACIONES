@@ -36,17 +36,56 @@ CREATE TABLE IF NOT EXISTS device_credentials (
 CREATE TABLE IF NOT EXISTS subscribers (
   id bigserial PRIMARY KEY,
   email text NOT NULL UNIQUE,
-  password_hash text NOT NULL,
+  -- Las cuentas de acceso sin contraseña no tienen hash: el login por contraseña
+  -- sigue exigiéndolo, pero un alta por enlace no crea una.
+  password_hash text,
   active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   role text NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin','operator','viewer')),
   plan text NOT NULL DEFAULT 'free' CHECK (plan IN ('free','pro','enterprise')),
+  -- LEGADO: la autorización vigente vive en `consent_records`. Estas columnas se
+  -- conservan para no perder datos al migrar, pero ya no son la fuente de verdad.
   communication_consent boolean NOT NULL DEFAULT false,
   consent_at timestamptz,
-  pilot_requests jsonb NOT NULL DEFAULT '[]'::jsonb
+  pilot_requests jsonb NOT NULL DEFAULT '[]'::jsonb,
+  -- Verificación de la cuenta: instante en que se confirmó que el correo es del
+  -- interesado (p. ej. al consumir un enlace de acceso). No implica publicidad.
+  email_verified_at timestamptz,
+  -- Origen de captación ya validado (utm_* limitados). No se guarda crudo.
+  acquisition jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Unicidad insensible a mayúsculas y espacios: evita contactos duplicados por
+  -- formato. La columna es generada, así que se mantiene sola en cada escritura.
+  email_normalized text GENERATED ALWAYS AS (lower(btrim(email))) STORED
 );
+
+-- Perfil opcional del suscriptor. Es prescindible: entrar en la demo no depende
+-- de rellenarlo. Reutiliza los mismos catálogos que la captación pública.
+CREATE TABLE IF NOT EXISTS subscriber_profiles (
+  subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+  municipality text,
+  activity text CHECK (activity IS NULL OR activity IN ('agricultura','ganaderia','mixta','otra')),
+  crop_or_livestock text,
+  interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion')),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- El índice único sobre email_normalized lo crea migrate.js: en bases existentes
+-- la columna generada se añade con un ALTER y allí se comprueba el resultado.
 -- Los índices sobre columnas nuevas (role, is_validated, deleted_at, delivery_status)
 -- los crea migrate.js tras los ALTER, porque en bases existentes estas tablas ya existen.
+
+-- Enlaces de acceso de un solo uso. Se guarda solo el hash del token. El valor
+-- en claro viaja una vez por email. Caduca y se consume con una única transición.
+CREATE TABLE IF NOT EXISTS magic_links (
+  id bigserial PRIMARY KEY,
+  email text NOT NULL,
+  token_hash text NOT NULL UNIQUE,
+  return_path text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS magic_links_email_idx ON magic_links(email, created_at DESC);
+CREATE INDEX IF NOT EXISTS magic_links_expiry_idx ON magic_links(expires_at);
 
 CREATE TABLE IF NOT EXISTS subscriber_devices (
   subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
@@ -153,7 +192,7 @@ CREATE TABLE IF NOT EXISTS farm_leads (
   activity text NOT NULL DEFAULT 'agricultura' CHECK (activity IN ('agricultura','ganaderia','mixta','otra')),
   zone text,
   crop_or_livestock text,
-  interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general')),
+  interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion')),
   notes text,
   admin_notes text,
   consent boolean NOT NULL DEFAULT false,
@@ -161,10 +200,56 @@ CREATE TABLE IF NOT EXISTS farm_leads (
   status text NOT NULL DEFAULT 'nuevo'
     CHECK (status IN ('nuevo','contactado','interesado','piloto_activo','cliente','descartado')),
   source text NOT NULL DEFAULT 'web',
+  -- Captación validada y seguimiento comercial del contacto.
+  campaign jsonb NOT NULL DEFAULT '{}'::jsonb,
+  next_contact_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS farm_leads_status_idx ON farm_leads(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS metric_daily (
+  day date NOT NULL, event text NOT NULL, bucket text NOT NULL,
+  count integer NOT NULL CHECK (count > 0), PRIMARY KEY (day, event, bucket)
+);
+CREATE TABLE IF NOT EXISTS metric_milestones (
+  id bigserial PRIMARY KEY,
+  subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
+  lead_id bigint REFERENCES farm_leads(id) ON DELETE CASCADE,
+  event text NOT NULL,
+  UNIQUE (subscriber_id, event), UNIQUE (lead_id, event),
+  CHECK ((subscriber_id IS NULL) <> (lead_id IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS prospect_tracking (
+  id bigserial PRIMARY KEY,
+  subscriber_id bigint UNIQUE REFERENCES subscribers(id) ON DELETE CASCADE,
+  lead_id bigint UNIQUE REFERENCES farm_leads(id) ON DELETE CASCADE,
+  status text CHECK (status IN ('registrado','interes_declarado','contacto_solicitado','contactado','archivado')),
+  notes text, next_action text, next_action_at timestamptz,
+  installation_interest boolean, retain_until timestamptz,
+  CHECK ((subscriber_id IS NULL) <> (lead_id IS NULL))
+);
+
+-- Libro de consentimientos: hechos inmutables con finalidad, canal, fecha y la
+-- versión del texto aceptado. Un sujeto es o bien una cuenta o bien un contacto
+-- de captación, nunca los dos. La publicidad vive aquí, separada del acceso.
+CREATE TABLE IF NOT EXISTS consent_records (
+  id bigserial PRIMARY KEY,
+  subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
+  lead_id bigint REFERENCES farm_leads(id) ON DELETE CASCADE,
+  purpose text NOT NULL CHECK (purpose IN ('service','commercial')),
+  channel text NOT NULL CHECK (channel IN ('email','whatsapp')),
+  action text NOT NULL CHECK (action IN ('granted','revoked')),
+  text_version text NOT NULL,
+  source text NOT NULL DEFAULT 'web',
+  ip_address text,
+  user_agent text,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((subscriber_id IS NULL) <> (lead_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS consent_records_subject_idx
+  ON consent_records(subscriber_id, lead_id, purpose, channel, recorded_at DESC);
 
 -- Cada fila conserva lo que el equipo transmitió: instante de medida (observed_at)
 -- e instante de recepción (received_at) son distintos para reconstruir lotes tardíos.
@@ -356,6 +441,25 @@ CREATE TABLE IF NOT EXISTS external_weather_snapshots (
   PRIMARY KEY (device_id, provider)
 );
 
+-- Serie histórica de observaciones AEMET, guardada al consultar el proveedor.
+-- Permite comparar la microestación con AEMET a lo largo del tiempo, no solo en
+-- la última lectura. Es dato externo: nunca sustituye a la medición local.
+CREATE TABLE IF NOT EXISTS aemet_observations (
+  id bigserial PRIMARY KEY,
+  device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  station_id text NOT NULL,
+  observed_at timestamptz NOT NULL,
+  temperature_c real,
+  humidity_pct real,
+  pressure_hpa real,
+  precipitation_mm real,
+  wind_kmh real,
+  wind_gust_kmh real,
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (device_id, station_id, observed_at)
+);
+CREATE INDEX IF NOT EXISTS aemet_observations_device_idx ON aemet_observations(device_id, observed_at DESC);
+
 -- Trazabilidad de cambios sensibles (configuración, permisos, validaciones).
 CREATE TABLE IF NOT EXISTS audit_logs (
   id bigserial PRIMARY KEY,
@@ -376,22 +480,35 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, targ
 -- la fila conserva el intento, el proveedor y el error para poder reintentarlo.
 CREATE TABLE IF NOT EXISTS notification_outbox (
   id bigserial PRIMARY KEY,
-  kind text NOT NULL CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice')),
+  kind text NOT NULL CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice','commercial')),
   alert_id bigint REFERENCES alerts(id) ON DELETE CASCADE,
   contact_verification_id bigint REFERENCES contact_verifications(id) ON DELETE CASCADE,
   subscriber_id bigint REFERENCES subscribers(id) ON DELETE SET NULL,
+  -- Un mensaje comercial puede ir a una cuenta o a un contacto de captación.
+  lead_id bigint REFERENCES farm_leads(id) ON DELETE SET NULL,
   channel text NOT NULL CHECK (channel IN ('whatsapp','email')),
   address text NOT NULL,
   subject text,
   body text NOT NULL,
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','delivered','failed','manual')),
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','delivered','failed','manual','cancelled','expired')),
   attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  -- Exclusión entre trabajadores: quién ha reclamado la fila y desde cuándo. Un
+   -- reclamo viejo se recupera. Nadie envía dos veces el mismo mensaje.
+  claimed_by text,
+  claimed_at timestamptz,
+  -- Caducidad del mensaje: un aviso o un código viejo ya no se envía.
+  expires_at timestamptz,
   last_error text,
   provider_message_id text,
+  -- `sent_at` = aceptado por el proveedor (2xx). `delivered_at` = el proveedor
+  -- confirmó la entrega por webhook. Son estados distintos y no se confunden.
   sent_at timestamptz,
+  delivered_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS notification_outbox_due_idx ON notification_outbox(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS notification_outbox_alert_idx ON notification_outbox(alert_id);
+-- El índice comercial lo crea migrate.js después de añadir lead_id, porque en
+-- bases existentes esta tabla ya existe sin esa columna.

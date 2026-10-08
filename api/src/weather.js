@@ -1,20 +1,29 @@
 import { sql } from './db.js';
+import { fetchJsonWithLimits } from './http-limits.js';
 
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
 const AEMET = 'https://opendata.aemet.es/opendata/api';
 const WEATHER_TTL_MS = 30 * 60 * 1000;
+export const AEMET_PAIR_WINDOW_MS = 10 * 60 * 1000;
 
-async function fetchJson(url, timeoutMs = 8000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json, application/xml, text/xml' } });
-    if (!response.ok) throw new Error(`provider_http_${response.status}`);
-    const text = await response.text();
-    try { return JSON.parse(text); } catch { return text; }
-  } finally {
-    clearTimeout(timer);
+export function aemetPairWindowMs(value = process.env.AEMET_COMPARISON_WINDOW_MINUTES) {
+  const minutes = Number(value);
+  return Math.trunc(Math.max(1, Math.min(60, Number.isFinite(minutes) && minutes > 0 ? minutes : 10))) * 60 * 1000;
+}
+
+// Consulta externa con tiempo máximo del entorno. Un tiempo agotado se marca
+// como tal para que se reintente y no se lo confunda con "sin previsión".
+async function fetchJson(url) {
+  const { response, text, bodyTimedOut } = await fetchJsonWithLimits(url, {
+    headers: { accept: 'application/json, application/xml, text/xml' },
+  });
+  if (!response.ok) throw new Error(`provider_http_${response.status}`);
+  if (bodyTimedOut) {
+    const timeout = new Error('provider_timeout_body');
+    timeout.code = 'timeout';
+    throw timeout;
   }
+  try { return JSON.parse(text); } catch { return text; }
 }
 
 const at = (values, index) => values?.[index] ?? null;
@@ -76,36 +85,173 @@ function decodeXml(value) {
 }
 
 function xmlValue(xml, tag) {
-  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  const match = xml.match(new RegExp(`<(?:\\w+:)?${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:\\w+:)?${tag}>`, 'i'));
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, ' ').trim()) : null;
 }
 
-export function parseAemetWarnings(xml) {
-  if (typeof xml !== 'string') return [];
-  return [...xml.matchAll(/<(?:\w+:)?info\b[^>]*>([\s\S]*?)<\/(?:\w+:)?info>/gi)].map(([, info]) => ({
-    provider: 'AEMET',
-    event: xmlValue(info, 'event'),
-    headline: xmlValue(info, 'headline'),
-    description: xmlValue(info, 'description'),
-    instruction: xmlValue(info, 'instruction'),
-    severity: xmlValue(info, 'severity'),
-    certainty: xmlValue(info, 'certainty'),
-    onset: xmlValue(info, 'onset'),
-    expires: xmlValue(info, 'expires'),
-    area: xmlValue(info, 'areaDesc'),
-  })).filter((warning) => warning.event || warning.headline || warning.description);
+function parseAemetInstant(value) {
+  if (!value) return null;
+  const normalized = String(value).trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized)) {
+    const parsed = new Date(normalized);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
+  }
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = '0'] = match;
+  const targetUtc = Date.UTC(+year, +month - 1, +day, +hour, +minute, +second);
+  let guess = targetUtc;
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(guess)).map((part) => [part.type, part.value]));
+    const representedUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day,
+      +parts.hour, +parts.minute, +parts.second);
+    guess += targetUtc - representedUtc;
+  }
+  return new Date(guess);
 }
 
-export function normalizeAemetObservation(rows, stationId) {
+function xmlBlocks(xml, tag) {
+  const regex = new RegExp(`<(?:\\w+:)?${tag}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${tag}>`, 'gi');
+  return [...String(xml).matchAll(regex)].map((match) => match[1]);
+}
+
+function warningContainsPoint(areaXml, latitude, longitude) {
+  if (latitude == null || longitude == null
+      || !Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return null;
+  const pointInPolygon = (points) => {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const [yi, xi] = points[i]; const [yj, xj] = points[j];
+      const crosses = (yi > latitude) !== (yj > latitude)
+        && longitude < ((xj - xi) * (latitude - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+      if (crosses) inside = !inside;
+    }
+    return inside;
+  };
+  const polygons = xmlValueAll(areaXml, 'polygon').map((value) => value.trim().split(/\s+/)
+    .map((pair) => pair.split(',').map(Number)).filter((pair) => pair.length === 2 && pair.every(Number.isFinite)));
+  if (polygons.length) return polygons.some((points) => points.length >= 3 && pointInPolygon(points));
+  const circles = xmlValueAll(areaXml, 'circle').map((value) => {
+    const match = value.trim().match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\s+([\d.]+)$/);
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : [];
+  });
+  if (circles.length) return circles.some(([lat, lon, radiusKm]) => {
+    if (![lat, lon, radiusKm].every(Number.isFinite)) return false;
+    const radians = Math.PI / 180;
+    const dLat = (latitude - lat) * radians; const dLon = (longitude - lon) * radians;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat * radians) * Math.cos(latitude * radians) * Math.sin(dLon / 2) ** 2;
+    return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)) <= radiusKm;
+  });
+  return null;
+}
+
+function xmlValueAll(xml, tag) {
+  return xmlBlocks(xml, tag).map((value) => decodeXml(value.replace(/<[^>]+>/g, ' ').trim()));
+}
+
+function capMessage(xml, areaCode, latitude, longitude) {
+  const infos = xmlBlocks(xml, 'info');
+  const areas = infos.flatMap((info) => xmlBlocks(info, 'area').map((area) => ({ info, area })));
+  const records = areas.length ? areas : (infos.length ? infos.map((info) => ({ info, area: '' })) : [{ info: '', area: '' }]);
+  const references = xmlValue(xml, 'references');
+  return records.map(({ info, area }) => {
+    const codeValues = xmlBlocks(area, 'value').map((value) => decodeXml(value.replace(/<[^>]+>/g, '').trim()));
+    const areaCodes = codeValues.filter(Boolean);
+    const pointMatch = warningContainsPoint(area, latitude, longitude);
+    const explicitAreaMatch = areaCodes.includes(String(areaCode));
+    const hasGeometry = xmlValueAll(area, 'polygon').length > 0 || xmlValueAll(area, 'circle').length > 0;
+    const geographicallyRelevant = pointMatch ?? (explicitAreaMatch || !hasGeometry);
+    const geocodes = xmlBlocks(area, 'geocode').map((block) => ({
+      name: xmlValue(block, 'valueName'), value: xmlValue(block, 'value'),
+    }));
+    return {
+      provider: 'AEMET',
+      identifier: xmlValue(xml, 'identifier'), sender: xmlValue(xml, 'sender'),
+      sent: xmlValue(xml, 'sent'), status: xmlValue(xml, 'status'),
+      messageType: xmlValue(xml, 'msgType') || 'Alert', references,
+      event: xmlValue(info, 'event'), headline: xmlValue(info, 'headline'),
+      description: xmlValue(info, 'description'), instruction: xmlValue(info, 'instruction'),
+      severity: xmlValue(info, 'severity'), certainty: xmlValue(info, 'certainty'),
+      effective: xmlValue(info, 'effective'), onset: xmlValue(info, 'onset'),
+      expires: xmlValue(info, 'expires'), area: xmlValue(area, 'areaDesc'),
+      areaCode: String(areaCode || ''), geocodes, geographicallyRelevant,
+    };
+  }).filter((warning) => warning.event || warning.headline || warning.description
+    || String(warning.messageType).toLowerCase() === 'cancel');
+}
+
+export function resolveAemetWarnings(messages, { now = new Date(), areaCode = null, latitude = null, longitude = null } = {}) {
+  const all = (Array.isArray(messages) ? messages : []).flatMap((xml) => {
+    const unpack = (document, depth = 0) => {
+      const alerts = xmlBlocks(document, 'alert');
+      if (alerts.length) return alerts;
+      if (depth >= 2 || !/<(?:\w+:)?feed\b/i.test(document)) return [document];
+      const contents = xmlBlocks(document, 'content').map(decodeXml);
+      return contents.length ? contents.flatMap((content) => unpack(content, depth + 1)) : [document];
+    };
+    return unpack(String(xml)).flatMap((alert) => capMessage(alert, areaCode, latitude, longitude));
+  });
+  const cancelled = new Set();
+  for (const message of all) {
+    if (String(message.messageType).toLowerCase() !== 'cancel') continue;
+    for (const ref of String(message.references || '').split(/\s+/).filter(Boolean)) cancelled.add(ref.split(',')[1] || ref);
+  }
+  const latest = new Map();
+  const orderedMessages = [...all].sort((a, b) =>
+    (parseAemetInstant(a.sent)?.getTime() ?? 0) - (parseAemetInstant(b.sent)?.getTime() ?? 0));
+  for (const message of orderedMessages) {
+    const type = String(message.messageType).toLowerCase();
+    if (type === 'cancel' || !['actual', 'test', 'exercise', 'system'].includes(String(message.status || 'Actual').toLowerCase())) continue;
+    if (['test', 'exercise', 'system'].includes(String(message.status || '').toLowerCase())) continue;
+    if (message.messageType && !['alert', 'update'].includes(type)) continue;
+    const refs = String(message.references || '').split(/\s+/).filter(Boolean);
+    const replaces = refs.map((ref) => ref.split(',')[1]).filter(Boolean);
+    for (const id of replaces) {
+      for (const [key, existing] of latest) if (existing.identifier === id) latest.delete(key);
+    }
+    const id = message.identifier || `${message.sender || ''}:${message.sent || ''}:${message.event || ''}`;
+    // Keep multiple CAP areas from the same message independently filterable.
+    latest.set(`${id}\u0000${message.area || ''}`, message);
+  }
+  const instant = (value) => value ? parseAemetInstant(value)?.getTime() ?? null : null;
+  return [...latest.values()].filter((warning) => {
+    if (warning.geographicallyRelevant === false) return false;
+    if (cancelled.has(warning.identifier)) return false;
+    const effective = instant(warning.effective || warning.onset || warning.sent);
+    const onset = instant(warning.onset);
+    const expires = instant(warning.expires);
+    return (effective == null || effective <= now.getTime())
+      && (onset == null || onset <= now.getTime())
+      && (expires == null || expires > now.getTime());
+  });
+}
+
+export function parseAemetWarnings(xml, options = {}) {
+  return resolveAemetWarnings([xml], options);
+}
+
+export function isAemetCapPayload(value) {
+  if (value == null) return true;
+  if (Array.isArray(value)) return value.every((entry) => typeof entry === 'string' && isAemetCapPayload(entry));
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  return !text || /<(?:\w+:)?(?:alert|feed)\b/i.test(text);
+}
+
+export function normalizeAemetObservation(rows, stationId, { now = new Date(), futureToleranceMs = 5 * 60 * 1000 } = {}) {
   if (!Array.isArray(rows) || !rows.length) return null;
-  const row = rows.at(-1);
+  const observations = rows.map((row) => {
   const number = (value) => numeric(value);
   const windSpeed = number(row.vv);
   const gustSpeed = number(row.vmax);
   return {
     provider: 'AEMET',
     stationId: row.idema || stationId,
-    observedAt: row.fint || null,
+    observedAt: parseAemetInstant(row.fint)?.toISOString() ?? null,
     latitude: number(row.lat ?? row.latitude),
     longitude: number(row.lon ?? row.longitude),
     altitudeM: number(row.alt ?? row.altitude),
@@ -117,11 +263,42 @@ export function normalizeAemetObservation(rows, stationId) {
     windGustKmh: gustSpeed == null ? null : Math.round(gustSpeed * 3.6 * 10) / 10,
     windDirection: row.dv || null,
   };
+  }).filter((row) => row.observedAt
+    && new Date(row.observedAt).getTime() <= now.getTime() + futureToleranceMs)
+    .sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
+  if (!observations.length) return null;
+  return { ...observations.at(-1), observations };
+}
+
+export function compareTemperatures(local, external, windowMs = AEMET_PAIR_WINDOW_MS) {
+  const localTemperature = numeric(local?.temperatureC);
+  const localTime = local?.observedAt ? new Date(local.observedAt).getTime() : NaN;
+  const candidates = (external?.observations || (external ? [external] : []))
+    .filter((observation) => numeric(observation.temperatureC) != null && observation.observedAt)
+    .map((observation) => ({ observation, at: new Date(observation.observedAt).getTime() }))
+    .filter(({ at }) => Number.isFinite(at) && Number.isFinite(localTime))
+    .sort((a, b) => Math.abs(a.at - localTime) - Math.abs(b.at - localTime));
+  const nearest = candidates[0] || null;
+  const differenceSeconds = nearest ? Math.round((localTime - nearest.at) / 1000) : null;
+  const matched = localTemperature != null && nearest != null && Math.abs(differenceSeconds * 1000) <= windowMs;
+  return {
+    state: matched ? 'matched' : localTemperature == null || !external ? 'missing' : 'no_pair',
+    windowMinutes: Math.round(windowMs / 60000),
+    local: local ? { temperatureC: localTemperature, observedAt: local.observedAt, location: local.location || null } : null,
+    aemet: nearest?.observation ? {
+      temperatureC: numeric(nearest.observation.temperatureC), observedAt: nearest.observation.observedAt,
+      stationId: nearest.observation.stationId,
+    } : external ? { temperatureC: numeric(external.temperatureC), observedAt: external.observedAt, stationId: external.stationId } : null,
+    proximity: external?.proximity ?? null,
+    timeOffsetSeconds: differenceSeconds,
+    differenceC: matched ? Math.round((localTemperature - numeric(nearest.observation.temperatureC)) * 10) / 10 : null,
+    differenceDefinition: 'temperatura_microestacion_menos_AEMET',
+  };
 }
 
 const AEMET_STATIONS = {
-  // Coordenadas y altitud de la ficha oficial AEMET de Huéscar (5051X).
-  '5051X': { latitude: 37 + 51 / 60 + 41 / 3600, longitude: -(2 + 39 / 60 + 10 / 3600), altitudeM: 1101 },
+  // Coordenadas/altitud verificadas para el indicativo AEMET 5051X.
+  '5051X': { latitude: 37 + 51 / 60 + 41 / 3600, longitude: -(2 + 39 / 60 + 10 / 3600), altitudeM: 1101, source: 'ficha de estación AEMET 5051X' },
 };
 
 export function aemetProximityForDevice(device, observation) {
@@ -144,6 +321,12 @@ export function aemetProximityForDevice(device, observation) {
     microAltitudeM,
     aemetAltitudeM,
     altitudeDifferenceM: microAltitudeM == null || aemetAltitudeM == null ? null : Math.round((aemetAltitudeM - microAltitudeM) * 10) / 10,
+    microLocationSource: 'coordenadas configuradas en la ficha de estación',
+    microAltitudeSource: microAltitudeM == null ? null : 'altitud configurada en la ficha de estación',
+    aemetLocationSource: observation.latitude != null && observation.longitude != null
+      ? 'coordenadas devueltas por AEMET' : station?.source ?? null,
+    aemetAltitudeSource: observation.altitudeM != null
+      ? 'altitud devuelta por AEMET' : station?.altitudeM != null ? station.source : null,
   };
 }
 
@@ -176,21 +359,30 @@ export function aemetSky(estadoCielo) {
   return best;
 }
 
-export function forecastAdvisories(daily = []) {
+// Riesgos orientativos calculados sobre la previsión. Cada aviso declara su
+// fuente y su proveedor: sin ellos se leería como una detección local, que no
+// hacemos con los sensores actuales.
+export function forecastAdvisories(daily = [], provider = null) {
   const notices = [];
+  const origin = provider ? ` (${provider})` : '';
+  const common = { level: 'preventive', provider, source: 'estimate' };
   for (const day of daily) {
     const date = day.date;
     if (day.temperatureMinC != null && day.temperatureMinC <= 0) {
-      notices.push({ kind: 'helada', date, level: 'preventive', text: `Riesgo orientativo de helada: mínima prevista ${day.temperatureMinC} °C.` });
+      notices.push({ ...common, kind: 'helada', date,
+        text: `Riesgo orientativo de helada: mínima prevista ${day.temperatureMinC} °C${origin}.` });
     }
     if (day.temperatureMaxC != null && day.temperatureMaxC >= 35) {
-      notices.push({ kind: 'calor', date, level: 'preventive', text: `Calor elevado previsto: máxima ${day.temperatureMaxC} °C.` });
+      notices.push({ ...common, kind: 'calor', date,
+        text: `Calor elevado previsto: máxima ${day.temperatureMaxC} °C${origin}.` });
     }
     if (day.precipitationMm != null && day.precipitationMm >= 20) {
-      notices.push({ kind: 'lluvia', date, level: 'preventive', text: `Precipitación abundante prevista: ${day.precipitationMm} mm.` });
+      notices.push({ ...common, kind: 'lluvia', date,
+        text: `Precipitación abundante prevista: ${day.precipitationMm} mm${origin}.` });
     }
     if (day.windGustKmh != null && day.windGustKmh >= 50) {
-      notices.push({ kind: 'viento', date, level: 'preventive', text: `Rachas fuertes previstas: ${day.windGustKmh} km/h.` });
+      notices.push({ ...common, kind: 'viento', date,
+        text: `Rachas fuertes previstas: ${day.windGustKmh} km/h${origin}.` });
     }
   }
   return notices;
@@ -224,7 +416,7 @@ async function aemetData(path) {
   return fetchJson(dataUrl);
 }
 
-async function fetchAemet({ municipalityCode, stationId, warningArea }) {
+async function fetchAemet({ municipalityCode, stationId, warningArea }, device) {
   const key = process.env.AEMET_API_KEY;
   if (!key) return null;
   const [forecastResult, observationResult, warningsResult] = await Promise.allSettled([
@@ -238,14 +430,39 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }) {
       ? aemetData(`/avisos_cap/ultimoelaborado/area/${encodeURIComponent(warningArea)}`)
       : Promise.resolve(null),
   ]);
-  let forecast = null;
-  if (forecastResult.status === 'fulfilled' && forecastResult.value) {
-    const data = Array.isArray(forecastResult.value) ? forecastResult.value[0] : forecastResult.value;
-    forecast = {
-      provider: 'AEMET',
-      fetchedAt: new Date().toISOString(),
-      municipality: data?.nombre ?? data?.municipio ?? null,
-      days: (data?.prediccion?.dia || []).slice(0, 5).map((day) => ({
+  const observation = observationResult.status === 'fulfilled' && observationResult.value
+    ? normalizeAemetObservation(observationResult.value, stationId) : null;
+  const observationQueried = !!stationId;
+  const forecastQueried = !!municipalityCode;
+  const warningsQueried = !!warningArea;
+  const warningPayload = warningsResult.status === 'fulfilled' ? warningsResult.value : null;
+  const warningPayloadUsable = warningsQueried && warningsResult.status === 'fulfilled' && isAemetCapPayload(warningPayload);
+  const warningDocuments = warningPayload == null ? [] : Array.isArray(warningPayload) ? warningPayload
+    : [typeof warningPayload === 'string' ? warningPayload : JSON.stringify(warningPayload)];
+  const warnings = warningPayloadUsable
+    ? resolveAemetWarnings(warningDocuments, { areaCode: warningArea, latitude: Number(device.latitude), longitude: Number(device.longitude) })
+    : null;
+  const forecastValue = forecastResult.status === 'fulfilled' && forecastResult.value;
+  const errors = [];
+  if (forecastResult.status === 'rejected') errors.push(describeAemetError('previsión municipal', forecastResult.reason));
+  if (observationResult.status === 'rejected') errors.push(describeAemetError('observación de estación', observationResult.reason));
+  if (warningsResult.status === 'rejected') errors.push(describeAemetError('avisos oficiales', warningsResult.reason));
+  else if (warningsQueried && !warningPayloadUsable) errors.push('AEMET: avisos oficiales no disponibles (formato CAP no válido).');
+  const fetchedAt = new Date().toISOString();
+  return {
+    provider: 'AEMET', fetchedAt,
+    observationStationId: stationId || null,
+    forecastMunicipalityCode: municipalityCode || null,
+    observationCheckedAt: stationId ? fetchedAt : null,
+    forecastCheckedAt: municipalityCode ? fetchedAt : null,
+    warningsCheckedAt: warningArea ? fetchedAt : null,
+    observation, observationAvailable: !observationQueried || observationResult.status === 'fulfilled',
+    observationFetchedAt: observation ? fetchedAt : null,
+    forecast: forecastValue ? {
+      provider: 'AEMET', fetchedAt,
+      municipality: (Array.isArray(forecastValue) ? forecastValue[0] : forecastValue)?.nombre
+        ?? (Array.isArray(forecastValue) ? forecastValue[0] : forecastValue)?.municipio ?? null,
+      days: ((Array.isArray(forecastValue) ? forecastValue[0] : forecastValue)?.prediccion?.dia || []).slice(0, 5).map((day) => ({
         date: day.fecha,
         temperatureMaxC: numeric(day.temperatura?.maxima),
         temperatureMinC: numeric(day.temperatura?.minima),
@@ -254,26 +471,74 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }) {
         windDirection: day.viento?.[0]?.direccion ?? null,
         sky: aemetSky(day.estadoCielo),
       })),
-    };
+    } : null,
+    forecastAvailable: !forecastQueried || forecastResult.status === 'fulfilled',
+    forecastFetchedAt: forecastValue ? fetchedAt : null,
+    warnings,
+    warningsAvailable: !warningsQueried || warningPayloadUsable,
+    warningsFetchedAt: warningPayloadUsable ? fetchedAt : null,
+    warningsCheckedAt: warningsQueried ? fetchedAt : null,
+    warningsAreaCode: warningArea || null,
+    errors,
+  };
+}
+
+export function mergeAemetSnapshot(previous, fresh) {
+  if (!fresh) return previous || null;
+  const merged = { ...(previous || {}), provider: 'AEMET', fetchedAt: fresh.fetchedAt, errors: fresh.errors || [] };
+  merged.observationStationId = fresh.observationStationId || previous?.observationStationId || null;
+  merged.forecastMunicipalityCode = fresh.forecastMunicipalityCode || previous?.forecastMunicipalityCode || null;
+  for (const name of ['observation', 'forecast', 'warnings']) {
+    merged[`${name}CheckedAt`] = fresh[`${name}CheckedAt`] || previous?.[`${name}CheckedAt`] || null;
   }
-  const observation = observationResult.status === 'fulfilled' && observationResult.value
-    ? normalizeAemetObservation(observationResult.value, stationId) : null;
-  let warnings = [];
-  if (warningsResult.status === 'fulfilled' && warningsResult.value) {
-    const body = typeof warningsResult.value === 'string' ? warningsResult.value : JSON.stringify(warningsResult.value);
-    warnings = parseAemetWarnings(body);
+  for (const [name, availableKey, fetchedKey] of [
+    ['observation', 'observationAvailable', 'observationFetchedAt'],
+    ['forecast', 'forecastAvailable', 'forecastFetchedAt'],
+    ['warnings', 'warningsAvailable', 'warningsFetchedAt'],
+  ]) {
+    const available = fresh[availableKey] !== false;
+    const newValue = fresh[name];
+    if (available && (name === 'warnings' || newValue)) {
+      merged[name] = newValue;
+      if (fresh[fetchedKey]) merged[fetchedKey] = fresh[fetchedKey];
+    }
+    merged[`${name}Status`] = available && (name === 'warnings' || newValue) ? 'current'
+      : merged[name] ? 'stale' : available ? 'empty' : 'unavailable';
+    if (!merged[fetchedKey] && previous?.fetchedAt && merged[name]) merged[fetchedKey] = previous.fetchedAt;
   }
-  const errors = [];
-  if (forecastResult.status === 'rejected') errors.push(describeAemetError('previsión municipal', forecastResult.reason));
-  if (observationResult.status === 'rejected') errors.push(describeAemetError('observación de estación', observationResult.reason));
-  if (warningsResult.status === 'rejected') errors.push(describeAemetError('avisos oficiales', warningsResult.reason));
-  return { provider: 'AEMET', fetchedAt: new Date().toISOString(), observation, forecast, warnings, errors };
+  merged.warningsAreaCode = fresh.warningsAreaCode || previous?.warningsAreaCode || null;
+  return merged;
+}
+
+function ageSeconds(value, now = new Date()) {
+  if (!value || !Number.isFinite(new Date(value).getTime())) return null;
+  return Math.max(0, Math.round((now.getTime() - new Date(value).getTime()) / 1000));
 }
 
 async function saveSnapshot(deviceId, provider, payload) {
   await sql`INSERT INTO external_weather_snapshots (device_id, provider, fetched_at, payload)
     VALUES (${deviceId}, ${provider}, now(), ${sql.json(payload)})
     ON CONFLICT (device_id, provider) DO UPDATE SET fetched_at = now(), payload = EXCLUDED.payload`;
+}
+
+// Guarda la serie de observaciones AEMET para poder compararla con la
+// microestación más adelante. Es idempotente por (estación, instante).
+async function saveAemetObservations(deviceId, observation) {
+  const rows = observation?.observations;
+  if (!Array.isArray(rows) || !rows.length) return;
+  for (const obs of rows) {
+    if (!obs?.observedAt) continue;
+    await sql`INSERT INTO aemet_observations
+      (device_id, station_id, observed_at, temperature_c, humidity_pct, pressure_hpa,
+        precipitation_mm, wind_kmh, wind_gust_kmh, fetched_at)
+      VALUES (${deviceId}, ${obs.stationId || observation.stationId || 'unknown'}, ${new Date(obs.observedAt)},
+        ${obs.temperatureC ?? null}, ${obs.humidityPct ?? null}, ${obs.pressureHpa ?? null},
+        ${obs.precipitationMm ?? null}, ${obs.windKmh ?? null}, ${obs.windGustKmh ?? null}, now())
+      ON CONFLICT (device_id, station_id, observed_at) DO UPDATE SET
+        temperature_c = EXCLUDED.temperature_c, humidity_pct = EXCLUDED.humidity_pct,
+        pressure_hpa = EXCLUDED.pressure_hpa, precipitation_mm = EXCLUDED.precipitation_mm,
+        wind_kmh = EXCLUDED.wind_kmh, wind_gust_kmh = EXCLUDED.wind_gust_kmh, fetched_at = now()`;
+  }
 }
 
 function isFresh(snapshot) {
@@ -300,32 +565,88 @@ export async function weatherForDevice(device) {
   let openMeteo = cached.open_meteo;
   let aemet = cached.aemet;
   const aemetConfig = aemetConfigForDevice(device);
+  if (aemet) {
+    if (String(aemet.observationStationId || aemet.observation?.stationId || '').toUpperCase()
+        !== String(aemetConfig.stationId || '').toUpperCase()) {
+      aemet = { ...aemet, observation: null, observationFetchedAt: null, observationCheckedAt: null, observationStatus: aemetConfig.stationId ? 'unavailable' : 'unconfigured' };
+    }
+    if (!aemetConfig.municipalityCode || (aemet.forecastMunicipalityCode
+        && String(aemet.forecastMunicipalityCode) !== String(aemetConfig.municipalityCode))) {
+      aemet = { ...aemet, forecast: null, forecastFetchedAt: null, forecastCheckedAt: null, forecastStatus: aemetConfig.municipalityCode ? 'unavailable' : 'unconfigured' };
+    }
+    if (!aemetConfig.warningArea || String(aemet.warningsAreaCode || '') !== String(aemetConfig.warningArea)) {
+      aemet = { ...aemet, warnings: [], warningsFetchedAt: null, warningsCheckedAt: null, warningsStatus: aemetConfig.warningArea ? 'unavailable' : 'unconfigured' };
+    }
+  }
   const hasAemetConfig = Object.values(aemetConfig).some(Boolean);
-  const hasLegacyAemetErrors = aemet?.errors?.some((message) =>
-    /AEMET: (previsión municipal|observación de estación|avisos oficiales) no disponible\.$/.test(message));
-  const stale = !isFresh(openMeteo) || (process.env.AEMET_API_KEY && hasAemetConfig && (!isFresh(aemet) || hasLegacyAemetErrors));
+  const componentStale = (value) => !value || Date.now() - new Date(value).getTime() >= WEATHER_TTL_MS;
+  const aemetStale = !aemet || [['observationCheckedAt', 'stationId'], ['forecastCheckedAt', 'municipalityCode'], ['warningsCheckedAt', 'warningArea']]
+    .some(([checkedAt, configKey]) => aemetConfig[configKey]
+      && (!aemet[checkedAt] || componentStale(aemet[checkedAt])));
+  const openMeteoStale = !isFresh(openMeteo);
+  const shouldFetchAemet = Boolean(process.env.AEMET_API_KEY && hasAemetConfig && aemetStale);
   const errors = [];
-  if (stale) {
-    const jobs = [fetchOpenMeteo(device.latitude, device.longitude).then(async (value) => {
+  if (openMeteoStale || shouldFetchAemet) {
+    const jobs = [];
+    if (openMeteoStale) jobs.push(fetchOpenMeteo(device.latitude, device.longitude).then(async (value) => {
       await saveSnapshot(device.id, 'open_meteo', value);
       openMeteo = value;
-    }).catch(() => errors.push('Open-Meteo no está disponible temporalmente.'))];
-    if (process.env.AEMET_API_KEY && hasAemetConfig) {
-      jobs.push(fetchAemet(aemetConfig).then(async (value) => {
+    }).catch(() => errors.push('Open-Meteo no está disponible temporalmente.')));
+    if (shouldFetchAemet) {
+      jobs.push(fetchAemet(aemetConfig, device).then(async (value) => {
         if (value) {
-          await saveSnapshot(device.id, 'aemet', value);
-          aemet = value;
+          aemet = mergeAemetSnapshot(aemet, value);
+          await saveSnapshot(device.id, 'aemet', aemet);
+          await saveAemetObservations(device.id, value.observation);
           errors.push(...value.errors);
         }
       }).catch(() => errors.push('AEMET no está disponible temporalmente.')));
     }
     await Promise.all(jobs);
   }
+  const localRows = aemet?.observation
+    ? await sql`SELECT temperature_c, observed_at FROM measurements
+        WHERE device_id = ${device.id} AND is_validated AND deleted_at IS NULL AND temperature_c IS NOT NULL
+        ORDER BY observed_at DESC LIMIT 1`
+    : [];
+  const localTemperature = localRows[0] ? {
+    temperatureC: Number(localRows[0].temperatureC),
+    observedAt: localRows[0].observedAt,
+    location: device.publicZone || device.name,
+  } : null;
   if (aemet?.observation) {
     aemet = {
       ...aemet,
       observation: { ...aemet.observation, proximity: aemetProximityForDevice(device, aemet.observation) },
     };
+  }
+  const now = new Date();
+  const aemetResponse = aemet ? { ...aemet } : {
+    provider: 'AEMET', observation: null, forecast: null, warnings: [], errors: [],
+    observationStatus: 'unconfigured', forecastStatus: 'unconfigured', warningsStatus: 'unconfigured',
+    warningsAreaCode: aemetConfig.warningArea || null,
+  };
+  if (aemetResponse) {
+    for (const [name, fetchedKey] of [['observation', 'observationFetchedAt'], ['forecast', 'forecastFetchedAt'], ['warnings', 'warningsFetchedAt']]) {
+      if (!aemetResponse[`${name}Status`] && aemetResponse[name]) aemetResponse[`${name}Status`] = 'current';
+      const status = aemetResponse[`${name}Status`];
+      if (status === 'current' && componentStale(aemetResponse[fetchedKey])) aemetResponse[`${name}Status`] = 'stale';
+      aemetResponse[`${name}AgeSeconds`] = ageSeconds(aemetResponse[fetchedKey], now);
+      if (aemetResponse[`${name}Status`] === 'unavailable' && !aemetResponse[name]) aemetResponse[`${name}Status`] = 'unavailable';
+    }
+    aemetResponse.warnings = (aemetResponse.warnings || []).filter((warning) => {
+      const onset = parseAemetInstant(warning.onset)?.getTime();
+      const expires = parseAemetInstant(warning.expires)?.getTime();
+      return (onset == null || onset <= now.getTime()) && (expires == null || expires > now.getTime());
+    });
+    if (!aemetConfig.stationId) aemetResponse.observationStatus = 'unconfigured';
+    if (!aemetConfig.municipalityCode) aemetResponse.forecastStatus = 'unconfigured';
+    if (!aemetConfig.warningArea) aemetResponse.warningsStatus = 'unconfigured';
+    else if (!process.env.AEMET_API_KEY) {
+      aemetResponse.observationStatus = aemetResponse.observation ? 'stale' : 'unconfigured';
+      aemetResponse.forecastStatus = aemetResponse.forecast ? 'stale' : 'unconfigured';
+      aemetResponse.warningsStatus = aemetResponse.warningsFetchedAt ? 'stale' : 'unconfigured';
+    }
   }
   const openData = openMeteo || null;
   const advisoryForecast = aemet?.forecast?.days?.length ? aemet.forecast.days : openData?.daily;
@@ -335,12 +656,15 @@ export async function weatherForDevice(device) {
     !aemetConfig.stationId ? 'indicativo de estación observadora' : null,
     !aemetConfig.warningArea ? 'área de avisos' : null,
   ].filter(Boolean);
+  const comparison = compareTemperatures(localTemperature, aemetResponse?.observation, aemetPairWindowMs());
   return {
     configured: true,
     location: device.publicZone || `${Number(device.latitude).toFixed(3)}, ${Number(device.longitude).toFixed(3)}`,
     openMeteo: openData,
-    aemet: aemet || null,
-    advisories: forecastAdvisories(advisoryForecast),
+    aemet: aemetResponse,
+    comparison: { ...comparison, proximity: aemetResponse?.observation?.proximity ?? null },
+    advisories: forecastAdvisories(advisoryForecast,
+      aemet?.forecast?.days?.length ? 'AEMET' : (openData?.daily?.length ? 'Open-Meteo' : null)),
     errors: mergeWeatherErrors(aemet?.errors || [], errors),
     aemetMissing,
     stale: Boolean(openData && !isFresh(openData)),

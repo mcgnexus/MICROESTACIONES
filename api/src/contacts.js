@@ -7,10 +7,12 @@ import { audit } from './audit.js';
 import { sha256 } from './security.js';
 import { normalizePhone } from './leads.js';
 import { enqueueVerificationCode } from './notify.js';
+import { otpDebugEnabled } from './env.js';
+import { markMetric, metricFailure } from './analytics.js';
 
 export const CONTACT_CHANNELS = ['whatsapp', 'email'];
 export const MAX_VERIFICATION_ATTEMPTS = 5;
-export const VERIFICATION_TTL_MINUTES = 10;
+export const VERIFICATION_TTL_MINUTES = Math.max(1, Math.min(60, Number(process.env.VERIFICATION_TTL_MINUTES) || 10));
 
 const codeSchema = z.string().regex(/^\d{6}$/);
 
@@ -143,8 +145,8 @@ router.post('/:channel/verify', csrfGuard, async (req, res) => {
     status: 'verification_pending',
     channel,
     expiresAt,
-    // Solo en entornos de desarrollo con OTP_DEBUG=true, para poder probar sin proveedor.
-    ...(process.env.OTP_DEBUG === 'true' ? { devCode: code } : {}),
+    // Solo fuera de producción y con OTP_DEBUG=true, para poder probar sin proveedor.
+    ...(otpDebugEnabled() ? { devCode: code } : {}),
   });
 });
 
@@ -178,6 +180,7 @@ router.post('/:channel/confirm', csrfGuard, async (req, res) => {
     await tx`UPDATE subscriber_contacts SET verified_at = now(), updated_at = now() WHERE id = ${contact.id}`;
   });
   await audit(sql, req, 'contact.verified', 'subscriber', String(req.subscriber.id), null, { channel });
+  await markMetric(sql, 'contact_verified', { subscriberId: req.subscriber.id }).catch(metricFailure);
   res.json({ verified: true, channel });
 });
 

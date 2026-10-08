@@ -2,6 +2,8 @@ import {
   $, api, escapeText, dateText, roleLabel, planLabel, isAdmin,
 } from './ui.js';
 import { mountAdminStatistics } from './admin-statistics.js';
+import { mountProspects } from './prospects.js';
+import { mountAdminAnalytics } from './admin-analytics.js';
 
 const ROLES = ['admin', 'operator', 'viewer'];
 const PLANS = ['free', 'pro', 'enterprise'];
@@ -11,22 +13,49 @@ const LEAD_STATUS_LABELS = {
   piloto_activo: 'Piloto activo', cliente: 'Cliente', descartado: 'Descartado',
 };
 const ACTIVITY_LABELS = { agricultura: 'Agricultura', ganaderia: 'Ganadería', mixta: 'Agricultura y ganadería', otra: 'Otra' };
+const CONSENT_CHANNELS = ['email', 'whatsapp'];
+const CHANNEL_LABELS = { email: 'Correo', whatsapp: 'WhatsApp' };
+
+function advertisingBadges(commercial) {
+  const active = CONSENT_CHANNELS.filter((channel) => commercial?.[channel] === true);
+  return active.length
+    ? active.map((channel) => `<span class="badge badge-valid">${CHANNEL_LABELS[channel]}</span>`).join(' ')
+    : '<span class="badge badge-invalid">sin publicidad</span>';
+}
+
+function consentButtons(scope, id, commercial) {
+  return CONSENT_CHANNELS.map((channel) => {
+    const granted = commercial?.[channel] === true;
+    return `<button type="button" class="quiet" data-consent-scope="${scope}" data-consent-id="${id}"
+      data-consent-channel="${channel}" data-consent-action="${granted ? 'revoked' : 'granted'}">
+      ${granted ? 'Quitar' : 'Dar'} ${CHANNEL_LABELS[channel]}</button>`;
+  }).join(' ');
+}
 const INTEREST_LABELS = {
   heladas: 'Heladas', calor: 'Golpes de calor', tormentas: 'Tormentas',
   viento: 'Viento', humedad: 'Humedad', general: 'Información general',
+  futura_instalacion: 'Futura instalación',
 };
 
 function subscriberRow(row) {
+  const profile = row.profile
+    ? [row.profile.activity && (ACTIVITY_LABELS[row.profile.activity] || row.profile.activity),
+        row.profile.municipality, row.profile.cropOrLivestock].filter(Boolean).join(' · ')
+    : '';
   return `<tr>
-    <td>${escapeText(row.email)}<br><span class="badge badge-muted">${row.active ? 'activo' : 'desactivado'}</span></td>
+    <td>${escapeText(row.email)}<br>
+      <span class="badge badge-muted">registrado</span>
+      ${row.verified
+        ? '<span class="badge badge-valid">verificado</span>'
+        : '<span class="badge badge-warn">sin verificar</span>'}
+      ${row.active ? '' : '<span class="badge badge-invalid">desactivado</span>'}
+      ${profile ? `<div class="alert-detail">${escapeText(profile)}</div>` : ''}</td>
     <td><select data-role="${row.id}">${ROLES.map((role) =>
       `<option value="${role}" ${row.role === role ? 'selected' : ''}>${roleLabel(role)}</option>`).join('')}</select></td>
     <td><select data-plan="${row.id}">${PLANS.map((plan) =>
       `<option value="${plan}" ${row.plan === plan ? 'selected' : ''}>${planLabel(plan)}</option>`).join('')}</select></td>
     <td><label class="check"><input type="checkbox" data-active="${row.id}" ${row.active ? 'checked' : ''}> activo</label></td>
-    <td>${row.communicationConsent
-      ? `<span class="badge badge-valid">consentido</span><br><small>${dateText(row.consentAt)}</small>`
-      : '<span class="badge badge-invalid">sin consentimiento</span>'}</td>
+    <td>${advertisingBadges(row.commercial)}<div class="row-actions">${consentButtons('subscriber', row.id, row.commercial)}</div></td>
     <td>${row.stationCount} · ${row.sessionCount} sesiones</td>
     <td class="row-actions">
       <button type="button" data-access="${row.id}" data-email="${escapeText(row.email)}">Accesos</button>
@@ -38,14 +67,15 @@ function subscriberRow(row) {
 function manualRow(row) {
   const digits = String(row.address || '').replace(/[^\d]/g, '');
   const text = row.body || row.subject || '';
-  const link = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
+  const expired = row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now();
+  const link = digits && !expired ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
   return `<tr>
-    <td>${dateText(row.createdAt)}</td>
+    <td>${dateText(row.createdAt)}${row.expiresAt ? `<div class="alert-detail">${expired ? 'Caducado' : `Caduca ${dateText(row.expiresAt)}`}</div>` : ''}</td>
     <td>${escapeText(row.address)}</td>
     <td><details><summary>Ver mensaje</summary><pre>${escapeText(text)}</pre></details></td>
     <td class="row-actions">
       ${link ? `<a class="button-link" href="${escapeText(link)}" target="_blank" rel="noopener noreferrer">Abrir WhatsApp</a>` : ''}
-      <button type="button" data-outbox-sent="${escapeText(row.id)}">Marcar enviado</button>
+      ${expired ? '<span class="badge badge-invalid">No enviar</span>' : `<button type="button" data-outbox-sent="${escapeText(row.id)}">Marcar enviado</button>`}
     </td>
   </tr>`;
 }
@@ -57,13 +87,19 @@ function leadRow(lead) {
     lead.cropOrLivestock,
     INTEREST_LABELS[lead.interest] || lead.interest,
   ].filter(Boolean).join(' · ');
+  const campaign = lead.campaign?.source || lead.campaign?.campaign
+    ? `<div class="alert-detail">captación: ${escapeText([lead.campaign.source, lead.campaign.campaign].filter(Boolean).join(' · '))}</div>`
+    : '';
+  const followUp = lead.nextContactAt ? `<div class="alert-detail">próximo contacto: ${dateText(lead.nextContactAt)}</div>` : '';
   return `<tr>
-    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div></td>
-    <td>${escapeText(lead.zone || '—')}<div class="alert-detail">${escapeText(detail || '—')}</div></td>
+    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div>${campaign}</td>
+    <td>${escapeText(lead.zone || '—')}<div class="alert-detail">${escapeText(detail || '—')}</div>${followUp}</td>
     <td>${dateText(lead.createdAt)}</td>
     <td><select data-lead-status="${lead.id}">${LEAD_STATUSES.map((status) =>
       `<option value="${status}" ${lead.status === status ? 'selected' : ''}>${LEAD_STATUS_LABELS[status]}</option>`).join('')}</select></td>
+    <td>${advertisingBadges(lead.commercial)}<div class="row-actions">${consentButtons('lead', lead.id, lead.commercial)}</div></td>
     <td class="row-actions">
+      <button type="button" data-next-contact="${lead.id}">Próximo contacto</button>
       <button type="button" data-activate="${lead.id}" data-email="${escapeText(lead.email || '')}">Crear cuenta</button>
     </td>
   </tr>`;
@@ -96,10 +132,13 @@ export async function renderAdmin(root) {
   root.innerHTML = `
     <div class="page-heading"><div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Usuarios, accesos y trazabilidad</h1></div></div>
     <p class="error" data-error role="alert"></p>
+    <section class="panel" data-analytics></section>
+    <section class="panel" data-prospects></section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SUSCRIPTORES</p><h2>Roles, planes y consentimiento</h2></div></div>
+      <div class="section-heading"><div><p class="eyebrow">SUSCRIPTORES</p><h2>Registrados, verificados y publicidad</h2>
+        <p class="hint" data-audience-counts></p></div></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Usuario</th><th>Rol</th><th>Plan</th><th>Estado</th><th>Consentimiento</th><th>Acceso</th><th></th></tr></thead>
+        <thead><tr><th>Usuario</th><th>Rol</th><th>Plan</th><th>Estado</th><th>Publicidad</th><th>Acceso</th><th></th></tr></thead>
         <tbody data-subscribers></tbody>
       </table></div>
     </section>
@@ -114,7 +153,7 @@ export async function renderAdmin(root) {
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">SOLICITUDES WEB</p><h2>Fincas que piden alertas</h2></div></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Contacto</th><th>Finca</th><th>Fecha</th><th>Estado</th><th></th></tr></thead>
+        <thead><tr><th>Contacto</th><th>Finca</th><th>Fecha</th><th>Estado</th><th>Publicidad</th><th></th></tr></thead>
         <tbody data-leads></tbody>
       </table></div>
     </section>
@@ -164,7 +203,7 @@ export async function renderAdmin(root) {
   async function load() {
     error('');
     try {
-      const [{ subscribers }, { requests }, { leads }, { outbox }, audit] = await Promise.all([
+      const [{ subscribers, counts }, { requests }, { leads }, { outbox }, audit] = await Promise.all([
         api('/api/v1/admin/subscribers'),
         api('/api/v1/admin/pilot-requests'),
         api('/api/v1/admin/leads'),
@@ -172,10 +211,14 @@ export async function renderAdmin(root) {
         api('/api/v1/admin/audit?limit=100'),
       ]);
       $('[data-subscribers]', root).innerHTML = subscribers.map(subscriberRow).join('');
+      if (counts) {
+        $('[data-audience-counts]', root).textContent =
+          `Registrados: ${counts.registered} · Verificados: ${counts.verified} · Autorizados para publicidad: ${counts.advertising}`;
+      }
       $('[data-manual]', root).innerHTML = outbox.map(manualRow).join('')
         || '<tr><td colspan="4">No hay envíos manuales pendientes.</td></tr>';
       $('[data-leads]', root).innerHTML = leads.map(leadRow).join('')
-        || '<tr><td colspan="5">Sin solicitudes web.</td></tr>';
+        || '<tr><td colspan="6">Sin solicitudes web.</td></tr>';
       $('[data-pilots]', root).innerHTML = requests.map(pilotRow).join('')
         || '<tr><td colspan="6">Sin solicitudes de piloto.</td></tr>';
       $('[data-audit]', root).innerHTML = audit.entries.map((entry) => `<tr>
@@ -219,6 +262,8 @@ export async function renderAdmin(root) {
   root.onclick = async (event) => {
     const button = event.target.closest('button');
     if (!button) return;
+    if (button.disabled) return;
+    button.disabled = true;
     try {
       if (button.dataset.access) await loadAccess(button.dataset.access);
       else if (button.dataset.accessClose !== undefined) $('[data-access-panel]', root).classList.add('hidden');
@@ -228,6 +273,23 @@ export async function renderAdmin(root) {
       } else if (button.dataset.revoke) {
         await api(`/api/v1/admin/subscribers/${button.dataset.subscriber}/access/${encodeURIComponent(button.dataset.revoke)}`, { method: 'DELETE' });
         await loadAccess(button.dataset.subscriber);
+      } else if (button.dataset.consentScope) {
+        const scope = button.dataset.consentScope;
+        const base = scope === 'subscriber'
+          ? `/api/v1/admin/subscribers/${button.dataset.consentId}/consents`
+          : `/api/v1/admin/leads/${button.dataset.consentId}/consents`;
+        await api(base, { method: 'POST', body: JSON.stringify({
+          channel: button.dataset.consentChannel, action: button.dataset.consentAction,
+        }) });
+        await load();
+      } else if (button.dataset.nextContact) {
+        const value = window.prompt('Fecha del próximo contacto (AAAA-MM-DD, vacío para borrar):', '');
+        if (value === null) return;
+        const next_contact_at = value ? new Date(`${value}T09:00:00`).toISOString() : null;
+        await api(`/api/v1/admin/leads/${button.dataset.nextContact}`, {
+          method: 'PATCH', body: JSON.stringify({ next_contact_at }),
+        });
+        await load();
       } else if (button.dataset.activate) {
         const email = window.prompt('Correo del nuevo suscriptor:', button.dataset.email || '') || '';
         if (!email) return;
@@ -255,9 +317,13 @@ export async function renderAdmin(root) {
       }
     } catch (error_) {
       error(`No se pudo completar la acción: ${error_.message}`);
+    } finally {
+      button.disabled = false;
     }
   }
 
   await load();
+  await mountProspects($('[data-prospects]', root));
+  await mountAdminAnalytics($('[data-analytics]', root));
   await mountAdminStatistics($('[data-statistics-panel]', root));
 }

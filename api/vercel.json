@@ -5,6 +5,12 @@
       "maxDuration": 30
     }
   },
+  "crons": [
+    {
+      "path": "/api/v1/maintenance/scheduler",
+      "schedule": "0 6 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

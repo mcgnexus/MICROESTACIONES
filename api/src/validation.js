@@ -23,12 +23,15 @@ const CHANNELS = [
 ];
 
 // Devuelve las columnas a guardar, is_validated, validation_flags, motivo y raw_payload.
-export function evaluateMeasurement(record) {
+export const FUTURE_CLOCK_TOLERANCE_MS = 5 * 60 * 1000;
+
+export function evaluateMeasurement(record, { now = new Date(), futureToleranceMs = FUTURE_CLOCK_TOLERANCE_MS } = {}) {
   const columns = {};
   const raw = {};
   const reasons = [];
   let validationFlags = 0;
-  let isValidated = true;
+  let hasAdmissibleChannel = false;
+  let timeValid = record.quality !== 0;
 
   for (const channel of CHANNELS) {
     const value = record[channel.key];
@@ -36,35 +39,52 @@ export function evaluateMeasurement(record) {
       columns[channel.column] = null;
       continue;
     }
-    if (value < channel.min || value > channel.max) {
+    const channelFlagValid = channel.deviceBit == null || (record.flags & channel.deviceBit) !== 0;
+    if (value < channel.min || value > channel.max || !channelFlagValid) {
       // Valor imposible: la columna queda nula pero se conserva el original.
       columns[channel.column] = null;
       raw[channel.key] = value;
       validationFlags |= channel.vflag;
-      isValidated = false;
-      reasons.push(`${channel.label}_fuera_de_rango`);
+      reasons.push(value < channel.min || value > channel.max
+        ? `${channel.label}_fuera_de_rango` : `${channel.label}_marcada_no_valida`);
       continue;
     }
     columns[channel.column] = value;
-    if (channel.deviceBit != null && (record.flags & channel.deviceBit) === 0) {
-      validationFlags |= channel.vflag;
-      isValidated = false;
-      reasons.push(`${channel.label}_marcada_no_valida`);
-    }
+    hasAdmissibleChannel = true;
   }
 
-  // quality 0 = TIME_NO_REFERENCE: la hora observada no es fiable.
+  // time_quality 0 = TIME_NO_REFERENCE. Los valores se conservan, pero no
+  // pueden alimentar métricas cronológicas ni alertas actuales.
   if (record.quality === 0) {
     validationFlags |= VFLAG.TIME;
-    isValidated = false;
     reasons.push('hora_sin_referencia');
+    raw.ts = record.ts;
+    raw.quality = record.quality;
   }
+
+  if (record.ts != null && Number.isFinite(record.ts)
+      && record.ts * 1000 > now.getTime() + futureToleranceMs) {
+    validationFlags |= VFLAG.TIME;
+    timeValid = false;
+    raw.timestamp = record.ts;
+    raw.quality = record.quality;
+    reasons.push('hora_futura');
+  }
+
+  // is_validated significa que hay al menos un canal admisible y tiempo
+  // utilizable. validation_flags conserva defectos parciales de otros canales.
+  const isValidated = hasAdmissibleChannel && timeValid;
 
   return {
     columns,
     is_validated: isValidated,
     validation_flags: validationFlags,
-    invalidated_reason: isValidated ? null : reasons.join(','),
+    invalidated_reason: reasons.length ? reasons.join(',') : null,
+    time_valid: timeValid,
+    has_admissible_channel: hasAdmissibleChannel,
+    valid_values: Object.fromEntries(CHANNELS
+      .filter((channel) => columns[channel.column] != null)
+      .map((channel) => [channel.key, columns[channel.column]])),
     raw_payload: Object.keys(raw).length ? raw : null,
   };
 }

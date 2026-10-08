@@ -1,10 +1,13 @@
 import {
   $, api, escapeText, dateText, dayText, numberText, pressureMbar, pressureText, chartTrend,
-  chartSection, connectivityBadge, openDialog, makeChart, trendWindowRows, session, renderSupport, isAdmin,
+  chartSection, connectivityBadge, openDialog, makeChart, trendWindowRows, session, renderSupport,
+  isAdmin, canEdit,
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
 import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
 import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison } from './farm-cards.js';
+import { coverageCaveat, caveatBlock } from './alert-copy.js';
+import { classifyNotice } from './notice-taxonomy.js';
 
 const REFRESH_MS = 15 * 60 * 1000;
 
@@ -141,10 +144,8 @@ function buildLocalMetricDetail(item, metricKey) {
   const reference = key === 'pressureMbar' ? median(rows.map((row) => row[key])) : null;
   const chart = rows.some((row) => row[key] != null) ? makeChart(meta.label, rows, key, meta.color, meta.unit, meta.digits) : '';
   const observation = item.weather?.aemet?.observation;
-  const aemetValue = meta.aemet && observation ? observation[meta.aemet] : null;
-  const comparison = observation
-    ? `<div class="detail-block"><h4>Comparación con AEMET</h4><div class="reading-grid">${valueCard({ key, value: rawValue(item.latest, key), meta })}${valueCard({ key, value: aemetValue, meta, label: `${meta.label} · AEMET` })}</div><p class="hint">AEMET ${escapeText(observation.stationId || '')} · ${dateText(observation.observedAt)}</p></div>`
-    : '';
+  const comparison = key === 'temperatureC' ? temperatureComparisonBlock(item.weather?.comparison)
+    : observation && meta.aemet ? `<div class="detail-block"><h4>Referencias independientes</h4><div class="reading-grid">${valueCard({ key, value: rawValue(item.latest, key), meta, label: `${meta.label} · microestación` })}${valueCard({ key, value: observation[meta.aemet], meta, label: `${meta.label} · AEMET` })}</div><p class="hint">No se calcula diferencia para estas lecturas. Microestación: ${dateText(item.latest?.observedAt)} · AEMET ${escapeText(observation.stationId || '')}: ${dateText(observation.observedAt)}.</p></div>` : '';
   return {
     title: `${meta.label} · ${item.device?.name || 'Microestación'}`,
     body: `${chart}${lastReadingsBlock(recentRows, key, meta, reference)}${forecastBlock(item, key)}${comparison}`,
@@ -163,7 +164,11 @@ function buildAemetMetricDetail(item, metricKey) {
     const localMeta = METRIC_META[meta.local];
     const rows = item.trendHistory?.length ? chartRowsFor({ ...item, history: item.trendHistory }, meta.local) : chartRowsFor(item, meta.local);
     const reference = meta.local === 'pressureMbar' ? median(rows.map((row) => row[meta.local])) : null;
-    blocks.push(`<div class="detail-block"><h4>Comparación con la microestación</h4><div class="reading-grid">${valueCard({ key: meta.local, value: rawValue(item.latest, meta.local), meta: localMeta })}${aemetCard}</div></div>`);
+    if (meta.local === 'temperatureC') {
+      blocks.push(temperatureComparisonBlock(item.weather?.comparison));
+    } else {
+      blocks.push(`<div class="detail-block"><h4>Referencias independientes · sin diferencia calculada</h4><div class="reading-grid">${valueCard({ key: meta.local, value: rawValue(item.latest, meta.local), meta: localMeta, label: `${localMeta.label} · microestación` })}${aemetCard}</div><p class="hint">Microestación: ${dateText(item.latest?.observedAt)} · AEMET ${escapeText(observation?.stationId || '')}: ${dateText(observation?.observedAt)}.</p></div>`);
+    }
     blocks.push(lastReadingsBlock(rows, meta.local, localMeta, reference));
   }
   blocks.push(forecastBlock(item, metricKey === 'pressureHpa' ? 'pressureMbar' : metricKey));
@@ -181,6 +186,7 @@ function buildSummaryDetail(item) {
   const facts = [
     ['Estación', device?.name],
     ['Última lectura', dateText(latest?.observedAt)],
+    ['Actualidad de datos', status?.dataFreshness === 'stale' ? 'Datos antiguos' : status?.dataFreshness === 'fresh' ? 'Reciente' : 'Sin datos válidos'],
     ['Conectividad', status?.connectivity],
   ].filter(([, value]) => value != null);
   return {
@@ -254,21 +260,21 @@ function readingCard({ label, icon, value, unit, tone, trend = '', detail = '' }
   return `<div class="reading-card ${tone}"${detail}><span class="reading-label"><span class="reading-icon" aria-hidden="true">${icon}</span>${label}</span><div class="reading-value"><strong>${value == null ? '—' : value}</strong><small>${unit || ''}</small>${trend}</div></div>`;
 }
 
-function heroBlock({ latest, history, weather, detailKey }) {
+function heroBlock({ latest, history, weather, status, detailKey }) {
   const aemetDay = weather?.aemet?.forecast?.days?.[0];
   const openDay = weather?.openMeteo?.daily?.[0];
   const forecast = aemetDay || openDay;
-  const temperature = latest?.temperatureC ?? weather?.aemet?.observation?.temperatureC ?? weather?.openMeteo?.current?.temperatureC;
-  const temperatureSource = latest?.temperatureC != null ? 'MICROESTACIÓN · MEDICIÓN DIRECTA'
-    : weather?.aemet?.observation?.temperatureC != null ? 'AEMET · OBSERVACIÓN REAL'
-      : weather?.openMeteo?.current?.temperatureC != null ? 'OPEN-METEO · ESTIMACIÓN' : 'TEMPERATURA · SIN DATO';
+  const currentLocal = status?.dataFreshness !== 'stale';
+  const temperature = currentLocal ? latest?.temperatureC : null;
+  const temperatureSource = !currentLocal ? 'MICROESTACIÓN · ÚLTIMO DATO ANTIGUO'
+    : latest?.temperatureC != null ? 'MICROESTACIÓN · MEDICIÓN DIRECTA' : 'MICROESTACIÓN · SIN MEDICIÓN';
   const forecastProvider = aemetDay ? 'AEMET' : openDay ? 'Open-Meteo' : null;
   const forecastSky = aemetDay?.sky
     ? aemetDay.sky.split(',')[0].trim()
     : (openDay ? weatherText(openDay.weatherCode) : 'Sin previsión disponible');
   const minimum = aemetDay?.temperatureMinC ?? openDay?.temperatureMinC;
   const maximum = aemetDay?.temperatureMaxC ?? openDay?.temperatureMaxC;
-  return `<section class="station-hero"${detailAttrs(detailKey, '__summary')}>
+  return `<section class="station-hero" data-observed-at="${escapeText(latest?.observedAt || '')}"${detailAttrs(detailKey, '__summary')}>
     <div class="hero-ambient" aria-hidden="true"></div>
     <div class="hero-content">
       <div class="hero-source-row"><span class="hero-local-badge"><span aria-hidden="true">●</span> ${temperatureSource}</span>${latest?.temperatureC != null ? trendArrow(history, 'temperatureC') : ''}</div>
@@ -276,7 +282,7 @@ function heroBlock({ latest, history, weather, detailKey }) {
         <div class="hero-temperature"><strong>${numberText(temperature)}</strong><span>°C</span></div>
         <div class="hero-forecast"><span class="hero-weather-icon" aria-hidden="true">${forecast ? (aemetDay ? '🌤️' : '☁️') : '🌱'}</span><strong>${escapeText(forecastSky)}</strong><small>${forecastProvider ? `Previsión · ${forecastProvider}` : 'Previsión no disponible'}</small>${minimum != null || maximum != null ? `<small>${numberText(minimum)}° / ${numberText(maximum)}°</small>` : ''}</div>
       </div>
-      <div class="hero-readout-footer"><span>Microestación · ${dateText(latest?.observedAt)}</span><span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} mbar</span></div>
+      <div class="hero-readout-footer"><span>Medición local · ${dateText(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${currentLocal ? numberText(latest?.humidityPct) : '—'}%</span><span class="hero-separator">·</span><span>Presión ${currentLocal ? pressureText(latest?.pressurePa) : '—'} mbar</span></div>
     </div>
   </section>`;
 }
@@ -303,13 +309,18 @@ function comparisonBlock({ latest, history, trendHistory, weather, sensors, stat
     readingCard({ label: 'Viento', icon: '💨', value: numberText(observation?.windKmh), unit: 'km/h', tone: valueTone('wind', observation?.windKmh), detail: detailAttrs(detailKey, 'windKmh', 'aemet') }),
     readingCard({ label: 'Racha', icon: '🌬️', value: numberText(observation?.windGustKmh), unit: 'km/h', tone: valueTone('wind', observation?.windGustKmh), detail: detailAttrs(detailKey, 'windGustKmh', 'aemet') }),
   ].join('');
+  const observationStatus = weather.aemet?.observationStatus || 'unavailable';
+  const observationCacheAge = weather.aemet?.observationAgeSeconds == null ? ''
+    : ` · respuesta utilizable hace ${Math.round(weather.aemet.observationAgeSeconds / 60)} min`;
   const aemetStatus = observation
-    ? `Estación ${escapeText(observation.stationId)} · medida ${dateText(observation.observedAt)}`
-    : 'Observación AEMET no disponible';
+    ? `Estación ${escapeText(observation.stationId)} · medida ${dateText(observation.observedAt)}${observationStatus === 'stale' ? ` · caché antigua${observationCacheAge}` : ''}`
+    : observationStatus === 'unconfigured' ? 'Consulta AEMET no configurada'
+      : observationStatus === 'empty' ? 'Sin observación en la respuesta AEMET'
+        : 'Observación AEMET no disponible';
   const proximity = observation?.proximity;
   const proximityNote = !observation ? ''
     : proximity
-      ? `<p class="aemet-proximity">Distancia ${numberText(proximity.distanceKm, 1)} km · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} · microestación ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} · diferencia ${proximity.altitudeDifferenceM == null ? '—' : `${numberText(proximity.altitudeDifferenceM, 0)} m`}</p>`
+      ? `<p class="aemet-proximity">Distancia ${numberText(proximity.distanceKm, 1)} km · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} · microestación ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} · AEMET − microestación ${proximity.altitudeDifferenceM == null ? '—' : `${proximity.altitudeDifferenceM > 0 ? '+' : ''}${numberText(proximity.altitudeDifferenceM, 0)} m`}<br><small>Fuentes: ${escapeText(proximity.aemetAltitudeSource || proximity.aemetLocationSource || 'sin metadato AEMET')} · ${escapeText(proximity.microAltitudeSource || proximity.microLocationSource || 'sin metadato local')}. Altitud y distancia describen los emplazamientos; no explican por sí solas la diferencia térmica.</small></p>`
       : '<p class="aemet-proximity">Faltan coordenadas para calcular la distancia y la diferencia de altitud con la microestación.</p>';
   const upcoming = [
     ['💨', 'Viento'], ['🌧️', 'Precipitación'],
@@ -319,6 +330,7 @@ function comparisonBlock({ latest, history, trendHistory, weather, sensors, stat
   return `<div class="reading-comparison">
     <section class="reading-source local-readings"><div class="reading-source-head"><h3>Microestación</h3><small>${dateText(latest?.observedAt)}</small></div><div class="reading-grid">${local}</div></section>
     <section class="reading-source aemet-readings"><div class="reading-source-head"><h3>AEMET</h3><small>${aemetStatus}</small></div><div class="reading-grid">${aemetCards}</div>${proximityNote}</section>
+    ${temperatureComparisonBlock(weather?.comparison)}
     <section class="upcoming-sensors-panel"><div class="upcoming-heading"><h3>Próximas mediciones locales</h3><small>AEMET aporta ahora viento y precipitación</small></div><div class="upcoming-grid">${upcoming}</div></section>
     <p class="reading-legend"><span class="legend-green">●</span> rango habitual <span class="legend-blue">●</span> frío/fresco <span class="legend-amber">●</span> precaución <span class="legend-red">●</span> extremo. La presión se colorea respecto a la mediana del periodo.</p>
   </div>`;
@@ -330,6 +342,28 @@ const ADVISORY_PATTERNS = {
   lluvia: /lluvia|precipit|tormenta|chubasco/i,
   viento: /viento|racha/i,
 };
+
+function temperatureComparisonBlock(comparison) {
+  if (!comparison) return '';
+  const local = comparison.local;
+  const aemet = comparison.aemet;
+  if (!local || !aemet) return `<section class="detail-block temperature-comparison"><h4>Comparación temporal de temperatura</h4><p class="hint">No hay mediciones emparejables. Las observaciones local y AEMET se mantienen independientes.</p></section>`;
+  const difference = comparison.state === 'matched' && comparison.differenceC != null
+    ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
+    : 'Sin diferencia directa';
+  const offset = comparison.timeOffsetSeconds == null ? ''
+    : ` · separación ${Math.abs(comparison.timeOffsetSeconds)} s (microestación ${comparison.timeOffsetSeconds >= 0 ? 'posterior' : 'anterior'})`;
+  const reason = comparison.state === 'matched'
+    ? `Emparejadas dentro de ±${comparison.windowMinutes} min. Diferencia = microestación − AEMET${offset}.`
+    : `No hay pareja dentro de ±${comparison.windowMinutes} min; se muestran ambas horas y no se calcula diferencia${offset}.`;
+  const proximity = comparison.proximity;
+  const metadata = proximity ? `<p class="aemet-proximity">${numberText(proximity.distanceKm, 1)} km · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} (${escapeText(proximity.aemetAltitudeSource || 'fuente no disponible')}) · microestación ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} (${escapeText(proximity.microAltitudeSource || 'fuente no disponible')}).</p>` : '';
+  return `<section class="detail-block temperature-comparison"><h4>Comparación temporal de temperatura</h4><div class="reading-grid">
+    ${readingCard({ label: `Microestación · ${escapeText(local.location || 'zona configurada')}`, icon: '🌡️', value: numberText(local.temperatureC), unit: `°C · ${dateText(local.observedAt)}`, tone: 'tone-neutral' })}
+    ${readingCard({ label: `AEMET · ${escapeText(aemet.stationId || 'estación')}`, icon: '📡', value: numberText(aemet.temperatureC), unit: `°C · ${dateText(aemet.observedAt)}`, tone: 'tone-neutral' })}
+    ${readingCard({ label: 'Microestación − AEMET', icon: '↕️', value: difference, unit: '', tone: comparison.state === 'matched' ? 'tone-neutral' : 'tone-muted' })}
+  </div><p class="hint">${escapeText(reason)} Diferencia positiva: microestación más cálida; negativa: más fría.</p>${metadata}<p class="hint">La diferencia puede relacionarse con distancia, altitud, exposición y entorno. No se atribuye a un único factor.</p></section>`;
+}
 
 function weatherBlock(weather, detailKey) {
   if (!weather?.configured) return '';
@@ -351,25 +385,35 @@ function weatherBlock(weather, detailKey) {
   const openDays = open?.daily || [];
   const hours = aemetHasForecast ? [] : (open?.hourly || []).slice(0, 24).filter((_, index) => index % 3 === 0);
   const hourlyForecast = hours.length ? `<details class="weather-hourly"><summary>Previsión por horas · próximas 24 h</summary><div class="weather-hours">${hours.map((hour) => `<div><strong>${dateText(hour.forecastFor)}</strong><span><span class="weather-icon" aria-hidden="true">🌡️</span> ${numberText(hour.temperatureC)} °C · <span class="weather-icon" aria-hidden="true">💧</span> ${numberText(hour.humidityPct)} %</span><span><span class="weather-icon" aria-hidden="true">🌧️</span> ${numberText(hour.precipitationMm)} mm${hour.precipitationProbabilityPct != null ? ` · ${numberText(hour.precipitationProbabilityPct, 0)} %` : ''}</span><span><span class="weather-icon" aria-hidden="true">💨</span> ${numberText(hour.windKmh)} km/h · rachas ${numberText(hour.windGustKmh)} km/h</span></div>`).join('')}</div></details>` : '';
-  const openForecast = !aemetHasForecast && openDays.length ? `<div class="weather-provider"><h4>Previsión Open-Meteo · 5 días</h4><div class="weather-days">${openDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
+  const openForecast = !aemetHasForecast && openDays.length ? `<div class="weather-provider"><h4>Previsión Open-Meteo · 5 días · actualizado ${dateText(open.fetchedAt)}</h4><div class="weather-days">${openDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
     <strong>${dayText(`${day.date}T12:00:00`)}</strong><span>${weatherText(day.weatherCode)}</span>
     <span><span class="weather-icon" aria-hidden="true">🌡️</span> ${numberText(day.temperatureMinC)}–${numberText(day.temperatureMaxC)} °C</span>
     <span><span class="weather-icon" aria-hidden="true">🌧️</span> ${numberText(day.precipitationMm)} mm${day.precipitationProbabilityPct != null ? ` · ${numberText(day.precipitationProbabilityPct, 0)} %` : ''}</span>
     <span><span class="weather-icon" aria-hidden="true">💨</span> ${numberText(day.windKmh)} km/h · rachas ${numberText(day.windGustKmh)} km/h</span>
   </div>`).join('')}</div>${hourlyForecast}</div>` : hourlyForecast;
   const aemetDays = weather.aemet?.forecast?.days || [];
-  const aemetForecast = aemetDays.length ? `<div class="weather-provider"><h4>Previsión municipal AEMET · ${escapeText(weather.aemet.forecast.municipality || weather.location)}</h4><div class="weather-days">${aemetDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
+  const aemetForecastAge = weather.aemet?.forecastStatus === 'stale' && weather.aemet?.forecastAgeSeconds != null
+    ? ` · respuesta antigua (${Math.round(weather.aemet.forecastAgeSeconds / 60)} min)` : '';
+  const aemetForecast = aemetDays.length ? `<div class="weather-provider"><h4>Previsión municipal AEMET · ${escapeText(weather.aemet.forecast.municipality || weather.location)} · actualizado ${dateText(weather.aemet.forecastFetchedAt)}${aemetForecastAge}</h4><div class="weather-days">${aemetDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
     <strong>${dayText(`${String(day.date).slice(0, 10)}T12:00:00`)}</strong><span>${escapeText(day.sky || 'Sin descripción')}</span>
     <span><span class="weather-icon" aria-hidden="true">🌡️</span> ${numberText(day.temperatureMinC)}–${numberText(day.temperatureMaxC)} °C</span>
     <span><span class="weather-icon" aria-hidden="true">🌧️</span> Probabilidad máx. ${numberText(day.precipitationProbabilityPct, 0)} %</span>
     <span><span class="weather-icon" aria-hidden="true">💨</span> ${numberText(day.windKmh)} km/h ${escapeText(day.windDirection || '')}</span>
   </div>`).join('')}</div></div>` : '';
-  const officialAlerts = weather.aemet?.warnings?.length ? `<div class="weather-alert-group"><h4>Avisos oficiales AEMET</h4>${weather.aemet.warnings.map((alert) => `<article class="weather-alert official">
+  const warningStatus = weather.aemet?.warningsStatus || 'unavailable';
+  const warningAge = weather.aemet?.warningsAgeSeconds == null ? '' : ` · última consulta hace ${Math.round(weather.aemet.warningsAgeSeconds / 60)} min`;
+  const warningStatusText = warningStatus === 'current' ? `Consulta completada ${dateText(weather.aemet?.warningsFetchedAt)}`
+    : warningStatus === 'stale' ? `No se pudo actualizar; se conserva la última respuesta utilizable${warningAge}${weather.aemet?.warnings?.length ? '' : ', que no contiene avisos vigentes'}`
+      : warningStatus === 'unconfigured' ? 'Consulta AEMET no configurada para esta zona'
+        : 'No se ha podido consultar AEMET';
+  const officialAlerts = weather.aemet?.warnings?.length ? `<div class="weather-alert-group"><h4>Avisos oficiales AEMET</h4><p class="hint">${escapeText(warningStatusText)} · área ${escapeText(weather.aemet.warningsAreaCode || 'no indicada')}</p>${weather.aemet.warnings.map((alert) => `<article class="weather-alert official">
     <strong>${escapeText(alert.event || alert.headline || 'Aviso meteorológico')} · ${escapeText(alert.severity || 'Sin nivel')}</strong>
     ${alert.area ? `<span>${escapeText(alert.area)}</span>` : ''}
     ${alert.description ? `<p>${escapeText(alert.description)}</p>` : ''}
     <small>${alert.onset ? `Desde ${dateText(alert.onset)}` : ''}${alert.expires ? ` · hasta ${dateText(alert.expires)}` : ''}</small>
-  </article>`).join('')}</div>` : '';
+  </article>`).join('')}</div>` : warningStatus === 'current'
+    ? `<div class="weather-alert-group"><h4>Avisos oficiales AEMET</h4><p class="hint">Sin avisos vigentes en el área ${escapeText(weather.aemet?.warningsAreaCode || 'configurada')} · consultado ${dateText(weather.aemet?.warningsFetchedAt)}.</p></div>`
+      : `<div class="weather-alert-group"><h4>Avisos oficiales AEMET</h4><p class="hint">${escapeText(warningStatusText)}. No se interpreta un fallo de consulta como ausencia de avisos.</p></div>`;
   // Los riesgos orientativos no repiten un fenómeno ya cubierto por un aviso oficial.
   const warningsText = (weather.aemet?.warnings || [])
     .map((alert) => `${alert.event || ''} ${alert.headline || ''} ${alert.description || ''}`).join(' ');
@@ -426,9 +470,9 @@ export function renderStationCard(item) {
         <h2><a href="#/estaciones/${encodeURIComponent(device.id)}">${escapeText(device.name)}</a></h2>
         <p class="updated">Última actualización: ${dateText(updated)} ${latestNote}</p>
       </div>
-      <div class="station-tags">${connectivityBadge(status.connectivity)}<span class="badge badge-muted">Config v${status.configVersion}</span></div>
+      <div class="station-tags">${connectivityBadge(status.connectivity)}${status.dataFreshness === 'stale' ? '<span class="badge badge-warn">Datos antiguos</span>' : status.dataFreshness === 'unknown' ? '<span class="badge badge-muted">Sin datos válidos</span>' : ''}${canEdit() ? `<span class="badge badge-muted">Config v${status.configVersion}</span>` : ''}</div>
     </div>
-    ${heroBlock({ latest: displayLatest, history: trendHistory, weather, detailKey })}
+    ${heroBlock({ latest: displayLatest, history: trendHistory, weather, status, detailKey })}
     ${comparisonBlock({ latest: displayLatest, history, trendHistory, weather, sensors, status, detailKey })}
     ${weatherBlock(weather, detailKey)}
     <div class="${coverageClass}"><strong>Fiabilidad de lecturas</strong><p>${escapeText(coverage)}</p>${summary.expected && summary.coverage_pct < 90 ? '<p>La estación está perdiendo lecturas y requiere revisión de conectividad.</p>' : ''}</div>
@@ -438,21 +482,38 @@ export function renderStationCard(item) {
   </article>`;
 }
 
-function renderAlertRow(alert) {
+function renderAlertRow(alert, { technical = false } = {}) {
+  const meta = classifyNotice(alert);
+  // El valor crudo y la regla son información técnica: solo para administración.
+  const raw = technical
+    ? ` · dato: ${escapeText(JSON.stringify(alert.value))}`
+    : '';
   return `<div class="alert-row">
     <div><strong>${escapeText(alert.deviceName)} · ${escapeText(alert.message)}</strong>
-      <div class="alert-detail">${dateText(alert.observedAt)} · fuente: ${escapeText(alert.source || 'regla')} · dato: ${escapeText(JSON.stringify(alert.value))}</div></div>
+      <div class="alert-detail">${escapeText(meta.origin)}</div>
+      <div class="alert-detail">${dateText(alert.observedAt)} · ${escapeText(meta.sourceLabel)} · ${escapeText(meta.natureLabel)}${raw}</div></div>
     <span class="alert-level ${alert.level === 2 ? 'warning' : ''}">${alert.level === 1 ? 'Prioritario' : 'Aviso'}</span>
   </div>`;
 }
 
 function renderOpenAlert(alert) {
+  const meta = classifyNotice(alert);
   const tone = alert.level === 1 ? 'alert' : 'warn';
   return `<article class="plain-alert tone-${tone}">
     <div class="plain-alert-head"><strong>${escapeText(alert.message)}</strong>
-      <span class="overview-tag tone-${tone}">${alert.level === 1 ? 'Prioritario' : 'Aviso'}</span></div>
-    <p class="plain-alert-meta">${escapeText(alert.deviceName)} · ${dateText(alert.observedAt)}</p>
+      <span class="overview-tag tone-${tone}">${alert.level === 1 ? 'Prioritario' : 'Aviso'}</span>
+      <span class="badge badge-muted">${escapeText(meta.natureLabel)}</span></div>
+    <p class="plain-alert-meta">${escapeText(alert.deviceName)} · ${dateText(alert.observedAt)} · ${escapeText(meta.sourceLabel)}</p>
+    <p class="plain-alert-meta">${escapeText(meta.origin)}</p>
   </article>`;
+}
+
+// Un listado vacío nunca se lee como "no hay riesgo": si faltan datos o la
+// previsión está caída, se dice. Si todo está completo, se puede afirmar.
+function emptyAlertsHtml(caveat) {
+  return caveat
+    ? `<p class="warn-box"><strong>Sin avisos abiertos, pero esto no significa que no haya riesgo.</strong> ${escapeText(caveat.text)}</p>`
+    : '<p class="ok">No hay alertas abiertas. Estaciones con lecturas actuales y previsión disponible.</p>';
 }
 
 // Panel sencillo para el agricultor: estado, alertas, próximo riesgo, zonas,
@@ -506,15 +567,19 @@ async function renderSimplePanel(root) {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
       $('#simple-state', root).innerHTML = renderStateCards(data.devices);
-      const open = data.alerts.filter((alert) => !alert.closedAt);
+      const caveat = coverageCaveat(data.devices);
+      const engineOk = data.engine_verified !== false;
+      const visible = (list) => (engineOk ? list
+        : list.filter((alert) => classifyNotice({ ...alert, engineVerified: engineOk }).category !== 'threshold'));
+      const open = visible(data.alerts).filter((alert) => !alert.closedAt);
       $('#simple-alerts', root).innerHTML = open.length
         ? open.map(renderOpenAlert).join('')
-        : '<p class="ok">No hay alertas abiertas. Todo tranquilo.</p>';
-      $('#simple-next', root).innerHTML = renderNextRisk(nextRisk(data.devices, data.alerts));
+        : emptyAlertsHtml(caveat);
+      $('#simple-next', root).innerHTML = renderNextRisk(nextRisk(data.devices, visible(data.alerts)));
       $('#simple-zones', root).innerHTML = renderZoneComparison(data.devices);
-      $('#simple-history', root).innerHTML = data.alerts.length
-        ? data.alerts.map(renderAlertRow).join('')
-        : '<p class="empty">No hay avisos recientes.</p>';
+      $('#simple-history', root).innerHTML = visible(data.alerts).length
+        ? visible(data.alerts).map((alert) => renderAlertRow(alert, { technical: canEdit() })).join('')
+        : `<p class="empty">No hay avisos recientes.</p>${caveatBlock(caveat)}`;
       $('#simple-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
@@ -545,7 +610,177 @@ async function renderSimplePanel(root) {
   return () => { stopTimer(); document.removeEventListener('visibilitychange', onVisibility); };
 }
 
+// ---- Panel de demostración para usuarios registrados ----------------------
+// Solo lectura y solo sobre estaciones autorizadas para la demostración. No
+// incluye edición, borrado, reglas, configuración ni administración.
+const DEMO_PERIOD_HOURS = { '24h': 24, '7d': 168, '30d': 720 };
+
+const DEMO_EXPLANATIONS = [
+  ['Temperatura', 'Es la medida directa del aire. La mínima suele darse de madrugada y la máxima a primera hora de la tarde; por eso se indica la hora de cada extremo.', '°C'],
+  ['Humedad', 'Es la humedad relativa: cuánto vapor de agua contiene el aire respecto al máximo que admitiría a esa temperatura. Sube al enfriarse por la noche.', '%'],
+  ['Presión', 'Es la presión atmosférica. Se muestra en milibares (1 mbar = 100 Pa). Bajadas rápidas suelen acompañar a cambios de tiempo.', 'mbar'],
+];
+
+function demoMetricCard(metric, unit, digits) {
+  if (!metric || !metric.count) {
+    return `<div class="stat-card"><p class="eyebrow">${escapeText(metric?.label || '')} <small>${escapeText(unit)}</small></p><p class="empty">Sin datos en el periodo.</p></div>`;
+  }
+  const trend = metric.trend?.direction || 'insuficiente';
+  const slope = metric.trend?.slopePerHour != null ? ` · ${numberText(metric.trend.slopePerHour, 3)} ${unit}/h` : '';
+  return `<div class="stat-card">
+    <p class="eyebrow">${escapeText(metric.label)} <small>${escapeText(unit)}</small></p>
+    <div class="stat-row"><span>Mín</span><strong>${numberText(metric.min, digits)}</strong><span>${escapeText(stampText(metric.minAt))}</span></div>
+    <div class="stat-row"><span>Máx</span><strong>${numberText(metric.max, digits)}</strong><span>${escapeText(stampText(metric.maxAt))}</span></div>
+    <div class="stat-row"><span>Media</span><strong>${numberText(metric.avg, digits)}</strong><span>${metric.count} muestras</span></div>
+    <p class="${trend === 'insuficiente' ? 'hint' : 'coverage'}">Tendencia ${escapeText(trend)}${slope}</p>
+  </div>`;
+}
+
+function demoDailyTable(daily, unit, digits) {
+  if (!daily?.length) return '<p class="empty">Sin días completos en el periodo seleccionado.</p>';
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Día</th><th>Muestras</th><th>Mín</th><th>Hora mín.</th><th>Máx</th><th>Hora máx.</th><th>Media</th></tr></thead>
+    <tbody>${daily.map((day) => `<tr>
+      <td>${escapeText(day.date)}</td><td>${day.count}</td>
+      <td>${numberText(day.min, digits)} ${escapeText(unit)}</td><td>${escapeText(stampText(day.minAt))}</td>
+      <td>${numberText(day.max, digits)} ${escapeText(unit)}</td><td>${escapeText(stampText(day.maxAt))}</td>
+      <td>${numberText(day.avg, digits)} ${escapeText(unit)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderDemoAnalysis(data) {
+  const coverage = data.coverage;
+  const periodNote = `<p class="${data.period.complete ? 'hint' : 'warn-box'}">${escapeText(data.period.note)}</p>`;
+  const coverageBlock = `<div class="fact-grid">
+    <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
+    <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
+    <div><span>Cobertura</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
+    <div><span>Válidos</span><strong>${coverage.valid} (${coverage.invalid} inválidos)</strong></div>
+    <div><span>Hueco estimado</span><strong>${coverage.missing ?? '—'}</strong></div>
+  </div>`;
+  const dew = data.dewPoint;
+  const dewBlock = `<p class="coverage">Punto de rocío: <strong>${numberText(dew.value, 1)} °C</strong> <span class="badge badge-muted">Calculado</span>${dew.count ? ` · mín ${numberText(dew.min, 1)} / máx ${numberText(dew.max, 1)} °C en el periodo` : ''}</p>
+    <p class="hint">${escapeText(dew.method)} ${(dew.limitations || []).map(escapeText).join(' ')}</p>`;
+  const comparison = data.aemet.comparison;
+  const aemetBlock = comparison.matched
+    ? `<div class="fact-grid">
+        <div><span>Parejas (±${comparison.windowMinutes} min)</span><strong>${comparison.matched}</strong></div>
+        <div><span>Diferencia media</span><strong>${numberText(comparison.differences.avg, 2)} °C</strong></div>
+        <div><span>Rango de diferencia</span><strong>${numberText(comparison.differences.min, 1)} … ${numberText(comparison.differences.max, 1)} °C</strong></div>
+      </div><p class="hint">Diferencia = microestación − AEMET. Proveedor AEMET · estación ${escapeText(data.aemet.stationId || '—')} · última observación ${escapeText(stampText(data.aemet.lastObservedAt))}.</p>`
+    : `<p class="empty">Sin observaciones AEMET emparejables en el periodo (${data.aemet.observations} observaciones disponibles).</p>`;
+  return `
+    <div class="stat-grid">
+      ${demoMetricCard(data.metrics.temperature_c, '°C', 1)}
+      ${demoMetricCard(data.metrics.humidity_pct, '%', 1)}
+      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour) } : null }, 'mbar', 1)}
+    </div>
+    ${periodNote}
+    ${coverageBlock}
+    <h3>Resúmenes diarios · temperatura</h3>
+    ${demoDailyTable(data.weekly.dailyTemperature, '°C', 1)}
+    <h3>Punto de rocío <span class="badge badge-muted">Calculado</span></h3>
+    ${dewBlock}
+    <h3>Comparación histórica con AEMET <span class="badge badge-muted">Fuente externa</span></h3>
+    ${aemetBlock}
+    <p class="hint">${(data.limits || []).map(escapeText).join(' ')}</p>`;
+}
+
+async function renderDemoPanel(root) {
+  root.innerHTML = `
+    <div class="page-heading">
+      <div><p class="eyebrow">DEMOSTRACIÓN · SOLO LECTURA</p><h1>Panel ampliado</h1></div>
+      <label class="period-label">Periodo
+        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+      </label>
+    </div>
+    <p class="error" data-error role="alert"></p>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">QUÉ ES ESTO</p><h2>Herramientas ampliadas del registro</h2></div></div>
+      <p class="hint">Este panel usa <strong>solo estaciones autorizadas para la demostración</strong> y no permite editar, borrar ni configurar nada. Las estaciones privadas de terceros no son accesibles desde aquí.</p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Cómo se muestran aquí</h2></div></div>
+      <p class="hint">Registrarte <strong>no te suscribe a los avisos de la estación urbana</strong>: solo verás los avisos de las estaciones que se te concedan expresamente.
+        Cada aviso indica su categoría, su fuente, su fecha, su estado y su vigencia, y si es un dato <strong>real</strong>, una <strong>previsión</strong>,
+        un <strong>cálculo</strong> o una <strong>simulación</strong>. Los avisos de umbral local solo aparecen cuando el motor de avisos está comprobado,
+        y los simulados de la portada nunca se cuelan aquí.</p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Últimas mediciones</h2></div>
+        <a class="link" href="#/avisos">Avisos</a></div>
+      <div id="demo-state"></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">ANÁLISIS</p><h2>Mínimas, máximas, medias y resúmenes</h2></div>
+        <label class="period-label">Estación <select id="demo-device"></select></label></div>
+      <div id="demo-analysis"></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Gráficos de 24 h, 7 días y 30 días</h2></div></div>
+      <p class="hint">Evolución de mediciones validadas de la microestación. Elige el periodo arriba para 24 horas, 7 días o 30 días.</p>
+      <div id="demo-stations" class="station-list"></div>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">CÓMO LEERLO</p><h2>Temperatura, humedad y presión</h2></div></div>
+      <div class="fact-grid">${DEMO_EXPLANATIONS.map(([title, text]) => `<div><span>${escapeText(title)}</span><p class="hint">${escapeText(text)}</p></div>`).join('')}</div>
+    </section>
+    <p class="support-line hidden" data-support></p>`;
+
+  resetStationDetails();
+  renderSupport(root);
+  let lastDevices = [];
+
+  const loadAnalysis = async () => {
+    const deviceId = $('#demo-device', root)?.value;
+    if (!deviceId) { $('#demo-analysis', root).innerHTML = '<p class="empty">No hay estaciones autorizadas para la demostración.</p>'; return; }
+    const hours = DEMO_PERIOD_HOURS[$('#period', root).value] || 24;
+    const to = new Date();
+    const from = new Date(to.getTime() - hours * 3600 * 1000);
+    try {
+      const analysis = await api(`/api/v1/stations/${encodeURIComponent(deviceId)}/demo-analysis?from=${from.toISOString()}&to=${to.toISOString()}`);
+      $('#demo-analysis', root).innerHTML = renderDemoAnalysis(analysis);
+    } catch (error) {
+      $('#demo-analysis', root).innerHTML = `<p class="error">No se pudo cargar el análisis: ${escapeText(error.message)}</p>`;
+    }
+  };
+
+  const load = async () => {
+    $('[data-error]', root).textContent = '';
+    try {
+      const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
+      resetStationDetails();
+      lastDevices = data.devices || [];
+      $('#demo-state', root).innerHTML = renderStateCards(lastDevices);
+      $('#demo-stations', root).innerHTML = lastDevices.length
+        ? lastDevices.map(renderStationCard).join('')
+        : '<section class="panel"><p class="empty">Todavía no hay estaciones autorizadas para la demostración.</p></section>';
+      const select = $('#demo-device', root);
+      const previous = select.value;
+      select.innerHTML = lastDevices.map((item) => `<option value="${escapeText(item.device.id)}">${escapeText(item.device.name)}</option>`).join('');
+      if (lastDevices.some((item) => item.device.id === previous)) select.value = previous;
+      await loadAnalysis();
+    } catch (error) {
+      $('[data-error]', root).textContent = `No se pudo cargar el panel: ${error.message}`;
+    }
+  };
+
+  $('#period', root).addEventListener('change', load);
+  $('#demo-device', root).addEventListener('change', loadAnalysis);
+  await load();
+
+  let refreshTimer = null;
+  const startTimer = () => { stopTimer(); refreshTimer = setInterval(() => { if (!document.hidden) load(); }, REFRESH_MS); };
+  const stopTimer = () => { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } };
+  const onVisibility = () => { if (document.hidden) stopTimer(); else { load(); startTimer(); } };
+  document.addEventListener('visibilitychange', onVisibility);
+  startTimer();
+  return () => { stopTimer(); document.removeEventListener('visibilitychange', onVisibility); };
+}
+
 export async function renderPanel(root) {
+  if (session.me?.role === 'viewer') return renderDemoPanel(root);
   if (!isAdmin()) return renderSimplePanel(root);
   root.innerHTML = `
     <div class="page-heading">
@@ -587,16 +822,20 @@ export async function renderPanel(root) {
       resetStationDetails();
       const overview = summarizeFarms(session.me?.farms || [], data.devices);
       $('#panel-overview', root).innerHTML = renderFarmOverview(overview, { updatedAt: new Date().toISOString() });
-      const open = data.alerts.filter((alert) => !alert.closedAt);
+      const caveat = coverageCaveat(data.devices);
+      const engineOk = data.engine_verified !== false;
+      const visible = (list) => (engineOk ? list
+        : list.filter((alert) => classifyNotice({ ...alert, engineVerified: engineOk }).category !== 'threshold'));
+      const open = visible(data.alerts).filter((alert) => !alert.closedAt);
       $('#panel-alerts', root).innerHTML = open.length
         ? open.map(renderOpenAlert).join('')
-        : '<p class="ok">No hay alertas abiertas. Todo tranquilo.</p>';
+        : emptyAlertsHtml(caveat);
       $('#panel-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
-      $('#panel-history', root).innerHTML = data.alerts.length
-        ? data.alerts.map(renderAlertRow).join('')
-        : '<p class="empty">No hay avisos recientes.</p>';
+      $('#panel-history', root).innerHTML = visible(data.alerts).length
+        ? visible(data.alerts).map((alert) => renderAlertRow(alert, { technical: canEdit() })).join('')
+        : `<p class="empty">No hay avisos recientes.</p>${caveatBlock(caveat)}`;
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
       if (error.message === 'authentication_required' || error.message === 'session_expired') return [];

@@ -17,6 +17,15 @@ test('plain status translates the station state into advice', () => {
   assert.equal(plainDeviceStatus({ latest: { temperatureC: 18, observedAt: 'x' } }).tone, 'ok');
 });
 
+test('a stale frost measurement is not represented as a current risk or normality', () => {
+  const state = plainDeviceStatus({
+    status: { connectivity: 'online', dataFreshness: 'stale' },
+    latest: { temperatureC: -5, observedAt: '2026-01-01T00:00:00Z' },
+  });
+  assert.equal(state.tone, 'warn');
+  assert.match(state.text, /antiguas/i);
+});
+
 test('summaries group stations by farm and leave the rest apart', () => {
   const farms = [{ id: '1', name: 'El Llano', devices: ['a'] }];
   const devices = [

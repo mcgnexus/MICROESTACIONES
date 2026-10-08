@@ -8,6 +8,7 @@
 
 import { sql } from './db.js';
 import { enqueueAlertNotifications } from './notify.js';
+import { dataFreshnessFor, offlineThresholdSeconds } from './station-status.js';
 
 export const METRIC_KEYS = {
   temperature: 'temp_c',
@@ -184,9 +185,14 @@ export function ruleFromRow(row) {
   };
 }
 
+// Las reglas del dispositivo se leen con `FOR UPDATE`: dos lotes que lleguen a
+// la vez serializan aquí el estado de la regla (condición activa, aviso abierto,
+// recuperación), de modo que un mismo episodio no abre dos incidentes. La
+// llamada debe ir dentro de una transacción.
 const loadRules = async (client, deviceId) => {
   const rows = await client`SELECT * FROM alert_rules
-    WHERE device_id = ${deviceId} AND enabled AND NOT system`;
+    WHERE device_id = ${deviceId} AND enabled AND NOT system
+    ORDER BY id FOR UPDATE`;
   return rows.map(ruleFromRow);
 };
 
@@ -231,7 +237,7 @@ async function openAlert(tx, { deviceId, measurementId, rule, value, at, config,
     // canal externo queda como fallido en vez de simular una entrega.
     const recipients = await enqueueAlertNotifications(tx, {
       alertId: alert.id, deviceId, metric: rule.metric, value, message, level,
-      category, observedAt: at,
+      category, observedAt: at, ruleId: rule.id, source: 'station_measurement',
     });
     if (!isInstant && recipients === 0) {
       await tx`UPDATE alerts SET delivery_status = 'failed' WHERE id = ${alert.id}`;
@@ -335,48 +341,60 @@ export async function releaseDirectives(client, deviceId, { batteryMv = null, id
 // ---- Pasada periódica: detectores de sistema -------------------------------
 // Sin communication: se mide el silencio del equipo contra el umbral sembrado.
 // Batería: se usa la última medida validada y el umbral de la configuración.
-export async function evaluateSystemRules(now = new Date()) {
-  const devices = await sql`SELECT d.id, d.name, c.config, s.last_contact, s.battery_mv, s.battery_level
-    FROM devices d
-    LEFT JOIN device_configs c ON c.device_id = d.id
-    LEFT JOIN device_status s ON s.device_id = d.id
-    WHERE d.active = true`;
-  const outcomes = [];
+//
+// Toda la pasada corre en UNA transacción y lee las reglas con `FOR UPDATE`: dos
+// pasadas simultáneas (temporizador + cron, o dos instancias) se serializan en el
+// estado de cada regla y un mismo episodio de desconexión abre un solo aviso.
+export async function evaluateSystemRules(now = new Date(), { client = sql } = {}) {
+  return client.begin(async (tx) => {
+    const devices = await tx`SELECT d.id, d.name, d.created_at, c.config, s.last_contact, s.battery_mv, s.battery_level
+      FROM devices d
+      LEFT JOIN device_configs c ON c.device_id = d.id
+      LEFT JOIN device_status s ON s.device_id = d.id
+      WHERE d.active = true
+      ORDER BY d.id`;
+    const outcomes = [];
 
-  for (const device of devices) {
-    const config = device.config ?? {};
-    const [latest] = await sql`SELECT battery_mv, observed_at FROM measurements
-      WHERE device_id = ${device.id} AND is_validated AND deleted_at IS NULL
-      ORDER BY observed_at DESC LIMIT 1`;
-    const [lowRule] = await sql`SELECT * FROM alert_rules
-      WHERE device_id = ${device.id} AND system AND metric = 'battery'`;
-    const [netRule] = await sql`SELECT * FROM alert_rules
-      WHERE device_id = ${device.id} AND system AND metric = 'connectivity'`;
+    for (const device of devices) {
+      const config = device.config ?? {};
+      const [latest] = await tx`SELECT battery_mv, observed_at FROM measurements
+        WHERE device_id = ${device.id} AND is_validated AND deleted_at IS NULL AND battery_mv IS NOT NULL
+        ORDER BY observed_at DESC LIMIT 1`;
+      const [lowRule] = await tx`SELECT * FROM alert_rules
+        WHERE device_id = ${device.id} AND system AND metric = 'battery' FOR UPDATE`;
+      const [netRule] = await tx`SELECT * FROM alert_rules
+        WHERE device_id = ${device.id} AND system AND metric = 'connectivity' FOR UPDATE`;
 
-    // Sin comunicación: el valor es el silencio acumulado en segundos.
-    if (netRule) {
-      const silence = device.lastContact ? Math.round((now - new Date(device.lastContact)) / 1000) : null;
-      outcomes.push(...await applySystemRule(netRule, {
-        deviceId: device.id, name: device.name, value: silence, at: now, config,
-      }));
+      // Sin comunicación: el valor es el silencio acumulado en segundos.
+      if (netRule) {
+        // Si nunca ha contactado, el silencio se cuenta desde el aprovisionamiento:
+        // una estación que no llega a enviar tampoco queda invisible al detector.
+        const lastContact = device.lastContact ?? device.createdAt;
+        const silence = lastContact ? Math.round((now - new Date(lastContact)) / 1000) : null;
+        const threshold = offlineThresholdSeconds(config.sync_interval_s);
+        outcomes.push(...await applySystemRule(netRule, {
+          client: tx, deviceId: device.id, name: device.name, value: silence, at: now, config, threshold,
+        }));
+      }
+      // Batería: la última medida válida, con el umbral configurado.
+      if (lowRule) {
+        const hasFreshBattery = latest?.observedAt
+          && dataFreshnessFor(latest.observedAt, config.interval_normal_s, now) === 'fresh';
+        const value = hasFreshBattery ? latest.batteryMv : null;
+        const threshold = Number(config.battery_low_mv ?? lowRule.threshold);
+        outcomes.push(...await applySystemRule(lowRule, {
+          client: tx, deviceId: device.id, name: device.name, value, at: now, config, threshold,
+        }));
+      }
     }
-// Batería: la última medida válida, con el umbral configurado.
-    if (lowRule) {
-      const value = latest?.batteryMv ?? device.batteryMv ?? null;
-      const threshold = Number(config.battery_low_mv ?? lowRule.threshold);
-      outcomes.push(...await applySystemRule(lowRule, {
-        deviceId: device.id, name: device.name, value, at: now, config, threshold,
-      }));
-    }
-  }
-  return outcomes;
+    return outcomes;
+  });
 }
 
-async function applySystemRule(row, { deviceId, value, at, config, threshold }) {
+async function applySystemRule(row, { client = sql, deviceId, value, at, config, threshold }) {
   const rule = ruleFromRow(row);
   if (threshold != null) rule.threshold = Number(threshold);
   const outcome = evaluateRule(rule, { value, at });
-  const client = sql;
   const changes = [];
   if (outcome.action === 'start' || outcome.action === 'pending') {
     await client`UPDATE alert_rules SET condition_active = true, condition_since = ${outcome.at} WHERE id = ${rule.id}`;
