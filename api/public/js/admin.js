@@ -124,6 +124,20 @@ function pilotRow(request) {
   </tr>`;
 }
 
+function auditRow(entry) {
+  return `<tr>
+    <td>${dateText(entry.createdAt)}</td>
+    <td>${escapeText(entry.actorEmail || '—')}</td>
+    <td>${escapeText(entry.action)}</td>
+    <td>${escapeText(entry.targetType || '')} ${escapeText(entry.targetId || '')}</td>
+    <td>${escapeText(entry.ipAddress || '—')}</td>
+    <td><details><summary>Ver</summary><pre>${escapeText(JSON.stringify({ antes: entry.beforeJson, después: entry.afterJson }, null, 2))}</pre></details></td>
+  </tr>`;
+}
+
+// Página de administración en pestañas con carga bajo demanda: cada pestaña
+// pide sus datos solo al abrirse por primera vez, y cada acción recarga
+// únicamente la tabla afectada en vez de volver a pedir todas las listas.
 export async function renderAdmin(root) {
   if (!isAdmin()) {
     root.innerHTML = '<section class="panel"><p class="empty">Esta sección es solo para administradores.</p></section>';
@@ -131,59 +145,179 @@ export async function renderAdmin(root) {
   }
   root.innerHTML = `
     <div class="page-heading"><div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Usuarios, accesos y trazabilidad</h1></div></div>
-    <p class="error" data-error role="alert"></p>
-    <section class="panel" data-analytics></section>
-    <section class="panel" data-prospects></section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SUSCRIPTORES</p><h2>Registrados, verificados y publicidad</h2>
-        <p class="hint" data-audience-counts></p></div></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Usuario</th><th>Rol</th><th>Plan</th><th>Estado</th><th>Publicidad</th><th>Acceso</th><th></th></tr></thead>
-        <tbody data-subscribers></tbody>
-      </table></div>
+    <nav class="admin-tabs" role="tablist" aria-label="Secciones de administración">
+      <button type="button" role="tab" data-tab="usuarios" class="active" aria-selected="true">Usuarios y accesos</button>
+      <button type="button" role="tab" data-tab="captacion" aria-selected="false">Captación</button>
+      <button type="button" role="tab" data-tab="estadisticas" aria-selected="false">Estadísticas</button>
+      <button type="button" role="tab" data-tab="auditoria" aria-selected="false">Auditoría</button>
+    </nav>
+
+    <section data-panel="usuarios">
+      <p class="error" data-error role="alert"></p>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">SUSCRIPTORES</p><h2>Registrados, verificados y publicidad</h2>
+          <p class="hint" data-audience-counts></p></div></div>
+        <input type="search" data-search="subscribers" placeholder="Buscar por correo, actividad o municipio…" aria-label="Buscar suscriptores">
+        <div class="table-wrap"><table>
+          <thead><tr><th>Usuario</th><th>Rol</th><th>Plan</th><th>Estado</th><th>Publicidad</th><th>Acceso</th><th></th></tr></thead>
+          <tbody data-subscribers data-tbody="subscribers"></tbody>
+        </table></div>
+      </section>
+      <section class="panel hidden" data-access-panel>
+        <div class="section-heading"><div><p class="eyebrow">ACCESOS</p><h2 data-access-title>Estaciones autorizadas</h2></div>
+          <button type="button" class="quiet" data-access-close>Cerrar</button></div>
+        <div class="access-grid">
+          <div><h3>Concedidas</h3><ul class="plain-list" data-granted></ul></div>
+          <div><h3>Disponibles</h3><ul class="plain-list" data-available></ul></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">WHATSAPP MANUAL</p><h2>Envíos pendientes de enviar a mano</h2></div></div>
+        <p class="hint">Durante el piloto no se envía WhatsApp automáticamente. Abre el enlace, envía el mensaje desde tu teléfono y márcalo como enviado.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Fecha</th><th>Destino</th><th>Mensaje</th><th></th></tr></thead>
+          <tbody data-manual data-tbody="manual"></tbody>
+        </table></div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">PILOTOS EN FINCAS</p><h2>Solicitudes de acceso</h2></div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Finca</th><th>Solicitante</th><th>Contacto</th><th>Fecha</th><th>Estado</th><th></th></tr></thead>
+          <tbody data-pilots data-tbody="pilots"></tbody>
+        </table></div>
+      </section>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">WHATSAPP MANUAL</p><h2>Envíos pendientes de enviar a mano</h2></div></div>
-      <p class="hint">Durante el piloto no se envía WhatsApp automáticamente. Abre el enlace, envía el mensaje desde tu teléfono y márcalo como enviado.</p>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Fecha</th><th>Destino</th><th>Mensaje</th><th></th></tr></thead>
-        <tbody data-manual></tbody>
-      </table></div>
+
+    <section data-panel="captacion" class="hidden">
+      <p class="error" data-error role="alert"></p>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">SOLICITUDES WEB</p><h2>Fincas que piden alertas</h2></div></div>
+        <input type="search" data-search="leads" placeholder="Buscar por nombre, zona o contacto…" aria-label="Buscar solicitudes web">
+        <div class="table-wrap"><table>
+          <thead><tr><th>Contacto</th><th>Finca</th><th>Fecha</th><th>Estado</th><th>Publicidad</th><th></th></tr></thead>
+          <tbody data-leads data-tbody="leads"></tbody>
+        </table></div>
+      </section>
+      <section class="panel" data-prospects><p class="empty">Cargando bandeja de interesados…</p></section>
+      <section class="panel" data-analytics><p class="empty">Cargando métricas…</p></section>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SOLICITUDES WEB</p><h2>Fincas que piden alertas</h2></div></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Contacto</th><th>Finca</th><th>Fecha</th><th>Estado</th><th>Publicidad</th><th></th></tr></thead>
-        <tbody data-leads></tbody>
-      </table></div>
+
+    <section data-panel="estadisticas" class="hidden">
+      <section class="panel" data-statistics-panel><p class="empty">Cargando análisis estadístico…</p></section>
     </section>
-    <section class="panel hidden" data-access-panel>
-      <div class="section-heading"><div><p class="eyebrow">ACCESOS</p><h2 data-access-title>Estaciones autorizadas</h2></div>
-        <button type="button" class="quiet" data-access-close>Cerrar</button></div>
-      <div class="access-grid">
-        <div><h3>Concedidas</h3><ul class="plain-list" data-granted></ul></div>
-        <div><h3>Disponibles</h3><ul class="plain-list" data-available></ul></div>
-      </div>
-    </section>
-    <section class="panel" data-statistics-panel>
-      <p class="empty">Cargando análisis estadístico…</p>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PILOTOS EN FINCAS</p><h2>Solicitudes de acceso</h2></div></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Finca</th><th>Solicitante</th><th>Contacto</th><th>Fecha</th><th>Estado</th><th></th></tr></thead>
-        <tbody data-pilots></tbody>
-      </table></div>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">AUDITORÍA</p><h2>Cambios sensibles</h2></div></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Destino</th><th>IP</th><th>Detalle</th></tr></thead>
-        <tbody data-audit></tbody>
-      </table></div>
+
+    <section data-panel="auditoria" class="hidden">
+      <p class="error" data-error role="alert"></p>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">AUDITORÍA</p><h2>Cambios sensibles</h2></div></div>
+        <input type="search" data-search="audit" placeholder="Buscar por usuario, acción o destino…" aria-label="Buscar en auditoría">
+        <div class="table-wrap"><table>
+          <thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Destino</th><th>IP</th><th>Detalle</th></tr></thead>
+          <tbody data-audit data-tbody="audit"></tbody>
+        </table></div>
+      </section>
     </section>`;
 
-  const error = (message) => { $('[data-error]', root).textContent = message; };
+  const error = (panel, message) => {
+    const el = $(`section[data-panel="${panel}"] > [data-error]`, root);
+    if (el) el.textContent = message;
+  };
+
+  // ---- Cargas individuales: cada tabla se pide y se repinta por separado ----
+  async function loadSubscribers() {
+    const { subscribers, counts } = await api('/api/v1/admin/subscribers');
+    $('[data-subscribers]', root).innerHTML = subscribers.map(subscriberRow).join('');
+    if (counts) {
+      $('[data-audience-counts]', root).textContent =
+        `Registrados: ${counts.registered} · Verificados: ${counts.verified} · Autorizados para publicidad: ${counts.advertising}`;
+    }
+  }
+
+  async function loadOutbox() {
+    const { outbox } = await api('/api/v1/admin/outbox?status=manual');
+    $('[data-manual]', root).innerHTML = outbox.map(manualRow).join('')
+      || '<tr><td colspan="4">No hay envíos manuales pendientes.</td></tr>';
+  }
+
+  async function loadPilots() {
+    const { requests } = await api('/api/v1/admin/pilot-requests');
+    $('[data-pilots]', root).innerHTML = requests.map(pilotRow).join('')
+      || '<tr><td colspan="6">Sin solicitudes de piloto.</td></tr>';
+  }
+
+  async function loadLeads() {
+    const { leads } = await api('/api/v1/admin/leads');
+    $('[data-leads]', root).innerHTML = leads.map(leadRow).join('')
+      || '<tr><td colspan="6">Sin solicitudes web.</td></tr>';
+  }
+
+  async function loadAudit() {
+    const audit = await api('/api/v1/admin/audit?limit=100');
+    $('[data-audit]', root).innerHTML = audit.entries.map(auditRow).join('')
+      || '<tr><td colspan="6">Sin registros de auditoría.</td></tr>';
+  }
+
+  // Cada lista falla por su cuenta: un endpoint caído no vacía toda la pestaña.
+  const eachIgnoring = (panel, jobs) => Promise.all(jobs.map((job) => job().catch((error_) => error(panel, error_.message))));
+
+  const tabLoaders = {
+    async usuarios() {
+      error('usuarios', '');
+      await eachIgnoring('usuarios', [loadSubscribers, loadOutbox, loadPilots]);
+    },
+    async captacion() {
+      error('captacion', '');
+      await eachIgnoring('captacion', [loadLeads]);
+      await mountProspects($('[data-prospects]', root));
+      await mountAdminAnalytics($('[data-analytics]', root));
+    },
+    async estadisticas() {
+      await mountAdminStatistics($('[data-statistics-panel]', root));
+    },
+    async auditoria() {
+      error('auditoria', '');
+      await eachIgnoring('auditoria', [loadAudit]);
+    },
+  };
+
+  const loaded = new Set();
+  const stale = new Set();
+  let currentTab = null;
+
+  async function showTab(key) {
+    if (currentTab === key) return;
+    currentTab = key;
+    for (const section of root.querySelectorAll('[data-panel]')) {
+      section.classList.toggle('hidden', section.dataset.panel !== key);
+    }
+    root.querySelectorAll('[data-tab]').forEach((button) => {
+      const active = button.dataset.tab === key;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    try {
+      if (!loaded.has(key) || stale.has(key)) {
+        loaded.add(key);
+        stale.delete(key);
+        await tabLoaders[key]();
+      }
+    } catch (error_) {
+      error(key, `No se pudo cargar la sección: ${error_.message}`);
+    }
+  }
+
+  // Buscador de tablas: filtra las filas visibles por su texto, sin volver a
+  // pedir nada al servidor.
+  root.addEventListener('input', (event) => {
+    const input = event.target.closest('input[data-search]');
+    if (!input) return;
+    const tbody = $(`[data-tbody="${input.dataset.search}"]`, root);
+    if (!tbody) return;
+    const query = input.value.trim().toLowerCase();
+    for (const row of tbody.rows) {
+      row.classList.toggle('hidden', Boolean(query) && !row.textContent.toLowerCase().includes(query));
+    }
+  });
 
   async function loadAccess(subscriberId) {
     const panel = $('[data-access-panel]', root);
@@ -200,47 +334,13 @@ export async function renderAdmin(root) {
       || '<li class="empty">No quedan estaciones disponibles.</li>';
   }
 
-  async function load() {
-    error('');
-    try {
-      const [{ subscribers, counts }, { requests }, { leads }, { outbox }, audit] = await Promise.all([
-        api('/api/v1/admin/subscribers'),
-        api('/api/v1/admin/pilot-requests'),
-        api('/api/v1/admin/leads'),
-        api('/api/v1/admin/outbox?status=manual'),
-        api('/api/v1/admin/audit?limit=100'),
-      ]);
-      $('[data-subscribers]', root).innerHTML = subscribers.map(subscriberRow).join('');
-      if (counts) {
-        $('[data-audience-counts]', root).textContent =
-          `Registrados: ${counts.registered} · Verificados: ${counts.verified} · Autorizados para publicidad: ${counts.advertising}`;
-      }
-      $('[data-manual]', root).innerHTML = outbox.map(manualRow).join('')
-        || '<tr><td colspan="4">No hay envíos manuales pendientes.</td></tr>';
-      $('[data-leads]', root).innerHTML = leads.map(leadRow).join('')
-        || '<tr><td colspan="6">Sin solicitudes web.</td></tr>';
-      $('[data-pilots]', root).innerHTML = requests.map(pilotRow).join('')
-        || '<tr><td colspan="6">Sin solicitudes de piloto.</td></tr>';
-      $('[data-audit]', root).innerHTML = audit.entries.map((entry) => `<tr>
-        <td>${dateText(entry.createdAt)}</td>
-        <td>${escapeText(entry.actorEmail || '—')}</td>
-        <td>${escapeText(entry.action)}</td>
-        <td>${escapeText(entry.targetType || '')} ${escapeText(entry.targetId || '')}</td>
-        <td>${escapeText(entry.ipAddress || '—')}</td>
-        <td><details><summary>Ver</summary><pre>${escapeText(JSON.stringify({ antes: entry.beforeJson, después: entry.afterJson }, null, 2))}</pre></details></td>
-      </tr>`).join('') || '<tr><td colspan="6">Sin registros de auditoría.</td></tr>';
-    } catch (error_) {
-      error(`No se pudo cargar la administración: ${error_.message}`);
-    }
-  }
-
   const patchSubscriber = async (id, body) => {
     try {
       await api(`/api/v1/admin/subscribers/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
-      await load();
+      await loadSubscribers();
     } catch (error_) {
-      error(`No se pudo actualizar el usuario: ${error_.message}`);
-      await load();
+      error('usuarios', `No se pudo actualizar el usuario: ${error_.message}`);
+      await loadSubscribers();
     }
   };
 
@@ -252,9 +352,9 @@ export async function renderAdmin(root) {
     else if (el.dataset.leadStatus) {
       try {
         await api(`/api/v1/admin/leads/${el.dataset.leadStatus}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }) });
-        await load();
+        await loadLeads();
       } catch (error_) {
-        error(`No se pudo actualizar la solicitud: ${error_.message}`);
+        error('captacion', `No se pudo actualizar la solicitud: ${error_.message}`);
       }
     }
   };
@@ -262,6 +362,7 @@ export async function renderAdmin(root) {
   root.onclick = async (event) => {
     const button = event.target.closest('button');
     if (!button) return;
+    if (button.dataset.tab) { await showTab(button.dataset.tab); return; }
     if (button.disabled) return;
     button.disabled = true;
     try {
@@ -281,7 +382,8 @@ export async function renderAdmin(root) {
         await api(base, { method: 'POST', body: JSON.stringify({
           channel: button.dataset.consentChannel, action: button.dataset.consentAction,
         }) });
-        await load();
+        if (scope === 'subscriber') await loadSubscribers();
+        else { await loadLeads(); stale.add('usuarios'); }
       } else if (button.dataset.nextContact) {
         const value = window.prompt('Fecha del próximo contacto (AAAA-MM-DD, vacío para borrar):', '');
         if (value === null) return;
@@ -289,7 +391,7 @@ export async function renderAdmin(root) {
         await api(`/api/v1/admin/leads/${button.dataset.nextContact}`, {
           method: 'PATCH', body: JSON.stringify({ next_contact_at }),
         });
-        await load();
+        await loadLeads();
       } else if (button.dataset.activate) {
         const email = window.prompt('Correo del nuevo suscriptor:', button.dataset.email || '') || '';
         if (!email) return;
@@ -297,7 +399,8 @@ export async function renderAdmin(root) {
           method: 'POST', body: JSON.stringify({ email }),
         });
         window.alert(`Suscriptor creado: ${result.subscriber.email}\nContraseña temporal (se muestra una sola vez): ${result.temporaryPassword}`);
-        await load();
+        await loadLeads();
+        stale.add('usuarios');
       } else if (button.dataset.test) {
         const result = await api(`/api/v1/admin/subscribers/${button.dataset.test}/test-message`, { method: 'POST' });
         window.alert(result.ok
@@ -305,7 +408,7 @@ export async function renderAdmin(root) {
           : `No se pudo enviar la prueba: ${result.error}`);
       } else if (button.dataset.outboxSent) {
         await api(`/api/v1/admin/outbox/${button.dataset.outboxSent}`, { method: 'PATCH', body: JSON.stringify({ status: 'sent' }) });
-        await load();
+        await loadOutbox();
       } else if (button.dataset.approve || button.dataset.reject) {
         const [subscriberId, requestId] = (button.dataset.approve || button.dataset.reject).split('/');
         const status = button.dataset.approve ? 'approved' : 'rejected';
@@ -313,17 +416,14 @@ export async function renderAdmin(root) {
         await api(`/api/v1/admin/pilot-requests/${subscriberId}/${encodeURIComponent(requestId)}`, {
           method: 'PATCH', body: JSON.stringify({ status, ...(notes ? { decision_notes: notes } : {}) }),
         });
-        await load();
+        await loadPilots();
       }
     } catch (error_) {
-      error(`No se pudo completar la acción: ${error_.message}`);
+      error(currentTab, `No se pudo completar la acción: ${error_.message}`);
     } finally {
       button.disabled = false;
     }
-  }
+  };
 
-  await load();
-  await mountProspects($('[data-prospects]', root));
-  await mountAdminAnalytics($('[data-analytics]', root));
-  await mountAdminStatistics($('[data-statistics-panel]', root));
+  await showTab('usuarios');
 }

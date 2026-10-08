@@ -762,6 +762,11 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .hero-first>.eyebrow{margin:0 0 10px}
 .hero-first-slot{margin-bottom:18px}
 .hero-first-slot .station-hero{margin:0}
+.admin-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px}
+.admin-tabs button{background:white;color:#1e2c24;border:1px solid #cad4cb;padding:10px 16px}
+.admin-tabs button:hover{background:#eef4ef}
+.admin-tabs button.active{background:#1f6241;border-color:#1f6241;color:white}
+input[data-search]{max-width:360px;margin:0 0 12px;display:block}
 
 /* ---- SEO local, FAQ, legales y pie ---------------------------------------- */
 .faq{display:grid;gap:10px}
