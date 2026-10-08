@@ -33,21 +33,15 @@ test('PWA service worker never caches API responses and app registers it', async
   assert.match(app, /serviceWorker\.register\('\/service-worker\.js'\)/);
 });
 
-test('el shell incluye todas las dependencias importadas del frontend', async () => {
+test('el service worker cachea los estáticos al primer uso (stale-while-revalidate)', async () => {
   const source = await readFile(new URL('service-worker.js', publicDir), 'utf8');
-  const cached = new Set([...source.matchAll(/'((?:\/js\/|\/app\.)[^']+)'/g)].map((m) => m[1]));
-  const visited = new Set();
-  async function visit(path) {
-    if (visited.has(path)) return;
-    visited.add(path);
-    assert.ok(cached.has(path), `${path} debe estar disponible sin conexión`);
-    const text = await readFile(new URL(`.${path}`, publicDir), 'utf8');
-    for (const match of text.matchAll(/(?:from\s+|import\s*)['"]([^'"]+)['"]/g)) {
-      if (!match[1].startsWith('.')) continue;
-      await visit(new URL(match[1], `https://app.test${path}`).pathname);
-    }
-  }
-  await visit('/app.js');
+  // Los estáticos —incluido cualquier módulo del frontend— quedan en caché
+  // tras la primera visita, así que el offline no depende de una lista a mano.
+  assert.ok(source.includes(String.raw`STATIC_ASSET = /\.(?:css|js`), 'la regex de estáticos cubre css y js');
+  assert.ok(source.includes('cache.match(request)'), 'responde desde caché si existe');
+  assert.ok(source.includes('cache.put(request, response.clone())'), 'actualiza la caché en segundo plano');
+  // La portada se precachea para poder abrir la app sin conexión.
+  assert.ok(source.includes("addAll(['/'])"), 'precachea la portada');
 });
 
 test('las páginas legales y las API no se interceptan ni sobrescriben el shell', async () => {

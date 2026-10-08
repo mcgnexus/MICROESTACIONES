@@ -1,9 +1,4 @@
 import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport } from './js/ui.js';
-import { renderPanel } from './js/panel.js';
-import { renderStations, renderStationDetail } from './js/stations.js';
-import { renderAlertsCenter } from './js/alerts.js';
-import { renderAdmin } from './js/admin.js';
-import { renderAccount } from './js/account.js';
 import { initAnalyticsChoice, homeMetric, lockedMetric } from './js/analytics.js';
 import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, initLanding } from './js/landing.js';
 
@@ -164,12 +159,14 @@ async function route() {
   viewRoot.innerHTML = '<p class="empty">Cargando…</p>';
   try {
     let cleanup;
-    if (section === 'estaciones' && id) cleanup = await renderStationDetail(viewRoot, id, tab);
-    else if (section === 'estaciones') cleanup = await renderStations(viewRoot);
-    else if (section === 'avisos') cleanup = await renderAlertsCenter(viewRoot);
-    else if (section === 'admin') cleanup = await renderAdmin(viewRoot);
-    else if (section === 'cuenta') cleanup = await renderAccount(viewRoot);
-    else cleanup = await renderPanel(viewRoot);
+    // Cada sección se descarga al abrirla (import dinámico): la portada pública
+    // no carga panel, estaciones, avisos, admin ni cuenta.
+    if (section === 'estaciones' && id) cleanup = await import('./js/stations.js').then((m) => m.renderStationDetail(viewRoot, id, tab));
+    else if (section === 'estaciones') cleanup = await import('./js/stations.js').then((m) => m.renderStations(viewRoot));
+    else if (section === 'avisos') cleanup = await import('./js/alerts.js').then((m) => m.renderAlertsCenter(viewRoot));
+    else if (section === 'admin') cleanup = await import('./js/admin.js').then((m) => m.renderAdmin(viewRoot));
+    else if (section === 'cuenta') cleanup = await import('./js/account.js').then((m) => m.renderAccount(viewRoot));
+    else cleanup = await import('./js/panel.js').then((m) => m.renderPanel(viewRoot));
     if (typeof cleanup === 'function') viewTeardown = cleanup;
     if (session.me?.role === 'viewer' && ['panel', 'estaciones', 'avisos'].includes(section)) {
       api('/api/v1/metrics/activation', { method: 'POST', referrerPolicy: 'no-referrer', body: JSON.stringify({ tool: section }) }).catch(() => console.warn('No se pudo registrar la activación agregada.'));
@@ -295,8 +292,12 @@ async function handleMagicReturn() {
   }
 }
 
-try { session.support = await api('/api/v1/public-config'); } catch { session.support = null; }
-renderSupport();
+// El soporte público no depende de la sesión: vuela en paralelo con el resto
+// del arranque en lugar de bloquearlo con un await en serie.
+api('/api/v1/public-config')
+  .then((support) => { session.support = support; })
+  .catch(() => { session.support = null; })
+  .finally(() => renderSupport());
 initLanding();
 try { await loadMe(); } catch { session.me = null; }
 await handleMagicReturn();

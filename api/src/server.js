@@ -982,10 +982,24 @@ if (!isServerless) {
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const siteUrl = siteOrigin(process.env.PUBLIC_SITE_URL);
-const renderPage = async (file) => (await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8'))
-  .replaceAll('__SITE_URL__', siteUrl)
-  .replaceAll('__SUPPORT_PHONE__', process.env.SUPPORT_PHONE || '')
-  .replaceAll('__SUPPORT_WHATSAPP__', process.env.SUPPORT_WHATSAPP || '');
+// El build firma el shell con hash en public/dist. Si existe, la portada se
+// sirve desde ahí (assets inmutables); en desarrollo sin build, public/.
+const renderPage = async (file) => {
+  let html;
+  if (file === 'index.html') {
+    try {
+      html = await readFile(new URL('../public/dist/index.html', import.meta.url), 'utf8');
+    } catch {
+      html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+    }
+  } else {
+    html = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
+  }
+  return html
+    .replaceAll('__SITE_URL__', siteUrl)
+    .replaceAll('__SUPPORT_PHONE__', process.env.SUPPORT_PHONE || '')
+    .replaceAll('__SUPPORT_WHATSAPP__', process.env.SUPPORT_WHATSAPP || '');
+};
 
 // SEO: robots y sitemap con el dominio real del despliegue.
 app.get('/robots.txt', (_req, res) => {
@@ -998,9 +1012,24 @@ app.get('/sitemap.xml', (_req, res) => {
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
-app.get('/index.html', async (_req, res) => res.type('html').send(publicMetadata(await renderPage('index.html'), '/', siteUrl)));
+app.get('/index.html', async (_req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(publicMetadata(await renderPage('index.html'), '/', siteUrl));
+});
 app.get(['/privacidad.html', '/cookies.html', '/aviso-legal.html', '/contacto.html'], (req, res) => res.redirect(301, req.path.replace(/\.html$/, '')));
-app.use(express.static(publicDir, { index: false, maxAge: 0 }));
+// Caché conservadora: solo los assets firmados con hash (dist/assets) son
+// inmutables; el service worker se revalida siempre y el resto de ficheros
+// públicos caduca en un día con revalidación en segundo plano.
+app.use(express.static(publicDir, {
+  index: false,
+  setHeaders: (res, filePath) => {
+    // publicDir acaba en separador: se antepone '/' para comparar por URL.
+    const relative = `/${filePath.slice(publicDir.length).replaceAll('\\', '/')}`;
+    if (relative === '/service-worker.js') res.setHeader('Cache-Control', 'no-cache');
+    else if (relative.startsWith('/dist/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    else res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+  },
+}));
 
 // Rutas de la SPA (misma página) y páginas estáticas, con el dominio inyectado.
 const SPA_ROUTES = new Set([...Object.keys(PUBLIC_PAGES), '/panel', '/estaciones', '/avisos', '/admin', '/cuenta',
@@ -1022,6 +1051,7 @@ app.get('*path', async (req, res, next) => {
     if (SPA_ROUTES.has(path)) {
       let html = publicMetadata(await renderPage('index.html'), path, siteUrl);
       if (!PUBLIC_PAGES[path] || req.query.token) html = html.replace('content="index, follow"', 'content="noindex, nofollow"');
+      res.set('Cache-Control', 'no-cache');
       res.type('html').send(html);
       return;
     }

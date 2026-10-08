@@ -1,40 +1,14 @@
-const CACHE_NAME = 'tecrural-shell-v3';
-const SHELL_FILES = [
-  '/',
-  '/index.html',
-  '/app.css',
-  '/app.js',
-  '/manifest.webmanifest',
-  '/tecrural-icon.png',
-  '/pwa-192.png',
-  '/pwa-512.png',
-  '/js/account.js',
-  '/js/admin.js',
-  '/js/admin-statistics.js',
-  '/js/alerts.js',
-  '/js/config.js',
-  '/js/device-config.js',
-  '/js/measurements.js',
-  '/js/panel.js',
-  '/js/statistics.js',
-  '/js/stations.js',
-  '/js/ui.js',
-  '/js/landing.js',
-  '/js/leads.js',
-  '/js/notifications.js',
-  '/js/farm-cards.js',
-  '/js/farm-overview.js',
-  '/js/farm-sim.js',
-  '/js/notice-taxonomy.js',
-  '/js/alert-copy.js',
-  '/js/prospects.js',
-  '/js/analytics.js',
-  '/js/admin-analytics.js',
-];
-const SHELL_PATHS = new Set(SHELL_FILES.map((path) => new URL(path, self.location.origin).pathname));
+// Estrategia del shell:
+//  · install precachea solo la portada (offline básico).
+//  · navegación: red primero, cache como respaldo offline.
+//  · estáticos (css/js/img/fuentes, incluidos los assets con hash del build):
+//    stale-while-revalidate — respuesta instantánea desde caché y
+//    actualización en segundo plano. Como los assets firmados cambian de URL
+//    en cada build, no hay riesgo de mezclar versiones.
+const CACHE_NAME = 'tecrural-shell-v4';
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(['/'])).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -42,6 +16,8 @@ self.addEventListener('activate', (event) => {
     keys.filter((key) => key.startsWith('tecrural-shell-') && key !== CACHE_NAME).map((key) => caches.delete(key)),
   )).then(() => self.clients.claim()));
 });
+
+const STATIC_ASSET = /\.(?:css|js|mjs|png|jpe?g|webp|avif|svg|ico|woff2?)$/i;
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -60,12 +36,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (!SHELL_PATHS.has(url.pathname) || url.search || request.headers.has('Authorization')) return;
-  event.respondWith(fetch(request).then((response) => {
-    if (response.ok && response.type === 'basic') {
-      const copy = response.clone();
-      return caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).then(() => response);
-    }
-    return response;
-  }).catch(async () => (await caches.match(request)) || Response.error()));
+  if (url.search || url.pathname.endsWith('.html') || !STATIC_ASSET.test(url.pathname)) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(request);
+    const refresh = fetch(request).then((response) => {
+      if (response.ok && response.type === 'basic') cache.put(request, response.clone());
+      return response;
+    }).catch(() => undefined);
+    return cached || (await refresh) || Response.error();
+  })());
 });

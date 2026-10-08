@@ -12,13 +12,19 @@
     "provision-device": "node src/provision-device.js",
     "test": "node --test",
     "acceptance": "node acceptance.mjs",
-    "acceptance:phase13": "node acceptance-phase13.mjs"
+    "acceptance:phase13": "node acceptance-phase13.mjs",
+    "build": "node build.mjs"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "postgres": "^3.4.7",
     "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
