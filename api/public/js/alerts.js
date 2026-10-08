@@ -1,5 +1,5 @@
 import {
-  $, api, escapeText, dateText, numberText, pressureText, canEdit, session,
+  $, api, escapeText, dateText, numberText, pressureText, canEdit, isAdmin, session,
   METRIC_LABELS, COMPARATOR_LABELS, CHANNEL_LABELS, ALERT_LEVELS,
 } from './ui.js';
 import { renderAlertsList, coverageCaveat } from './alert-copy.js';
@@ -58,6 +58,7 @@ function alertRow(alert, editable) {
     !alert.acknowledgedAt && !alert.closedAt ? `<button type="button" data-ack="${escapeText(alert.id)}">Reconocer</button>` : '',
     !alert.closedAt ? `<button type="button" class="quiet" data-close="${escapeText(alert.id)}">Cerrar</button>` : '',
     alert.closedAt ? `<button type="button" class="quiet" data-reopen="${escapeText(alert.id)}">Reabrir</button>` : '',
+    isAdmin() ? `<button type="button" class="danger" data-delete-alert="${escapeText(alert.id)}">Borrar</button>` : '',
   ].join(' ') : '';
   return `<tr>
     <td>${alert.level === 1 ? 'Prioritario' : 'Aviso'}</td>
@@ -182,6 +183,9 @@ function wireActions(content, stationId, reload) {
         await api(`/api/v1/alerts/${button.dataset.close}/close`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) });
       } else if (button.dataset.reopen) {
         await api(`/api/v1/alerts/${button.dataset.reopen}/reopen`, { method: 'POST', body: JSON.stringify({}) });
+      } else if (button.dataset.deleteAlert) {
+        if (!window.confirm('¿Borrar este aviso definitivamente? Esta acción no se puede deshacer.')) return;
+        await api(`/api/v1/alerts/${button.dataset.deleteAlert}`, { method: 'DELETE' });
       } else if (button.dataset.toggleRule) {
         await api(`/api/v1/alerts/rules/${button.dataset.toggleRule}`, { method: 'PATCH', body: JSON.stringify({ enabled: button.dataset.next === 'true' }) });
       } else if (button.dataset.deleteRule) {
@@ -281,7 +285,7 @@ export async function renderAlertsCenter(root) {
       // Un listado vacío no significa "sin riesgo": si faltan lecturas, se dice.
       const caveat = coverageCaveat(stations);
       $('[data-rows]', root).innerHTML = renderAlertsList(data.alerts, session.me?.farms || [], {
-        technical: editable, caveat, engineVerified: data.engine_verified !== false,
+        technical: editable, caveat, engineVerified: data.engine_verified !== false, admin: isAdmin(),
       });
       $('[data-counts]', root).textContent = `${data.counts.open} activas · ${data.counts.closed} cerradas`
         + (data.engine_verified === false ? ' · motor de avisos sin comprobar' : '');
@@ -306,6 +310,9 @@ export async function renderAlertsCenter(root) {
       } else if (button.dataset.deleteRule) {
         if (!window.confirm('¿Eliminar esta regla de aviso?')) return;
         await api(`/api/v1/alerts/rules/${button.dataset.deleteRule}`, { method: 'DELETE' });
+      } else if (button.dataset.deleteAlert) {
+        if (!window.confirm('¿Borrar este aviso definitivamente? Esta acción no se puede deshacer.')) return;
+        await api(`/api/v1/alerts/${button.dataset.deleteAlert}`, { method: 'DELETE' });
       } else {
         const id = button.dataset.ack || button.dataset.close || button.dataset.reopen;
         if (!id) return;

@@ -757,6 +757,11 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .alert-card-meta li{white-space:nowrap}
 .alert-card-tech{margin-top:10px}
 .alert-card-tech pre{white-space:pre-wrap;word-break:break-word;background:#fff;padding:10px;border-radius:8px;font-size:11px;margin:6px 0 0}
+.alert-card-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.alert-card-actions button{padding:6px 12px;font-size:13px}
+.hero-first>.eyebrow{margin:0 0 10px}
+.hero-first-slot{margin-bottom:18px}
+.hero-first-slot .station-hero{margin:0}
 
 /* ---- SEO local, FAQ, legales y pie ---------------------------------------- */
 .faq{display:grid;gap:10px}

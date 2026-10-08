@@ -233,6 +233,19 @@ router.post('/:id/reopen', requireSubscriber, requireRole('operator'), csrfGuard
   res.json({ reopened: true });
 });
 
+// Borrado de un aviso: solo administración. El aviso se elimina físicamente y
+// queda constancia en la auditoría. Se limpia la referencia de la regla que lo
+// tuviera como aviso activo para no dejar punteros colgantes.
+router.delete('/:id', requireSubscriber, requireRole('admin'), csrfGuard, async (req, res) => {
+  const alert = await loadAlert(req.subscriber, req.params.id);
+  if (!alert) return res.status(404).json({ error: 'alert_not_found' });
+  await sql`UPDATE alert_rules SET active_alert_id = NULL WHERE active_alert_id = ${alert.id}`;
+  await sql`DELETE FROM alerts WHERE id = ${alert.id}`;
+  await audit(sql, req, 'alert.delete', 'alert', String(alert.id),
+    { device_id: alert.deviceId, message: alert.message, level: alert.level }, null);
+  res.status(204).end();
+});
+
 // Envío de prueba de una alerta concreta a la dirección que indique administración.
 // No usa la cola ni afecta a la entrega real: sirve para comprobar el canal.
 const testSchema = z.object({

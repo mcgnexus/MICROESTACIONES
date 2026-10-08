@@ -287,6 +287,27 @@ function heroBlock({ latest, history, weather, status, detailKey }) {
   </section>`;
 }
 
+// La última temperatura registrada: la estación con lectura fresca más
+// reciente manda; sin lecturas válidas, la primera de la lista.
+export function primaryReading(devices) {
+  const candidates = (devices || []).filter((item) =>
+    item.status?.dataFreshness === 'fresh' && item.latest?.temperatureC != null)
+    .sort((a, b) => new Date(b.latest.observedAt || 0) - new Date(a.latest.observedAt || 0));
+  return candidates[0] || devices?.[0] || null;
+}
+
+// Tarjeta grande de temperatura como primer bloque visible del panel.
+function heroFirstSection(item) {
+  if (!item) return '';
+  const history = item.history || [];
+  const trendHistory = item.trendHistory?.length ? item.trendHistory : history;
+  const displayLatest = item.latest?.isValidated ? item.latest : history.at(-1) || null;
+  return `<section class="hero-first">
+    <p class="eyebrow">ÚLTIMA TEMPERATURA REGISTRADA</p>
+    ${heroBlock({ latest: displayLatest, history: trendHistory, weather: item.weather, status: item.status, detailKey: registerDetail(item) })}
+  </section>`;
+}
+
 function comparisonBlock({ latest, history, trendHistory, weather, sensors, status, detailKey }) {
   const observation = weather?.aemet?.observation;
   const trends = trendHistory?.length ? trendHistory : history;
@@ -527,6 +548,7 @@ async function renderSimplePanel(root) {
       </label>
     </div>
     <p class="error" data-error role="alert"></p>
+    <div id="simple-hero" class="hero-first-slot"></div>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Ahora mismo</h2></div>
         <a class="link" href="#/avisos">Todas las alertas</a></div>
@@ -566,6 +588,7 @@ async function renderSimplePanel(root) {
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
+      $('#simple-hero', root).innerHTML = heroFirstSection(primaryReading(data.devices));
       $('#simple-state', root).innerHTML = renderStateCards(data.devices);
       const caveat = coverageCaveat(data.devices);
       const engineOk = data.engine_verified !== false;
@@ -696,6 +719,7 @@ async function renderDemoPanel(root) {
       </label>
     </div>
     <p class="error" data-error role="alert"></p>
+    <div id="demo-hero" class="hero-first-slot"></div>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">QUÉ ES ESTO</p><h2>Herramientas ampliadas del registro</h2></div></div>
       <p class="hint">Este panel usa <strong>solo estaciones autorizadas para la demostración</strong> y no permite editar, borrar ni configurar nada. Las estaciones privadas de terceros no son accesibles desde aquí.</p>
@@ -752,6 +776,7 @@ async function renderDemoPanel(root) {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
       lastDevices = data.devices || [];
+      $('#demo-hero', root).innerHTML = heroFirstSection(primaryReading(lastDevices));
       $('#demo-state', root).innerHTML = renderStateCards(lastDevices);
       $('#demo-stations', root).innerHTML = lastDevices.length
         ? lastDevices.map(renderStationCard).join('')
@@ -790,6 +815,7 @@ export async function renderPanel(root) {
       </label>
     </div>
     <p class="error" data-error role="alert"></p>
+    <div id="panel-hero" class="hero-first-slot"></div>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">ESTADO DE LA FINCA</p><h2>Resumen de un vistazo</h2></div>
         <a class="link" href="#/cuenta">Mis fincas</a></div>
@@ -820,6 +846,7 @@ export async function renderPanel(root) {
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
+      $('#panel-hero', root).innerHTML = heroFirstSection(primaryReading(data.devices));
       const overview = summarizeFarms(session.me?.farms || [], data.devices);
       $('#panel-overview', root).innerHTML = renderFarmOverview(overview, { updatedAt: new Date().toISOString() });
       const caveat = coverageCaveat(data.devices);

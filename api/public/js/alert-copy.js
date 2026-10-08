@@ -110,7 +110,7 @@ function natureBadge(meta) {
 }
 
 // Una tarjeta comprensible por alerta.
-export function renderAlertCard(alert, { zone = null, technical = false, engineVerified = true } = {}) {
+export function renderAlertCard(alert, { zone = null, technical = false, engineVerified = true, admin = false } = {}) {
   const status = alertStatus(alert);
   const meta = classifyNotice({ ...alert, engineVerified });
   const tone = status.key !== 'active' ? 'muted' : (Number(alert.level) === 1 ? 'alert' : 'warn');
@@ -120,6 +120,10 @@ export function renderAlertCard(alert, { zone = null, technical = false, engineV
     : '';
   const engineBlock = meta.requiresEngine && !engineVerified
     ? '<p class="hint">Aviso de umbral local oculto: el motor de avisos no está comprobado en esta instalación.</p>'
+    : '';
+  // Borrar un aviso es acción exclusiva de administración.
+  const deleteBlock = admin
+    ? `<div class="alert-card-actions"><button type="button" class="danger" data-delete-alert="${escapeText(alert.id)}">Borrar</button></div>`
     : '';
   return `<article class="alert-card tone-${tone}">
     <div class="alert-card-head">
@@ -131,6 +135,7 @@ export function renderAlertCard(alert, { zone = null, technical = false, engineV
     <ul class="alert-card-meta">${alertMeta(alert, { zone, engineVerified }).map((line) => `<li>${escapeText(line)}</li>`).join('')}</ul>
     ${engineBlock}
     ${technicalBlock}
+    ${deleteBlock}
   </article>`;
 }
 
@@ -153,7 +158,7 @@ export function caveatBlock(caveat) {
 // Listado de tarjetas. `caveat` (de coverageCaveat) y `engineVerified` llegan
 // del panel; sin ellos no se afirma nada sobre la ausencia de riesgo.
 export function renderAlertsList(alerts, farms = [], {
-  technical = false, caveat = null, engineVerified = true,
+  technical = false, caveat = null, engineVerified = true, admin = false,
 } = {}) {
   const zones = zoneByDevice(farms);
   // Con el motor sin comprobado, un aviso de umbral local no se presenta como tal.
@@ -171,7 +176,7 @@ export function renderAlertsList(alerts, farms = [], {
     ? `<p class="hint">${hidden} aviso(s) de umbral local ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
     : '';
   return `${extra}<div class="alert-cards">${visible.map((alert) =>
-    renderAlertCard(alert, { zone: zones.get(alert.deviceId) || null, technical, engineVerified })).join('')}</div>`;
+    renderAlertCard(alert, { zone: zones.get(alert.deviceId) || null, technical, engineVerified, admin })).join('')}</div>`;
 }
 
 export const categorySummary = (category) => {

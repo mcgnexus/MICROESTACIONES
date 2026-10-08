@@ -103,3 +103,14 @@ test('public landing has loading containers and a single access request form, wi
   assert.match(html, /Consultar el tiempo local/);
   assert.match(html, /Explorar todas las herramientas/);
 });
+
+test('the big weather card is the first element of the public landing section', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const section = html.slice(html.indexOf('id="tiempo-local"'), html.indexOf('id="comparacion-aemet"'));
+  const card = section.indexOf('id="local-weather-card"');
+  const loading = section.indexOf('id="local-weather-state"');
+  const heading = section.indexOf('<h1>');
+  assert.ok(loading >= 0 && card >= 0 && heading >= 0);
+  assert.ok(loading < heading, 'el indicador de carga va antes del título');
+  assert.ok(card < heading, 'la tarjeta grande va antes del título');
+});

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   alertStatus, alertTitle, alertExplanation, alertMeta, alertCategory,
-  renderAlertsList, zoneByDevice, caveatBlock,
+  renderAlertCard, renderAlertsList, zoneByDevice, caveatBlock,
 } from '../public/js/alert-copy.js';
 import { classifyNotice, RISK_NATURES } from '../public/js/notice-taxonomy.js';
 
@@ -95,4 +95,11 @@ test('zone map links each station to its farm and the list renders cards', () =>
   const html = renderAlertsList([alert()], [{ name: 'El Llano', devices: ['a'] }]);
   assert.match(html, /Riesgo de helada — El Llano/);
   assert.match(html, /Activa/);
+});
+
+test('the delete button only appears when administration renders the card', () => {
+  assert.match(renderAlertCard(alert(), { admin: true }), /data-delete-alert="1"/);
+  assert.doesNotMatch(renderAlertCard(alert()), /data-delete-alert/);
+  assert.doesNotMatch(renderAlertsList([alert()]), /data-delete-alert/);
+  assert.match(renderAlertsList([alert()], [], { admin: true }), /data-delete-alert="1"/);
 });
