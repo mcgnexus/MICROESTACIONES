@@ -42,6 +42,7 @@ import {
 import { effectiveConfig } from './device-config.js';
 import { classifyMeasurementTime } from './measurement-policy.js';
 import { normalizeAcquisition, recordConsent } from './consent.js';
+import mcpRouter from './mcp.js';
 import {
   MAGIC_REQUEST_MAX_ATTEMPTS, consumeMagicLink, deliverMagicLink, issueMagicLink,
   normalizeEmail, resolvePasswordlessAccount, safeReturnPath,
@@ -929,6 +930,9 @@ app.use('/api/v1/contacts', contactsRouter);
 app.use('/api/v1/farms', farmsRouter);
 app.use('/api/v1/public', publicRouter);
 app.use('/api/v1', accountRouter);
+// Servidor MCP para agentes de IA (solo lectura, token de servidor). Va antes
+// del catch-all de la SPA para que no se lo coma la ruta de páginas.
+app.use('/mcp', mcpRouter);
 
 // ---------------------------------------------------------------------------
 // Ejecución programada: detectores de sistema y cola de entrega

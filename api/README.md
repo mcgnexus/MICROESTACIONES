@@ -62,6 +62,46 @@ Para el firmware, copia `firmware/tecrural_station/src/secrets.h.example` como `
 - `GET /api/v1/public-config` — datos públicos de contacto (teléfono de soporte); no expone secretos.
 - `POST /api/v1/admin/leads/:id/activate` — activación guiada: crea el suscriptor desde una solicitud y devuelve la contraseña temporal una sola vez.
 - `POST /api/v1/admin/subscribers/:id/test-message` — envía un mensaje de prueba por el canal configurado del suscriptor.
+- `POST /mcp` — servidor MCP (Model Context Protocol) sin estado, de **solo lectura** y para uso interno del administrador: permite que agentes de IA (OpenClaw, Hermes) consulten las estaciones. Autenticación `Authorization: Bearer $MCP_TOKEN`; sin token configurado responde 503 y con token erróneo 401. `GET`/`DELETE` responden 405 (sin SSE). Herramientas: `list_stations`, `get_station_latest`, `get_station_history`, `get_station_summary`, `list_alerts`. Cada llamada queda en el libro de auditoría (`mcp.tool_call`).
+
+### Conectar un agente de IA (OpenClaw / Hermes)
+
+El servidor MCP negocia las versiones de protocolo `2025-03-26` y `2025-06-18`, responde JSON (sin SSE) y no mantiene sesión: cada petición POST es independiente.
+
+OpenClaw (`openclaw.json` o Ajustes → MCP):
+
+```json5
+{
+  mcp: {
+    servers: {
+      tecrural: {
+        url: "https://tecrural-microestacion.vercel.app/mcp",
+        transport: "streamable-http",
+        headers: { Authorization: "Bearer ${TECRURAL_MCP_TOKEN}" },
+      },
+    },
+  },
+}
+```
+
+Hermes (`~/.hermes/config.yaml`):
+
+```yaml
+mcp_servers:
+  tecrural:
+    url: "https://tecrural-microestacion.vercel.app/mcp"
+    headers:
+      Authorization: "Bearer ${TECRURAL_MCP_TOKEN}"
+```
+
+En ambos casos el token es `MCP_TOKEN` del servidor; guárdalo en el gestor de secretos del agente, nunca en el repositorio. Comprobación rápida:
+
+```sh
+curl -s https://tecrural-microestacion.vercel.app/mcp \
+  -H "Authorization: Bearer $TECRURAL_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
 
 ### Contrato de identidad, tiempo y estado de la estación
 
