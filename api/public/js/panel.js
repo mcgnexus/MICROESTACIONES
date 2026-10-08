@@ -265,7 +265,10 @@ function heroBlock({ latest, history, weather, status, detailKey }) {
   const openDay = weather?.openMeteo?.daily?.[0];
   const forecast = aemetDay || openDay;
   const currentLocal = status?.dataFreshness !== 'stale';
-  const temperature = currentLocal ? latest?.temperatureC : null;
+  // La última medición se mantiene en la tarjeta aunque los datos estén
+  // anticuados: el aviso de frescura (etiqueta y badge) evita que se lea como
+  // tiempo actual, pero una medida vieja sigue siendo mejor que un guion.
+  const temperature = latest?.temperatureC ?? null;
   const temperatureSource = !currentLocal ? 'MICROESTACIÓN · ÚLTIMO DATO ANTIGUO'
     : latest?.temperatureC != null ? 'MICROESTACIÓN · MEDICIÓN DIRECTA' : 'MICROESTACIÓN · SIN MEDICIÓN';
   const forecastProvider = aemetDay ? 'AEMET' : openDay ? 'Open-Meteo' : null;
@@ -282,7 +285,7 @@ function heroBlock({ latest, history, weather, status, detailKey }) {
         <div class="hero-temperature"><strong>${numberText(temperature)}</strong><span>°C</span></div>
         <div class="hero-forecast"><span class="hero-weather-icon" aria-hidden="true">${forecast ? (aemetDay ? '🌤️' : '☁️') : '🌱'}</span><strong>${escapeText(forecastSky)}</strong><small>${forecastProvider ? `Previsión · ${forecastProvider}` : 'Previsión no disponible'}</small>${minimum != null || maximum != null ? `<small>${numberText(minimum)}° / ${numberText(maximum)}°</small>` : ''}</div>
       </div>
-      <div class="hero-readout-footer"><span>Medición local · ${dateText(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${currentLocal ? numberText(latest?.humidityPct) : '—'}%</span><span class="hero-separator">·</span><span>Presión ${currentLocal ? pressureText(latest?.pressurePa) : '—'} mbar</span></div>
+      <div class="hero-readout-footer"><span>Medición local · ${dateText(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} mbar</span></div>
     </div>
   </section>`;
 }

@@ -63,16 +63,19 @@ test('an empty successful CAP response is explicitly distinct from a failed requ
   assert.match(unavailable, /No se ha podido consultar avisos AEMET/);
 });
 
-test('the public current card selects only urban points and hides stale readings', () => {
+test('the public current card keeps the last reading even when stale, clearly labelled', () => {
   const finca = { name: 'Finca Vega', locationType: 'finca', temperatureFreshness: 'fresh', temperatureObservedAt: '2026-10-07T12:00:00Z' };
   const staleUrban = { name: 'Casco antiguo', locationType: 'urbano', temperatureFreshness: 'stale', temperatureC: 4, temperatureObservedAt: '2026-10-07T08:00:00Z' };
   const currentUrban = { name: 'Casco', locationType: 'urbano', temperatureFreshness: 'fresh', temperatureC: 12.3, temperatureObservedAt: '2026-10-07T12:00:00Z' };
   assert.equal(selectUrbanStation([finca, staleUrban, currentUrban]), currentUrban);
   assert.equal(selectUrbanStation([finca]), null);
   const staleHtml = renderLocalWeatherCard(staleUrban);
-  assert.match(staleHtml, /Sin lectura actual/);
+  // La última medición permanece visible, pero marcada como no reciente.
+  assert.match(staleHtml, />4 °C</);
   assert.match(staleHtml, /Última medición/);
-  assert.doesNotMatch(staleHtml, />4 °C</);
+  assert.match(staleHtml, /Lectura no reciente/);
+  const staleWithoutValue = renderLocalWeatherCard({ ...staleUrban, temperatureC: null, humidityPct: null });
+  assert.match(staleWithoutValue, /Sin lectura registrada/);
   const currentHtml = renderLocalWeatherCard(currentUrban);
   assert.match(currentHtml, /12,3 °C/);
   assert.match(currentHtml, /no toda la ciudad/i);

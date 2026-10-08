@@ -51,8 +51,8 @@ export function renderLocalWeatherCard(station) {
     <div class="public-now-heading"><div><p class="eyebrow">PUNTO DE MEDIDA · CASCO URBANO</p><h3>${escapeText(point)}</h3><p>${escapeText(station.name || '')} · un emplazamiento concreto, no toda la ciudad</p></div>
       <span class="badge ${station.connectivity === 'offline' ? 'badge-invalid' : stale ? 'badge-warn' : 'badge-valid'}">${station.connectivity === 'offline' ? 'Sin conexión' : stale ? 'Lectura no reciente' : 'Datos recientes'}</span></div>
     <div class="public-now-readings">
-      <div><span>Temperatura</span><strong>${tempFresh ? `${numberText(station.temperatureC, 1)} °C` : 'Sin lectura actual'}</strong><small>${tempFresh ? `Medida ${dateText(station.temperatureObservedAt)}` : `Última medición ${dateText(station.temperatureObservedAt)}`}</small></div>
-      <div><span>Humedad</span><strong>${humidityFresh ? `${numberText(station.humidityPct, 0)} %` : 'Sin lectura actual'}</strong><small>${humidityFresh ? `Medida ${dateText(station.humidityObservedAt)}` : `Última medición ${dateText(station.humidityObservedAt)}`}</small></div>
+      <div><span>Temperatura</span><strong>${station.temperatureC != null ? `${numberText(station.temperatureC, 1)} °C` : 'Sin lectura registrada'}</strong><small>${tempFresh ? `Medida ${dateText(station.temperatureObservedAt)}` : `Última medición ${dateText(station.temperatureObservedAt)}`}</small></div>
+      <div><span>Humedad</span><strong>${station.humidityPct != null ? `${numberText(station.humidityPct, 0)} %` : 'Sin lectura registrada'}</strong><small>${humidityFresh ? `Medida ${dateText(station.humidityObservedAt)}` : `Última medición ${dateText(station.humidityObservedAt)}`}</small></div>
     </div>
     <p class="public-update">Última actualización de los sensores: <time datetime="${escapeText(lastUpdate || '')}">${escapeText(dateText(lastUpdate))}</time>. La lectura describe este punto del casco urbano.</p>
   </article>`;
