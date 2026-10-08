@@ -196,6 +196,25 @@ const acquisition = (() => {
 
 // Solicitud de enlace de acceso. La respuesta es genérica por diseño. La casilla
 // de novedades es opcional y no condiciona el acceso.
+
+// Sin canal de correo utilizable, la vía de acceso por enlace queda cerrada y
+// se ofrece atención manual en su lugar. Nunca se promete un envío que no
+// pueda salir. `emailAvailable` llega de public-config; `undefined` (respuesta
+// antigua) no desactiva nada.
+function applyMagicAvailability() {
+  const form = $('#magic-form');
+  const notice = $('#magic-unavailable');
+  if (!form || !notice) return;
+  const unavailable = session.support?.emailAvailable === false;
+  form.classList.toggle('hidden', unavailable);
+  notice.classList.toggle('hidden', !unavailable);
+  const phone = session.support?.supportPhone;
+  const whatsapp = session.support?.supportWhatsapp;
+  const contact = [phone && `teléfono ${phone}`, whatsapp && whatsapp !== phone && `WhatsApp ${whatsapp}`]
+    .filter(Boolean).join(' · ');
+  $('[data-magic-support]', notice).textContent = contact ? `¿Dudas? Escríbenos: ${contact}.` : '';
+}
+
 $('#magic-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
@@ -217,9 +236,16 @@ $('#magic-form').addEventListener('submit', async (event) => {
       }),
     });
     statusEl.textContent = 'Si la dirección puede recibir acceso, te hemos enviado un enlace. Revisa tu correo y la carpeta de spam.';
-  } catch {
+  } catch (error) {
     statusEl.textContent = '';
-    errorEl.textContent = 'No se pudo solicitar el acceso. Inténtalo de nuevo en unos minutos.';
+    if (error.message === 'email_delivery_unavailable') {
+      // Fallo global del canal: se comunica como indisponibilidad y se ofrece
+      // la vía manual, sin dejar de responder con datos genéricos.
+      applyMagicAvailability();
+      errorEl.textContent = 'El acceso por correo no está disponible ahora mismo. Usa la solicitud de acceso y te contactaremos.';
+    } else {
+      errorEl.textContent = 'No se pudo solicitar el acceso. Inténtalo de nuevo en unos minutos.';
+    }
   } finally {
     button.disabled = false;
   }
@@ -297,7 +323,7 @@ async function handleMagicReturn() {
 api('/api/v1/public-config')
   .then((support) => { session.support = support; })
   .catch(() => { session.support = null; })
-  .finally(() => renderSupport());
+  .finally(() => { renderSupport(); applyMagicAvailability(); });
 initLanding();
 try { await loadMe(); } catch { session.me = null; }
 await handleMagicReturn();

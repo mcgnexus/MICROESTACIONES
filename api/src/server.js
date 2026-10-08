@@ -45,8 +45,9 @@ import { normalizeAcquisition, recordConsent } from './consent.js';
 import mcpRouter from './mcp.js';
 import {
   MAGIC_REQUEST_MAX_ATTEMPTS, consumeMagicLink, deliverMagicLink, issueMagicLink,
-  normalizeEmail, resolvePasswordlessAccount, safeReturnPath,
+  magicLinkHash, normalizeEmail, resolvePasswordlessAccount, safeReturnPath,
 } from './magic-link.js';
+import { emailDeliveryReady, emailFailureScope, emailProvider } from './email.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -90,6 +91,9 @@ app.get('/api/v1/public-config', (_req, res) => {
     supportWhatsapp: process.env.SUPPORT_WHATSAPP || null,
     whatsappDelivery: (process.env.WHATSAPP_PROVIDER || 'disabled').toLowerCase(),
     emailDelivery: (process.env.EMAIL_PROVIDER || 'disabled').toLowerCase(),
+    // No secreto: permite a la interfaz cerrar la vía de acceso por correo
+    // y ofrecer atención manual cuando no hay canal de entrega utilizable.
+    emailAvailable: emailDeliveryReady(),
   });
 });
 
@@ -144,6 +148,13 @@ app.post('/api/auth/magic/request', csrfGuard, async (req, res) => {
   if (await consumeLoginAttempt(sql, keys, MAGIC_REQUEST_MAX_ATTEMPTS)) {
     return res.status(202).json({ status: 'sent' });
   }
+  // Disponibilidad global del canal: sin correo utilizable no se crean enlaces
+  // muertos ni se promete un envío. Es una condición del servicio, no de la
+  // cuenta, así que comunicarla no revela quién tiene acceso.
+  if (!emailDeliveryReady()) {
+    console.error('acceso por enlace: entrega de correo no disponible (EMAIL_PROVIDER=%s)', emailProvider());
+    return res.status(503).json({ error: 'email_delivery_unavailable' });
+  }
   try {
     // Las cuentas privilegiadas no acceden por enlace: se evita enviar un enlace
     // que no podrán usar. La respuesta sigue siendo indistinguible.
@@ -157,11 +168,27 @@ app.post('/api/auth/magic/request', csrfGuard, async (req, res) => {
     });
     if (issued.status === 'created') {
       await countMetric(sql, 'access_requested', acquisition).catch(metricFailure);
-      // El envío no bloquea la respuesta: el token ya está guardado como hash.
-      await deliverMagicLink(email, siteUrl, issued.token, returnPath).catch(() => {});
+      // El resultado del envío ya no se ignora: un fallo global del canal se
+      // comunica como indisponibilidad; un rechazo de la dirección concreta
+      // sigue respondiendo genérico para no revelar nada.
+      const delivery = await deliverMagicLink(email, siteUrl, issued.token, returnPath);
+      const scope = emailFailureScope(delivery);
+      if (scope === 'global') {
+        console.error('acceso por enlace: canal de envío no disponible:', delivery.error || 'desconocido');
+        if (!delivery.ambiguous) {
+          // Claramente no enviado: se elimina el enlace muerto para no dejar
+          // tokens inservibles ni bloquear un reintento por el cooldown.
+          await sql`DELETE FROM magic_links WHERE token_hash = ${magicLinkHash(issued.token)}`;
+        }
+        return res.status(503).json({ error: 'email_delivery_unavailable' });
+      }
+      if (scope === 'recipient') {
+        console.warn('acceso por enlace: envío rechazado para la dirección:', delivery.error);
+      }
     }
   } catch (error) {
     console.error('acceso por enlace:', error.message);
+    return res.status(503).json({ error: 'email_delivery_unavailable' });
   }
   res.status(202).json({ status: 'sent' });
 });
