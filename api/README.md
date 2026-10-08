@@ -199,20 +199,26 @@ Los detectores de sistema (desconexión, batería) y la cola de entrega ya **no 
 
 | Camino | Cuándo | Configuración |
 | --- | --- | --- |
+| **Disparo externo (n8n o cron externo)** — **mecanismo efectivo** | servidor sin proceso propio (este despliegue) | `CRON_SECRET`; sin secreto responde `503`. Workflows listos en `docs/n8n-planificador.json` y `docs/n8n-avisos.json` |
 | Temporizador (`startScheduler`) | proceso largo (`npm start`, Node) | `SYSTEM_EVAL_INTERVAL_S`, `OUTBOX_EVAL_INTERVAL_S`, `OUTBOX_BATCH_SIZE` |
-| `GET\|POST /api/v1/maintenance/scheduler` | servidor sin proceso propio (Vercel Cron) | `CRON_SECRET`; sin secreto responde `503` |
 | `schedulerRequestTick` (respaldo, **desactivado por defecto**) | cualquier petición a `/api/…` | `SCHEDULER_REQUEST_TICK=true` lo activa |
 
-- **Frecuencia**: el plan contratado no admite disparos continuos. En un proceso largo el intervalo mínimo es **30 s** (`SCHEDULER_MIN_INTERVAL_MS`); por defecto, **60 s**. Un valor menor se sube al mínimo, no se respeta.
-- **En Vercel no se promete nada más rápido que el plan**: el `vercel.json` trae un cron **diario** (`0 6 * * *`), que es el mínimo del plan Hobby y tiene una precisión de **±59 min**. Si el plan sube a Pro, se puede cambiar el cron a `*/1 * * * *` o similar. Mientras tanto, la latencia máxima real de un aviso es de ~25 h.
+- **No hay cron de Vercel**: el plan gratuito solo admite un disparo diario y no se usa para avisos. La latencia la marca el intervalo del disparador externo (con n8n cada 5 min, entrega y desconexión tardan como mucho ese intervalo más la pasada). Sin disparador externo y sin respaldo por tráfico **no hay pasadas ni entrega**.
+- **Presupuesto por invocación**: en serverless cada llamada procesa **una fila** de la cola por defecto (`maxDuration` 30 s). El disparo externo puede pedir más con `?outbox=N` (1–20, acotado) o repetir la llamada hasta vaciar la cola. La exclusión real la dan `FOR UPDATE SKIP LOCKED` y el bloqueo de filas de regla: repetir la llamada nunca duplica envíos ni episodios.
+- **Monitorización**: `GET /api/v1/maintenance/status` con `CRON_SECRET` devuelve recuento de la cola por estado, **antigüedad del elemento pendiente más viejo**, alertas abiertas (hasta 50) y configuración efectiva. `GET /api/v1/admin/maintenance/limits` documenta intervalos, límites HTTP, caducidades, el bloque `mechanism` (mecanismo efectivo) y el estado del planificador; `POST /api/v1/admin/maintenance/scheduler` permite dispararla a mano.
+- **Aceptación sugerida**: con diez destinatarios en cola y n8n a 5 min con `outbox=10`, toda la cola se procesa en la primera pasada; los códigos llegan antes de caducar (`MESSAGE_TTL_MINUTES`); medir la latencia por separado desde la observación, desde la recepción y desde la apertura del episodio.
 - **Latencia esperada**:
-  - proceso largo → hasta un intervalo (60 s) más la duración de la pasada;
-  - Vercel Hobby (cron diario) → **hasta ~25 h**;
-  - normalizador de lote → en Vercel cada invocación entrega **una sola fila** (`maxDuration` = 30 s) para no agotar el Function; el resto sale en la siguiente ejecución;
+  - disparo externo (n8n cada 5 min) → hasta 5 min más la duración de la pasada;
   - reintentos fallidos → **30 s, 60 s, 120 s… hasta 1 h**, con un tope de 5 intentos.
-- `GET /api/v1/admin/maintenance/limits` devuelve la configuración vigente (intervalos, límites HTTP, caducidades y estado del planificador) sin exponer secretos; `POST /api/v1/admin/maintenance/scheduler` permite dispararla a mano.
 
-**Si necesitas menos latencia sin subir de plan**: el endpoint está protegido por `CRON_SECRET` y funciona con cualquier cron externo. Programa una llamada cada 1–5 min (`Authorization: Bearer $CRON_SECRET`) desde GitHub Actions, cron-job.org o similar; el cron diario de Vercel queda solo como red de seguridad. No se recomienda activar `SCHEDULER_REQUEST_TICK` para esto: haría depender el motor del tráfico del panel, que es justo lo que la Fase 9 elimina.
+### Programar el disparo con n8n
+
+1. Importa `docs/n8n-planificador.json` en tu n8n: dispara cada 5 min y llama a `POST /api/v1/maintenance/scheduler?outbox=10` con `Authorization: Bearer <CRON_SECRET>`.
+2. Define la variable de entorno `TECRURAL_CRON_SECRET` en n8n con el mismo valor que `CRON_SECRET` en Vercel, y ajusta la URL si usas dominio propio.
+3. (Opcional) Importa `docs/n8n-avisos.json` para sondear `GET /api/v1/maintenance/status` cada 2 min y añadir un paso que empuje las `openAlerts` a Telegram/WhatsApp/email; un agente de IA también puede leerlas por el servidor MCP (`list_alerts`).
+4. (Recomendado como red de seguridad) Activa `SCHEDULER_REQUEST_TICK=true` en Vercel: cualquier petición a la API da un empujón a las pasadas (con el mismo tope de 60 s), de modo que si n8n se cae, el tráfico del panel mantiene el servicio.
+
+**Si necesitas menos latencia sin subir de plan**: el endpoint está protegido por `CRON_SECRET` y funciona con cualquier planificador externo; ajusta el intervalo del workflow al objetivo de latencia acordado.
 
 ## Entrega de avisos
 

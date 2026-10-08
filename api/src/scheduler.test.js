@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   SCHEDULER_MIN_INTERVAL_MS, schedulerConfig, runScheduledPasses, schedulerRequestTick,
-  schedulerState, resetSchedulerState, startScheduler,
+  schedulerState, resetSchedulerState, startScheduler, outboxLimitForRequest,
 } from './scheduler.js';
 
 const baseConfig = (over = {}) => ({
@@ -13,6 +13,20 @@ const baseConfig = (over = {}) => ({
   outboxEnabled: true,
   requestTickEnabled: true,
   ...over,
+});
+
+test('el presupuesto de fila por invocación está acotado para no agotar la función', () => {
+  // Sin parámetro: una fila en serverless, el lote del proceso largo.
+  assert.equal(outboxLimitForRequest(undefined, true), 1);
+  assert.equal(outboxLimitForRequest(undefined, false, 20), 20);
+  // El disparo externo puede pedir más, dentro del techo.
+  assert.equal(outboxLimitForRequest('5', true), 5);
+  assert.equal(outboxLimitForRequest('10', false, 20), 10);
+  // Acotado por abajo y por arriba, y basura numérica cae al valor por defecto.
+  assert.equal(outboxLimitForRequest('0', true), 1);
+  assert.equal(outboxLimitForRequest('-3', true), 1);
+  assert.equal(outboxLimitForRequest('999', false, 20), 20);
+  assert.equal(outboxLimitForRequest('diez', true), 1);
 });
 
 test('la frecuencia respeta el plan contratado del alojamiento', () => {

@@ -457,11 +457,19 @@ router.get('/maintenance/limits', async (_req, res) => {
       ...config,
       minIntervalMs: SCHEDULER_MIN_INTERVAL_MS,
       state: schedulerState(),
+      // El mecanismo efectivo de este despliegue: el plan gratuito de Vercel
+      // solo admite un cron diario y no se usa para avisos.
+      mechanism: {
+        primary: 'disparador externo (n8n o cron externo) → POST /api/v1/maintenance/scheduler con CRON_SECRET cada pocos minutos',
+        vercelCron: 'no configurado: el plan gratuito solo admite un cron diario y no se usa para avisos',
+        trafficTick: config.requestTickEnabled ? 'activo como respaldo' : 'inactivo (SCHEDULER_REQUEST_TICK=true para activarlo como respaldo)',
+        monitoring: 'GET /api/v1/maintenance/status con CRON_SECRET: antigüedad de la cola y alertas abiertas',
+      },
       expectedLatency: {
-        disconnection: 'hasta un intervalo de evaluación (por defecto 60 s) más la duración de la pasada',
-        delivery: 'hasta un intervalo de entrega (por defecto 60 s) más el backoff del proveedor',
+        disconnection: 'hasta el intervalo del disparador externo más la duración de la pasada',
+        delivery: 'hasta el intervalo del disparador externo más el backoff del proveedor',
         retryBackoff: '30 s, 60 s, 120 s… hasta 1 h (5 intentos como máximo)',
-        note: 'Sin cron configurado, el respaldo por peticiones añade la espera hasta la siguiente llamada a la API.',
+        note: 'Sin disparador externo ni respaldo por tráfico no hay pasadas: no hay entrega. Mide la latencia desde la observación, desde la recepción y desde la apertura del episodio por separado.',
       },
     },
     http: httpLimits(),

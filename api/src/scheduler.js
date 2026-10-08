@@ -1,15 +1,18 @@
 // Ejecución programada independiente de las visitas al panel.
 //
 // Antes, los detectores de desconexión y la cola de entrega solo se evaluaban
-// cuando alguien abría el panel (y, encima, desde un middleware montado DESPUÉS
+// cuando alguien abrió el panel (y, encima, desde un middleware montado DESPUÉS
 // de las rutas, así que casi nunca llegaba a ejecutarse). Aquí la pasada es un
 // proceso propio:
 //
-//   · proceso largo      → temporizador (`startScheduler`).
-//   · servidor sin cron  → `POST /api/v1/maintenance/scheduler` para que un cron
-//                           externo (Vercel Cron, crontab) lo llame.
+//   · disparo principal  → planificador externo (n8n o cron externo) llamando a
+//                          `POST /api/v1/maintenance/scheduler` con `CRON_SECRET`
+//                          cada pocos minutos. Es el mecanismo efectivo en este
+//                          despliegue: el plan gratuito de Vercel solo admite un
+//                          cron diario y no se usa para avisos.
+//   · proceso largo      → temporizadores (`startScheduler`).
 //   · respaldo opcional  → `schedulerRequestTick`, montado ANTES de las rutas,
-//                           activable solo si se necesita (`SCHEDULER_REQUEST_TICK=true`).
+//                          activable solo si se necesita (`SCHEDULER_REQUEST_TICK=true`).
 //
 // Exclusión: dentro de un proceso, un guardián de reentrada impide dos pasadas a
 // la vez. Entre procesos, la exclusión real la da la cola (`FOR UPDATE SKIP
@@ -18,26 +21,32 @@
 //
 // Frecuencia y latencia esperada
 // ------------------------------
-// El plan contratado del alojamiento no admite disparos continuos: el intervalo
-// mínimo es `SCHEDULER_MIN_INTERVAL_MS` (30 s) y por defecto se usa 60 s. Con
-// eso, la latencia real esperada es:
-//
-//   · desconexión de una estación   → hasta 1 intervalo + el tiempo que tarde la
-//                                     pasada (segundos).
-//   · entrega de un mensaje         → hasta 1 intervalo + backoff del proveedor.
-//   · reintentos fallidos           → 30 s, 60 s, 120 s… hasta 1 h (5 intentos).
-//
-// No se promete inmediatez. En Vercel Hobby el cron diario tiene precisión de
-// ±59 min: la latencia máxima esperada es por tanto de unas 25 h. En planes que
-// admitan más frecuencia, ajusta el cron al límite contratado. Sin cron
-// configurado, y con el respaldo desactivado por defecto, las pasadas solo
-// ocurren si se llama al endpoint protegido.
+// La latencia la marca el intervalo del disparador externo: con n8n cada 5 min,
+// entrega y desconexión tardan como mucho ese intervalo más la pasada. Sin
+// disparador externo y con el respaldo por tráfico desactivado, las pasadas
+// solo ocurren si alguien llama al endpoint protegido: no hay entrega.
+// Los reintentos fallidos usan backoff: 30 s, 60 s, 120 s… hasta 1 h (5 intentos).
 
 import { evaluateSystemRules } from './alert-engine.js';
 import { dispatchOutbox } from './notify.js';
 
 // Tope de frecuencia que respeta el plan contratado: por debajo no se ejecuta.
 export const SCHEDULER_MIN_INTERVAL_MS = 30_000;
+
+// Presupuesto de fila por invocación del disparo externo. El plan gratuito de
+// Vercel limita la función a 30 s: por defecto se procesa una fila (el disparo
+// externo puede repetirse o pedir más con el parámetro acotado).
+export const OUTBOX_LIMIT_FLOOR = 1;
+export const OUTBOX_LIMIT_CEILING = 20;
+
+// Límite de filas de la cola que procesa una invocación. `raw` llega del
+// parámetro `outbox` del disparo externo; acotado para no agotar el presupuesto
+// temporal de la función. Sin valor: 1 en serverless, el lote del proceso largo.
+export function outboxLimitForRequest(raw, serverless = false, batchSize = 20) {
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed)) return Math.min(Math.max(parsed, OUTBOX_LIMIT_FLOOR), OUTBOX_LIMIT_CEILING);
+  return serverless ? OUTBOX_LIMIT_FLOOR : Math.max(1, Number(batchSize) || 20);
+}
 
 function toMs(seconds, fallback) {
   const value = Number(seconds);

@@ -34,6 +34,7 @@ import {
 import { enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
 import {
   runScheduledPasses, schedulerConfig, schedulerRequestTick, startScheduler,
+  outboxLimitForRequest, schedulerState,
 } from './scheduler.js';
 import {
   verifyMetaSignature, verifySvixSignature, verifyTwilioSignature,
@@ -990,15 +991,51 @@ async function cronScheduler(req, res) {
   if (!CRON_SECRET) return res.status(503).json({ error: 'cron_not_configured' });
   const provided = (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.get('x-cron-secret');
   if (!sameSecret(provided, CRON_SECRET)) return res.status(403).json({ error: 'forbidden' });
-  // Vercel Functions tienen maxDuration=30 s en este proyecto: una sola fila por
-  // invocación evita agotar el presupuesto en varios timeouts de proveedor.
-  const result = await runScheduledPasses({ force: true, outboxLimit: isServerless ? 1 : undefined });
+  // Presupuesto acotado por invocación: el disparador externo (n8n) puede pedir
+  // más filas con `?outbox=N` o repetir la llamada hasta vaciar la cola.
+  const result = await runScheduledPasses({
+    force: true,
+    outboxLimit: outboxLimitForRequest(req.query.outbox ?? req.body?.outbox, isServerless),
+  });
   res.json(result);
 }
 
-// Vercel Cron hace GET; cron externo también puede usar POST.
+// Estado para el disparador externo y la monitorización (mismo secreto): cola
+// de entrega con su antigüedad, alertas abiertas para empujar donde toque y
+// configuración efectiva del planificador. Sin secretos.
+async function maintenanceStatus(req, res) {
+  if (!CRON_SECRET) return res.status(503).json({ error: 'cron_not_configured' });
+  const provided = (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.get('x-cron-secret');
+  if (!sameSecret(provided, CRON_SECRET)) return res.status(403).json({ error: 'forbidden' });
+  const now = new Date();
+  const rows = await sql`SELECT status, count(*)::integer AS n, min(created_at) AS oldest
+    FROM notification_outbox GROUP BY status`;
+  const counts = Object.fromEntries(rows.map((row) => [row.status, row.n]));
+  const actionable = rows.filter((row) => ['pending', 'manual', 'sending'].includes(row.status));
+  const oldest = actionable.map((row) => row.oldest).filter(Boolean)
+    .sort((a, b) => new Date(a) - new Date(b))[0] ?? null;
+  const openAlerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name,
+      a.level, a.message, a.category, a.observed_at, a.created_at
+    FROM alerts a JOIN devices d ON d.id = a.device_id
+    WHERE a.closed_at IS NULL
+    ORDER BY a.created_at DESC LIMIT 50`;
+  res.json({
+    now: now.toISOString(),
+    outbox: {
+      counts,
+      actionable: actionable.reduce((sum, row) => sum + row.n, 0),
+      oldestActionableAt: oldest,
+      oldestActionableSeconds: oldest ? Math.round((now - new Date(oldest)) / 1000) : 0,
+    },
+    openAlerts: openAlerts.map((alert) => ({ ...alert, ageSeconds: Math.round((now - new Date(alert.createdAt)) / 1000) })),
+    scheduler: { ...schedulerConfig(), state: schedulerState() },
+  });
+}
+
+// Vercel Cron hace GET; el disparo externo (n8n) también puede usar POST.
 app.get('/api/v1/maintenance/scheduler', cronScheduler);
 app.post('/api/v1/maintenance/scheduler', cronScheduler);
+app.get('/api/v1/maintenance/status', maintenanceStatus);
 
 if (!isServerless) {
   const stopScheduler = startScheduler({ config: schedulerConfig() });

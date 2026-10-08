@@ -8,8 +8,46 @@ import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
 import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison } from './farm-cards.js';
 import { coverageCaveat, caveatBlock } from './alert-copy.js';
 import { classifyNotice } from './notice-taxonomy.js';
+import {
+  notificationPermission, requestNotificationPermission, showBrowserNotification, newAlertIds,
+} from './notifications.js';
 
 const REFRESH_MS = 15 * 60 * 1000;
+
+// Emergentes: la primera carga fija la línea base (no notifica lo ya abierto);
+// después, cada aviso abierto nuevo dispara una notificación del navegador.
+const seenOpenAlerts = new Set();
+let alertsBaselineDone = false;
+
+function surfaceNewAlerts(openAlerts) {
+  if (!alertsBaselineDone) {
+    for (const alert of openAlerts) seenOpenAlerts.add(String(alert.id));
+    alertsBaselineDone = true;
+    return;
+  }
+  for (const alert of newAlertIds(seenOpenAlerts, openAlerts)) {
+    const priority = Number(alert.level) === 1 ? 'Alerta prioritaria' : 'Alerta';
+    showBrowserNotification(`${priority} · ${alert.deviceName || 'estación'}`, alert.message || '');
+    seenOpenAlerts.add(String(alert.id));
+  }
+  for (const closed of [...seenOpenAlerts]) {
+    if (!openAlerts.some((alert) => String(alert.id) === closed)) seenOpenAlerts.delete(closed);
+  }
+}
+
+// Botón discreto para conceder el permiso de notificación: los navegadores
+// exigen un gesto del usuario para pedirla.
+function wireNotificationButton(root) {
+  const button = $('[data-notify-enable]', root);
+  if (!button) return;
+  const permission = notificationPermission();
+  button.classList.toggle('hidden', permission !== 'default');
+  button.addEventListener('click', async () => {
+    const granted = (await requestNotificationPermission()) === 'granted';
+    button.classList.toggle('hidden', notificationPermission() !== 'default');
+    if (granted) showBrowserNotification('Avisos activados', 'Te avisaremos aquí cuando se abra una alerta en tu finca.');
+  });
+}
 
 const weatherText = (code) => ({
   0: 'Despejado', 1: 'Mayormente despejado', 2: 'Parcialmente nuboso', 3: 'Nublado',
@@ -556,9 +594,12 @@ async function renderSimplePanel(root) {
   root.innerHTML = `
     <div class="page-heading">
       <div><p class="eyebrow">TU FINCA</p><h1>Resumen de un vistazo</h1></div>
-      <label class="period-label">Periodo del histórico
-        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
-      </label>
+      <div class="row-actions">
+        <button type="button" class="quiet hidden" data-notify-enable title="Recibir alertas emergentes del navegador">🔔 Alertas emergentes</button>
+        <label class="period-label">Periodo del histórico
+          <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+        </label>
+      </div>
     </div>
     <p class="error" data-error role="alert"></p>
     <div id="simple-hero" class="hero-first-slot"></div>
@@ -620,7 +661,7 @@ async function renderSimplePanel(root) {
       $('#simple-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
-      if (!heroFocused && data.devices.length) { heroFocused = true; focusHeroSlot($('#simple-hero', root)); }
+      surfaceNewAlerts(open);
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
       if (error.message === 'authentication_required' || error.message === 'session_expired') return [];
@@ -632,6 +673,7 @@ async function renderSimplePanel(root) {
   const stations = await loadDashboard();
   mountMeasurements($('#simple-measurements', root), { stations });
   $('#period', root).addEventListener('change', loadDashboard);
+  wireNotificationButton(root);
 
   let refreshTimer = null;
   let inFlight = false;
@@ -827,9 +869,12 @@ export async function renderPanel(root) {
   root.innerHTML = `
     <div class="page-heading">
       <div><p class="eyebrow">ADMINISTRACIÓN · TU FINCA</p><h1>Estado y alertas</h1></div>
-      <label class="period-label">Periodo del detalle técnico
-        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
-      </label>
+      <div class="row-actions">
+        <button type="button" class="quiet hidden" data-notify-enable title="Recibir alertas emergentes del navegador">🔔 Alertas emergentes</button>
+        <label class="period-label">Periodo del detalle técnico
+          <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+        </label>
+      </div>
     </div>
     <p class="error" data-error role="alert"></p>
     <div id="panel-hero" class="hero-first-slot"></div>
@@ -881,6 +926,7 @@ export async function renderPanel(root) {
       $('#panel-history', root).innerHTML = visible(data.alerts).length
         ? visible(data.alerts).map((alert) => renderAlertRow(alert, { technical: canEdit() })).join('')
         : `<p class="empty">No hay avisos recientes.</p>${caveatBlock(caveat)}`;
+      surfaceNewAlerts(open);
       if (!heroFocused && data.devices.length) { heroFocused = true; focusHeroSlot($('#panel-hero', root)); }
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
@@ -893,6 +939,7 @@ export async function renderPanel(root) {
   const stations = await loadDashboard();
   mountMeasurements($('#panel-measurements', root), { stations });
   $('#period', root).addEventListener('change', loadDashboard);
+  wireNotificationButton(root);
 
   // Refresco silencioso cada 15 minutos; se pausa mientras la pestaña está oculta.
   let refreshTimer = null;
