@@ -18,3 +18,13 @@ test('five-minute measurements remain fresh across a fifteen-minute transmit cad
   assert.equal(dataFreshnessFor(observed, 300, new Date(observed.getTime() + 21 * 60_000)), 'stale');
   assert.equal(connectivityFor(null, 900, observed), 'unknown');
 });
+
+test('a reading younger than twenty minutes is never labelled stale', () => {
+  const observed = new Date('2026-10-07T12:00:00Z');
+  // Aunque la configuración declare un intervalo muy corto, el envío real es
+  // de ~15 min: el umbral de frescura tiene un suelo de 20 minutos.
+  assert.equal(dataFreshnessFor(observed, 60, new Date(observed.getTime() + 15 * 60_000)), 'fresh');
+  assert.equal(dataFreshnessFor(observed, 60, new Date(observed.getTime() + 19 * 60_000)), 'fresh');
+  assert.equal(dataFreshnessFor(observed, 300, new Date(observed.getTime() + 20 * 60_000)), 'fresh');
+  assert.equal(dataFreshnessFor(observed, 300, new Date(observed.getTime() + 20 * 60_000 + 1)), 'stale');
+});
