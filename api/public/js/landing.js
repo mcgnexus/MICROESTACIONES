@@ -168,17 +168,22 @@ const settle = (el) => {
   return el;
 };
 
-// Carga únicamente observaciones autorizadas y publica estados claros si no llegan datos.
-export async function loadPublicWeather(root = document) {
-  if (!root.querySelector('#local-weather-state')) return;
+// Carga únicamente observaciones autorizadas y publica estados claros si no
+// llegan datos. Los refrescos periódicos pasan `focus: false` para no mover
+// el scroll ni el foco de quien está leyendo.
+let publicWeatherInFlight = false;
+
+export async function loadPublicWeather(root = document, { focus = true } = {}) {
+  if (!root.querySelector('#local-weather-state') || publicWeatherInFlight) return;
+  publicWeatherInFlight = true;
   try {
     const { stations } = await api('/api/v1/public/stations');
     const station = selectUrbanStation(stations);
     settle(root.querySelector('#local-weather-state')).innerHTML = '';
     root.querySelector('#local-weather-card').innerHTML = renderLocalWeatherCard(station);
-    // Solo si se abre en la portada: en otras secciones públicas el scroll lo
-    // manda la ruta y no se le disputa.
-    if (!location.hash || location.hash === '#' || location.hash === '#/') {
+    // Solo en la carga inicial y solo si se abre en la portada: en otras
+    // secciones públicas el scroll lo manda la ruta y no se le disputa.
+    if (focus && (!location.hash || location.hash === '#' || location.hash === '#/')) {
       focusWeatherCard(root.querySelector('#local-weather-card'));
     }
     settle(root.querySelector('#public-comparison')).innerHTML = station
@@ -187,6 +192,8 @@ export async function loadPublicWeather(root = document) {
     settle(root.querySelector('#public-evolution')).innerHTML = renderThreeHourHistory(station);
   } catch {
     setPublicFailure(root, 'No se han podido cargar las mediciones públicas. Inténtalo de nuevo más tarde.');
+  } finally {
+    publicWeatherInFlight = false;
   }
 }
 
@@ -204,4 +211,22 @@ export function initLanding() {
   }
   mountLeadForms();
   loadPublicWeather();
+  initLandingRefresh();
+}
+
+// Auto-refresco de la portada: cada 15 min y al volver a la pestaña, siempre
+// que la portada esté visible (con sesión abierta queda oculta y el
+// temporizador queda inerte). Mismo patrón que el panel.
+const LANDING_REFRESH_MS = 15 * 60 * 1000;
+
+function initLandingRefresh() {
+  const landingView = document.querySelector('#landing-view');
+  const visible = () => landingView && !landingView.classList.contains('hidden') && !document.hidden;
+  const silentRefresh = () => { if (visible()) loadPublicWeather(document, { focus: false }); };
+  let refreshTimer = null;
+  const stopTimer = () => { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } };
+  const startTimer = () => { stopTimer(); refreshTimer = setInterval(silentRefresh, LANDING_REFRESH_MS); };
+  const onVisibility = () => { if (document.hidden) stopTimer(); else { silentRefresh(); startTimer(); } };
+  document.addEventListener('visibilitychange', onVisibility);
+  startTimer();
 }
