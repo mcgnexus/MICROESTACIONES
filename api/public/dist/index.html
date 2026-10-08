@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#153b2b">
+  <meta name="application-name" content="TecRural">
+  <title>Tiempo local medido en Huéscar | TecRural</title>
+  <meta name="description" content="Consulta mediciones reales de temperatura y humedad en un punto del casco urbano de Huéscar, su evolución y su comparación temporal con AEMET.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="__SITE_URL__/">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="TecRural">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="geo.region" content="ES-GR">
+  <meta name="geo.placename" content="Huéscar">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TecRural">
+  <meta property="og:locale" content="es_ES">
+  <meta property="og:title" content="Tiempo local medido en Huéscar | TecRural">
+  <meta property="og:description" content="Temperatura y humedad medidas en un punto urbano, evolución reciente y comparación temporal con AEMET.">
+  <meta property="og:url" content="__SITE_URL__/">
+  <meta property="og:image" content="__SITE_URL__/pwa-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="TecRural, mediciones meteorológicas locales para fincas">
+   <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Tiempo local medido en Huéscar | TecRural">
+  <meta name="twitter:description" content="Temperatura y humedad medidas en un punto urbano, evolución reciente y comparación temporal con AEMET.">
+  <meta name="twitter:image" content="__SITE_URL__/pwa-512.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/img/tecrural-icon-96.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="/pwa-192.png">
+  <link rel="stylesheet" href="/dist/assets/app-d73210b34026.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "LocalBusiness",
+        "@id": "__SITE_URL__/#tecrural",
+        "name": "TecRural",
+        "description": "Mediciones meteorológicas locales y herramientas de seguimiento para fincas en Huéscar (Granada).",
+        "url": "__SITE_URL__/",
+        "image": "__SITE_URL__/pwa-512.png",
+        "areaServed": { "@type": "City", "name": "Huéscar", "address": { "@type": "PostalAddress", "addressRegion": "Granada", "addressCountry": "ES" } },
+        "knowsAbout": ["heladas", "estrés térmico del ganado", "microclimas", "agricultura", "ganadería"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          { "@type": "Question", "name": "¿Qué mide la tarjeta del tiempo local?", "acceptedAnswer": { "@type": "Answer", "text": "Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no representa todas las calles ni las fincas." } },
+          { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están dentro de la ventana temporal configurada. Si no hay pareja, ambas lecturas se muestran por separado." } },
+          { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
+          { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
+          { "@type": "Question", "name": "¿Cómo obtengo acceso gratuito?", "acceptedAnswer": { "@type": "Answer", "text": "Puedes solicitar acceso mediante el formulario para que el equipo lo tramite, o pedir un enlace desde Entrar y verificar tu correo para crear una cuenta gratuita. Ninguna vía solicita automáticamente una llamada ni programa una instalación." } }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Saltar al contenido</a>
+  <header class="topbar">
+    <a class="brand" href="#/"><img src="/img/tecrural-icon-96.png" alt="" width="42" height="42"><span class="brand-copy">TECRURAL<span>INNOVACIÓN CON RAÍCES</span></span></a>
+    <nav id="main-nav" class="topnav hidden" aria-label="Secciones">
+      <a href="#/panel" data-nav="panel">Panel</a>
+      <a href="#/estaciones" data-nav="stations">Estaciones</a>
+      <a href="#/avisos" data-nav="alerts">Avisos</a>
+      <a href="#/admin" data-nav="admin" class="admin-only hidden">Administración</a>
+      <a href="#/cuenta" data-nav="account">Cuenta</a>
+    </nav>
+    <nav id="public-nav" class="topnav" aria-label="Página pública">
+      <a href="#/tiempo-local">Tiempo local</a>
+      <a href="#/comparacion-aemet">AEMET</a>
+      <a href="#/evolucion">Evolución</a>
+      <a href="#/fincas">Medir en finca</a>
+      <a href="#/demo-agricola">Demostración</a>
+      <a href="#/herramientas">Herramientas</a>
+      <a class="nav-access" href="#/solicitar-piloto">Acceso gratuito</a>
+      <a href="#/entrar">Entrar</a>
+    </nav>
+    <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>.</p>
+    <div class="topbar-right">
+      <span id="session-chip" class="chip hidden"></span>
+      <button id="install-app" class="quiet hidden" type="button">Instalar app</button>
+      <button id="logout" class="quiet hidden" type="button">Cerrar sesión</button>
+    </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <section id="landing-view">
+      <section id="tiempo-local" class="landing-section public-first-section">
+        <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
+        <div id="local-weather-card"></div>
+        <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
+        <h1>Tiempo local ahora</h1>
+        <p class="landing-lead">Temperatura y humedad medidas en un punto del casco urbano. La lectura describe ese emplazamiento; no representa exactamente toda la ciudad ni tu finca.</p>
+        <div class="landing-actions"><a class="cta" href="#/tiempo-local">Consultar el tiempo local</a><a class="cta secondary" href="#/herramientas">Explorar todas las herramientas</a></div>
+      </section>
+
+      <section id="comparacion-aemet" class="landing-section">
+        <p class="eyebrow">DOS FUENTES · DOS UBICACIONES</p>
+        <h2>Comparación con AEMET</h2>
+        <p class="section-intro">Solo calculamos la diferencia cuando la medición local y la observación de AEMET están temporalmente emparejadas. Si no lo están, mostramos cada valor con su hora.</p>
+        <div id="public-comparison" class="public-loading" aria-live="polite">Cargando observaciones…</div>
+      </section>
+
+      <section id="evolucion" class="landing-section">
+        <p class="eyebrow">ÚLTIMAS TRES HORAS</p>
+        <h2>Evolución de las mediciones</h2>
+        <p class="section-intro">La gráfica utiliza únicamente muestras reales y validadas del punto urbano publicado.</p>
+        <div id="public-evolution" class="public-loading" aria-live="polite">Cargando la serie reciente…</div>
+      </section>
+
+      <section id="fincas" class="landing-section">
+        <p class="eyebrow">EL PUNTO DE MEDIDA IMPORTA</p>
+        <h2>Lo que ocurre en el casco no siempre ocurre en la finca</h2>
+        <p>Una medición en el casco urbano es una referencia de ese punto. En una explotación pueden darse otras condiciones: una hondonada, una vega o una zona alta pueden registrar diferencias de temperatura y humedad según el relieve, la exposición, el viento y el momento.</p>
+        <p>Medir en la propia finca ayuda a seguir frío, calor y humedad allí donde afectan a los cultivos o al ganado. Esas diferencias son posibilidades locales, no una regla igual para todas las parcelas.</p>
+        <div class="farm-value-grid">
+          <article><span aria-hidden="true">❄️</span><h3>Frío</h3><p>Observa cómo evolucionan las temperaturas en tu emplazamiento.</p></article>
+          <article><span aria-hidden="true">☀️</span><h3>Calor</h3><p>Sigue los episodios cálidos en el punto que te interesa.</p></article>
+          <article><span aria-hidden="true">💧</span><h3>Humedad</h3><p>Consulta la humedad medida junto con la hora de cada lectura.</p></article>
+        </div>
+      </section>
+
+      <section id="demo-agricola" class="landing-section">
+        <p class="eyebrow">DEMOSTRACIÓN INTERACTIVA · SIMULACIÓN</p>
+        <h2>Explora cómo se vería una estación en tu finca</h2>
+        <p class="section-intro">Tres escenarios simulados, con datos ilustrativos que no proceden de ninguna estación ni de ninguna finca existente. Mueve el umbral para ver cuándo se generaría un aviso; la simulación no crea avisos reales ni cambia nada.</p>
+        <div data-farm-sim></div>
+      </section>
+
+      <section id="herramientas" class="landing-section">
+        <p class="eyebrow">ACCESO AMPLIADO</p>
+        <h2>Más seguimiento para tu finca</h2>
+        <p class="section-intro">El acceso ampliado reúne herramientas para consultar y entender las mediciones de tus estaciones.</p>
+        <div class="tools-preview">
+          <article><span aria-hidden="true">📈</span><div><h3>Histórico y evolución</h3><p>Revisa mediciones anteriores y sus tendencias.</p><a href="#/estaciones">Abrir histórico · requiere acceso</a></div></article>
+          <article><span aria-hidden="true">🔔</span><div><h3>Avisos y seguimiento</h3><p>Consulta avisos, estado de conexión y calidad de los datos.</p><a href="#/avisos">Abrir avisos · requiere acceso</a></div></article>
+          <article><span aria-hidden="true">📍</span><div><h3>Estaciones y fincas</h3><p>Organiza tus ubicaciones y consulta el punto medido.</p><a href="#/panel">Abrir panel · requiere acceso</a></div></article>
+        </div>
+        <a class="access-link" href="#/solicitar-piloto">Solicitar acceso gratuito</a>
+      </section>
+
+      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-title="Solicita acceso gratuito" data-lead-description="Cuéntanos de tu actividad y zona. Revisaremos la solicitud y te contactaremos para tramitar el acceso; el envío no programa una instalación automática." data-lead-success="Solicitud recibida. Revisaremos el acceso y te contactaremos."></section>
+
+      <section id="preguntas" class="landing-section">
+        <p class="eyebrow">PREGUNTAS FRECUENTES</p>
+        <h2>Dudas habituales</h2>
+        <div class="faq">
+          <details><summary>¿Qué mide la tarjeta del tiempo local?</summary><p>Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no se presenta como representativa de cada calle o finca.</p></details>
+          <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están dentro de la ventana configurada. Si no hay pareja, no mostramos una diferencia directa.</p></details>
+          <details><summary>¿La lectura del casco representa mi finca?</summary><p>No necesariamente. Hondonadas, vegas y zonas altas pueden tener condiciones distintas según su emplazamiento y las condiciones del momento. Medir en la finca permite observar ese punto concreto.</p></details>
+          <details><summary>¿Cómo obtengo acceso gratuito?</summary><p>Puedes solicitar acceso mediante el formulario para que el equipo lo tramite, o pedir un enlace desde <a href="#/entrar">Entrar</a> y verificar tu correo para crear una cuenta gratuita. Ninguna vía solicita automáticamente una llamada ni programa una instalación.</p></details>
+          <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Se muestran avisos oficiales y riesgo estimado. Una detección local precisa requeriría sensores adicionales.</p></details>
+        </div>
+      </section>
+
+      <section id="contacto-publico" class="landing-section contact-public">
+        <p class="eyebrow">CONTACTO</p><h2>¿Tienes una pregunta?</h2>
+        <p>Consulta la información de contacto o escríbenos antes de solicitar acceso.</p>
+        <p><a class="cta secondary" href="/contacto">Ver contacto</a></p>
+        <p class="landing-support hidden" data-support></p>
+      </section>
+    </section>
+    <section id="login-view" class="login-card hidden">
+      <p class="eyebrow">ACCESO · SIN CONTRASEÑA</p>
+      <h1>Entra con tu correo</h1>
+      <p>Te enviamos un enlace de un solo uso. Sin contraseña y sin crear cuenta con antelación.</p>
+      <form id="magic-form">
+        <label>Correo electrónico<input name="email" type="email" autocomplete="email" required></label>
+        <label class="check"><input type="checkbox" name="marketing"> Quiero recibir novedades y ofertas sobre microestaciones por correo (opcional)</label>
+        <button type="submit">Enviar enlace de acceso</button>
+        <p class="hint">El acceso es gratuito y no depende de esta casilla. Puedes cambiarla cuando quieras.</p>
+        <p id="magic-status" class="hint" role="status" aria-live="polite"></p>
+        <p id="magic-error" class="error" role="alert"></p>
+      </form>
+      <details class="password-fallback">
+        <summary><span>Ya tengo cuenta con contraseña</span></summary>
+        <form id="login-form">
+          <label>Correo electrónico<input name="email" type="email" autocomplete="username" required></label>
+          <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Entrar con contraseña</button>
+          <p id="login-error" class="error" role="alert"></p>
+        </form>
+      </details>
+      <p class="landing-login"><a href="#/">Volver a la página principal</a></p>
+    </section>
+    <section id="view-root" class="hidden" aria-live="polite"></section>
+  </main>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p><strong>TecRural</strong> · Microestaciones y alertas meteorológicas para fincas en Huéscar (Granada).</p>
+      <p class="footer-links">
+        <a href="/contacto">Contacto</a>
+        <a href="/privacidad">Política de privacidad</a>
+        <a href="/cookies">Política de cookies</a>
+        <a href="/aviso-legal">Aviso legal</a>
+      </p>
+      <p class="footer-support" data-support></p>
+    </div>
+  </footer>
+  <nav id="mobile-nav" class="mobile-tab-bar hidden" aria-label="Navegación móvil">
+    <a href="#/panel" data-mobile-nav="panel"><span aria-hidden="true">⌂</span>Panel</a>
+    <a href="#/estaciones" data-mobile-nav="stations"><span aria-hidden="true">◉</span>Estaciones</a>
+    <a href="#/avisos" data-mobile-nav="alerts"><span aria-hidden="true">♧</span>Avisos</a>
+    <a href="#/cuenta" data-mobile-nav="account"><span aria-hidden="true">●</span>Cuenta</a>
+  </nav>
+  <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
+  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias. Las alertas propias son orientativas, no avisos oficiales.</p>
+  <script type="module" src="/dist/assets/app-TLWFPJB7.js"></script>
+</body>
+</html>

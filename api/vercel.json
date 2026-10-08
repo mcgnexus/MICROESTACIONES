@@ -17,52 +17,91 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "same-origin" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+        }
       ]
     },
     {
       "source": "/dist/assets/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
       ]
     },
     {
-      "source": "/service-worker",
+      "source": "/service-worker.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
       ]
     },
     {
       "source": "/manifest.webmanifest",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
       ]
     },
     {
       "source": "/img/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
       ]
     },
     {
       "source": "/pwa-192.png",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
       ]
     },
     {
       "source": "/pwa-512.png",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
       ]
     }
   ],
   "rewrites": [
-    { "source": "/robots.txt", "destination": "/api/index" },
-    { "source": "/sitemap.xml", "destination": "/api/index" },
-    { "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)", "destination": "/api/index" }
+    {
+      "source": "/robots.txt",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)",
+      "destination": "/api/index"
+    }
   ]
 }
