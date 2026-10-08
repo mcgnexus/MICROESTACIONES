@@ -1,5 +1,6 @@
 import { sql } from './db.js';
-import { fetchJsonWithLimits } from './http-limits.js';
+import { fetchJsonWithLimits, fetchBinaryWithLimits } from './http-limits.js';
+import { decodeAemetCapBundle } from './aemet-cap.js';
 
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
 const AEMET = 'https://opendata.aemet.es/opendata/api';
@@ -164,7 +165,11 @@ function capMessage(xml, areaCode, latitude, longitude) {
     const pointMatch = warningContainsPoint(area, latitude, longitude);
     const explicitAreaMatch = areaCodes.includes(String(areaCode));
     const hasGeometry = xmlValueAll(area, 'polygon').length > 0 || xmlValueAll(area, 'circle').length > 0;
-    const geographicallyRelevant = pointMatch ?? (explicitAreaMatch || !hasGeometry);
+    // Filtrado por relevancia: geometría si hay coordenadas; si el bloque
+    // declara códigos de zona, manda la coincidencia de zona (así un aviso de
+    // otra provincia dentro del mismo tar no se cuela); sin códigos ni
+    // geometría, no hay forma de discriminar y se incluye.
+    const geographicallyRelevant = pointMatch ?? (areaCodes.length ? explicitAreaMatch : !hasGeometry);
     const geocodes = xmlBlocks(area, 'geocode').map((block) => ({
       name: xmlValue(block, 'valueName'), value: xmlValue(block, 'value'),
     }));
@@ -392,7 +397,8 @@ export function describeAemetError(endpoint, error) {
   const message = String(error?.message || '');
   const status = Number(message.match(/(?:aemet_status_|provider_http_)(\d{3})/)?.[1]);
   let cause = 'fallo de conexión o respuesta no válida';
-  if (status === 401 || status === 403) cause = `API key o permisos rechazados (HTTP ${status})`;
+  if (status === 404) cause = 'AEMET no devolvió datos (HTTP 404): puede que no haya información en las últimas horas';
+  else if (status === 401 || status === 403) cause = `API key o permisos rechazados (HTTP ${status})`;
   else if (status === 429) cause = 'límite de peticiones alcanzado (HTTP 429)';
   else if (status >= 500) cause = `servicio AEMET con error HTTP ${status}`;
   else if (status) cause = `respuesta HTTP ${status}`;
@@ -405,7 +411,7 @@ export function mergeWeatherErrors(...groups) {
   return [...new Set(groups.flat().filter(Boolean))];
 }
 
-async function aemetData(path) {
+async function aemetLocator(path) {
   const key = process.env.AEMET_API_KEY;
   if (!key) return null;
   const base = `${AEMET}${path}${path.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(key)}`;
@@ -413,10 +419,28 @@ async function aemetData(path) {
   if (!locator?.datos || Number(locator.estado) !== 200) throw new Error(`aemet_status_${locator?.estado ?? 'unknown'}`);
   const dataUrl = new URL(locator.datos);
   if (dataUrl.protocol !== 'https:' || dataUrl.hostname !== 'opendata.aemet.es') throw new Error('aemet_data_url_invalid');
+  return dataUrl;
+}
+
+async function aemetData(path) {
+  const dataUrl = await aemetLocator(path);
+  if (!dataUrl) return null;
   return fetchJson(dataUrl);
 }
 
-async function fetchAemet({ municipalityCode, stationId, warningArea }, device) {
+// El producto CAP se sirve como tar (`application/x-gtar`) con ficheros XML:
+// se descarga en binario y se desempaqueta antes de interpretarlo.
+async function aemetCapDocuments(path) {
+  const dataUrl = await aemetLocator(path);
+  if (!dataUrl) return null;
+  const { response, buffer } = await fetchBinaryWithLimits(dataUrl, {
+    headers: { accept: 'application/x-gtar, application/x-tar, application/gzip, application/json, application/xml, text/xml' },
+  });
+  if (!response.ok) throw new Error(`provider_http_${response.status}`);
+  return decodeAemetCapBundle(buffer);
+}
+
+async function fetchAemet({ municipalityCode, stationId, warningZone, downloadArea }, device) {
   const key = process.env.AEMET_API_KEY;
   if (!key) return null;
   const [forecastResult, observationResult, warningsResult] = await Promise.allSettled([
@@ -426,21 +450,24 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }, device) 
     stationId
       ? aemetData(`/observacion/convencional/datos/estacion/${encodeURIComponent(stationId)}`)
       : Promise.resolve(null),
-    warningArea
-      ? aemetData(`/avisos_cap/ultimoelaborado/area/${encodeURIComponent(warningArea)}`)
+    downloadArea
+      ? aemetCapDocuments(`/avisos_cap/ultimoelaborado/area/${encodeURIComponent(downloadArea)}`)
       : Promise.resolve(null),
   ]);
+  // Sin datos (HTTP 404) es una respuesta válida de AEMET, no un fallo del canal.
+  const noData = (result) => result.status === 'rejected'
+    && result.reason?.message === 'aemet_status_404';
   const observation = observationResult.status === 'fulfilled' && observationResult.value
     ? normalizeAemetObservation(observationResult.value, stationId) : null;
   const observationQueried = !!stationId;
   const forecastQueried = !!municipalityCode;
-  const warningsQueried = !!warningArea;
+  const warningsQueried = !!downloadArea;
   const warningPayload = warningsResult.status === 'fulfilled' ? warningsResult.value : null;
   const warningPayloadUsable = warningsQueried && warningsResult.status === 'fulfilled' && isAemetCapPayload(warningPayload);
   const warningDocuments = warningPayload == null ? [] : Array.isArray(warningPayload) ? warningPayload
     : [typeof warningPayload === 'string' ? warningPayload : JSON.stringify(warningPayload)];
   const warnings = warningPayloadUsable
-    ? resolveAemetWarnings(warningDocuments, { areaCode: warningArea, latitude: Number(device.latitude), longitude: Number(device.longitude) })
+    ? resolveAemetWarnings(warningDocuments, { areaCode: warningZone, latitude: Number(device.latitude), longitude: Number(device.longitude) })
     : null;
   const forecastValue = forecastResult.status === 'fulfilled' && forecastResult.value;
   const errors = [];
@@ -455,8 +482,11 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }, device) 
     forecastMunicipalityCode: municipalityCode || null,
     observationCheckedAt: stationId ? fetchedAt : null,
     forecastCheckedAt: municipalityCode ? fetchedAt : null,
-    warningsCheckedAt: warningArea ? fetchedAt : null,
-    observation, observationAvailable: !observationQueried || observationResult.status === 'fulfilled',
+    warningsCheckedAt: downloadArea ? fetchedAt : null,
+    observation,
+    // 404 = AEMET no devolvió datos: la consulta es válida y el estado propio
+    // es "sin datos", no un fallo del canal ni una ausencia de avisos.
+    observationAvailable: !observationQueried || observationResult.status === 'fulfilled' || noData(observationResult),
     observationFetchedAt: observation ? fetchedAt : null,
     forecast: forecastValue ? {
       provider: 'AEMET', fetchedAt,
@@ -475,10 +505,11 @@ async function fetchAemet({ municipalityCode, stationId, warningArea }, device) 
     forecastAvailable: !forecastQueried || forecastResult.status === 'fulfilled',
     forecastFetchedAt: forecastValue ? fetchedAt : null,
     warnings,
-    warningsAvailable: !warningsQueried || warningPayloadUsable,
+    warningsAvailable: !warningsQueried || warningPayloadUsable || noData(warningsResult),
+    warningsNoData: warningsQueried && noData(warningsResult),
     warningsFetchedAt: warningPayloadUsable ? fetchedAt : null,
-    warningsCheckedAt: warningsQueried ? fetchedAt : null,
-    warningsAreaCode: warningArea || null,
+    warningsAreaCode: warningZone || null,
+    warningsDownloadArea: downloadArea || null,
     errors,
   };
 }
@@ -502,11 +533,19 @@ export function mergeAemetSnapshot(previous, fresh) {
       merged[name] = newValue;
       if (fresh[fetchedKey]) merged[fetchedKey] = fresh[fetchedKey];
     }
-    merged[`${name}Status`] = available && (name === 'warnings' || newValue) ? 'current'
-      : merged[name] ? 'stale' : available ? 'empty' : 'unavailable';
+    // "empty" = consulta válida pero AEMET no devolvió datos (HTTP 404); en
+    // avisos jamás se interpreta como ausencia de avisos.
+    const noData = name === 'warnings' && fresh.warningsNoData;
+    merged[`${name}Status`] = noData ? 'empty'
+      : available && (name === 'warnings' || newValue) ? 'current'
+        : merged[name] ? 'stale' : available ? 'empty' : 'unavailable';
     if (!merged[fetchedKey] && previous?.fetchedAt && merged[name]) merged[fetchedKey] = previous.fetchedAt;
   }
+  if (fresh.warningsNoData !== undefined || previous?.warningsNoData !== undefined) {
+    merged.warningsNoData = Boolean(fresh.warningsNoData);
+  }
   merged.warningsAreaCode = fresh.warningsAreaCode || previous?.warningsAreaCode || null;
+  merged.warningsDownloadArea = fresh.warningsDownloadArea || previous?.warningsDownloadArea || null;
   return merged;
 }
 
@@ -545,14 +584,25 @@ function isFresh(snapshot) {
   return snapshot && Date.now() - new Date(snapshot.fetchedAt).getTime() < WEATHER_TTL_MS;
 }
 
+// Área de descarga del producto CAP: la especificación admite `esp` o el
+// código de CCAA (`61` Andalucía…). El código de zona CAP (`611802`) sirve para
+// FILTRAR el contenido, nunca como área de descarga. Se deriva del prefijo.
+export function downloadAreaForZone(zone) {
+  const prefix = String(zone || '').trim().slice(0, 2);
+  return /^(6[1-9]|7[0-9])$/.test(prefix) ? prefix : 'esp';
+}
+
 export function aemetConfigForDevice(device) {
   const location = [device.name, device.publicZone].filter(Boolean).join(' ')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isHuescar = /(^|\W)huescar(\W|$)/.test(location);
+  const warningZone = device.aemetWarningArea || (isHuescar ? '611803' : null);
   return {
     municipalityCode: device.aemetMunicipalityCode || (isHuescar ? '18098' : null),
     stationId: device.aemetStationId || (isHuescar ? '5051X' : null),
-    warningArea: device.aemetWarningArea || (isHuescar ? '611803' : null),
+    // Zona CAP para filtrar mensajes y área de descarga para pedir el producto.
+    warningZone,
+    downloadArea: warningZone ? downloadAreaForZone(warningZone) : null,
   };
 }
 
@@ -574,13 +624,13 @@ export async function weatherForDevice(device) {
         && String(aemet.forecastMunicipalityCode) !== String(aemetConfig.municipalityCode))) {
       aemet = { ...aemet, forecast: null, forecastFetchedAt: null, forecastCheckedAt: null, forecastStatus: aemetConfig.municipalityCode ? 'unavailable' : 'unconfigured' };
     }
-    if (!aemetConfig.warningArea || String(aemet.warningsAreaCode || '') !== String(aemetConfig.warningArea)) {
-      aemet = { ...aemet, warnings: [], warningsFetchedAt: null, warningsCheckedAt: null, warningsStatus: aemetConfig.warningArea ? 'unavailable' : 'unconfigured' };
+    if (!aemetConfig.warningZone || String(aemet.warningsAreaCode || '') !== String(aemetConfig.warningZone)) {
+      aemet = { ...aemet, warnings: [], warningsFetchedAt: null, warningsCheckedAt: null, warningsStatus: aemetConfig.warningZone ? 'unavailable' : 'unconfigured' };
     }
   }
   const hasAemetConfig = Object.values(aemetConfig).some(Boolean);
   const componentStale = (value) => !value || Date.now() - new Date(value).getTime() >= WEATHER_TTL_MS;
-  const aemetStale = !aemet || [['observationCheckedAt', 'stationId'], ['forecastCheckedAt', 'municipalityCode'], ['warningsCheckedAt', 'warningArea']]
+  const aemetStale = !aemet || [['observationCheckedAt', 'stationId'], ['forecastCheckedAt', 'municipalityCode'], ['warningsCheckedAt', 'warningZone']]
     .some(([checkedAt, configKey]) => aemetConfig[configKey]
       && (!aemet[checkedAt] || componentStale(aemet[checkedAt])));
   const openMeteoStale = !isFresh(openMeteo);
@@ -624,7 +674,8 @@ export async function weatherForDevice(device) {
   const aemetResponse = aemet ? { ...aemet } : {
     provider: 'AEMET', observation: null, forecast: null, warnings: [], errors: [],
     observationStatus: 'unconfigured', forecastStatus: 'unconfigured', warningsStatus: 'unconfigured',
-    warningsAreaCode: aemetConfig.warningArea || null,
+    warningsAreaCode: aemetConfig.warningZone || null,
+    warningsDownloadArea: aemetConfig.downloadArea || null,
   };
   if (aemetResponse) {
     for (const [name, fetchedKey] of [['observation', 'observationFetchedAt'], ['forecast', 'forecastFetchedAt'], ['warnings', 'warningsFetchedAt']]) {
@@ -641,7 +692,7 @@ export async function weatherForDevice(device) {
     });
     if (!aemetConfig.stationId) aemetResponse.observationStatus = 'unconfigured';
     if (!aemetConfig.municipalityCode) aemetResponse.forecastStatus = 'unconfigured';
-    if (!aemetConfig.warningArea) aemetResponse.warningsStatus = 'unconfigured';
+    if (!aemetConfig.warningZone) aemetResponse.warningsStatus = 'unconfigured';
     else if (!process.env.AEMET_API_KEY) {
       aemetResponse.observationStatus = aemetResponse.observation ? 'stale' : 'unconfigured';
       aemetResponse.forecastStatus = aemetResponse.forecast ? 'stale' : 'unconfigured';
@@ -654,7 +705,7 @@ export async function weatherForDevice(device) {
     !process.env.AEMET_API_KEY ? 'API key AEMET_API_KEY' : null,
     !aemetConfig.municipalityCode ? 'código municipal' : null,
     !aemetConfig.stationId ? 'indicativo de estación observadora' : null,
-    !aemetConfig.warningArea ? 'área de avisos' : null,
+    !aemetConfig.warningZone ? 'área de avisos' : null,
   ].filter(Boolean);
   const comparison = compareTemperatures(localTemperature, aemetResponse?.observation, aemetPairWindowMs());
   return {

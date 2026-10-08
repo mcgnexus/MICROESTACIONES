@@ -27,6 +27,24 @@ function timeoutError(ms) {
   return error;
 }
 
+// Igual de presupuesto, pero para respuestas binarias (p. ej. el tar de CAP
+// de AEMET): devuelve el ArrayBuffer bajo el mismo tope completo.
+export async function fetchBinaryWithLimits(url, options = {}, env = process.env) {
+  const { timeoutMs, maxMs } = httpLimits(env);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), maxMs);
+  try {
+    const response = await fetch(url, { ...options, signal: options.signal ?? controller.signal });
+    const buffer = await response.arrayBuffer();
+    return { response, buffer };
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') throw timeoutError(maxMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Llamada completa (cabeceras + cuerpo JSON) bajo un único presupuesto. Un
 // timeout al recibir cabeceras es ambiguo: el proveedor pudo aceptar el POST, así
 // que quien envía no debe reenviarlo automáticamente. Si ya llegaron cabeceras

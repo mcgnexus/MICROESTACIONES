@@ -103,6 +103,7 @@ router.get('/stations', async (_req, res) => {
         warningsFetchedAt: weather.aemet?.warningsFetchedAt ?? null,
         warningsAgeSeconds: weather.aemet?.warningsAgeSeconds ?? null,
         warningsAreaCode: weather.aemet?.warningsAreaCode ?? null,
+        warningsDownloadArea: weather.aemet?.warningsDownloadArea ?? null,
         errors: weather.errors ?? [],
       } : null,
       comparison: weather?.comparison ?? null,

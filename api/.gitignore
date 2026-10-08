@@ -1,2 +1,3 @@
 .vercel
 .env*
+src/fixtures/aemet-avisos-61.bin

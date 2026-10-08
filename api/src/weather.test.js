@@ -4,6 +4,7 @@ import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
   aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
   compareTemperatures, mergeAemetSnapshot, resolveAemetWarnings, isAemetCapPayload, aemetPairWindowMs,
+  downloadAreaForZone,
 } from './weather.js';
 
 test('AEMET sky returns a single representative description', () => {
@@ -49,16 +50,28 @@ test('AEMET errors show safe endpoint diagnostics and repeated messages are dedu
   ]);
 });
 
-test('Huéscar devices receive AEMET municipality, observation, and warning-area defaults', () => {
+test('Huéscar devices receive AEMET municipality, observation, and warning-zone defaults', () => {
   assert.deepEqual(aemetConfigForDevice({ name: 'Microestación', publicZone: 'Huéscar, Granada' }), {
-    municipalityCode: '18098', stationId: '5051X', warningArea: '611803',
+    municipalityCode: '18098', stationId: '5051X', warningZone: '611803', downloadArea: '61',
   });
   assert.deepEqual(aemetConfigForDevice({ name: 'Huéscar Norte', publicZone: null, aemetStationId: 'CUSTOM' }), {
-    municipalityCode: '18098', stationId: 'CUSTOM', warningArea: '611803',
+    municipalityCode: '18098', stationId: 'CUSTOM', warningZone: '611803', downloadArea: '61',
   });
   assert.deepEqual(aemetConfigForDevice({ name: 'Otra estación', publicZone: 'Baza' }), {
-    municipalityCode: null, stationId: null, warningArea: null,
+    municipalityCode: null, stationId: null, warningZone: null, downloadArea: null,
   });
+});
+
+test('the CAP download area derives from the zone prefix and falls back to spain', () => {
+  // La zona CAP (611802) sirve para filtrar; el área de descarga es la CCAA (61).
+  assert.equal(downloadAreaForZone('611802'), '61');
+  assert.equal(downloadAreaForZone('611803'), '61');
+  assert.equal(downloadAreaForZone('610404'), '61');
+  // Códigos fuera del rango de CCAA admitido o sin zona: España entera.
+  assert.equal(downloadAreaForZone('999999'), 'esp');
+  assert.equal(downloadAreaForZone('abc'), 'esp');
+  assert.equal(downloadAreaForZone(null), 'esp');
+  assert.equal(downloadAreaForZone(''), 'esp');
 });
 
 test('Open-Meteo normalization includes current weather, hourly rain and wind, and daily outlook', () => {
@@ -173,6 +186,16 @@ test('a successful empty CAP response means no current warnings; malformed conte
   });
   assert.deepEqual(empty.warnings, []);
   assert.equal(empty.warningsStatus, 'current');
+});
+
+test('a 404 with no CAP data is an empty consultation, never an absence of warnings', () => {
+  const noData = mergeAemetSnapshot({ warnings: [{ identifier: 'old' }], warningsFetchedAt: '2026-10-06T12:00:00Z' }, {
+    warnings: [], warningsAvailable: true, warningsNoData: true,
+    warningsFetchedAt: null, warningsCheckedAt: '2026-10-07T12:00:00Z',
+    fetchedAt: '2026-10-07T12:00:00Z', errors: [],
+  });
+  assert.deepEqual(noData.warnings, []);
+  assert.equal(noData.warningsStatus, 'empty');
 });
 
 test('CAP parsing filters expired and out-of-area alerts, and applies cancellation references', () => {

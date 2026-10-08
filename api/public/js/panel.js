@@ -475,9 +475,10 @@ function weatherBlock(weather, detailKey) {
   const warningStatus = weather.aemet?.warningsStatus || 'unavailable';
   const warningAge = weather.aemet?.warningsAgeSeconds == null ? '' : ` · última consulta hace ${Math.round(weather.aemet.warningsAgeSeconds / 60)} min`;
   const warningStatusText = warningStatus === 'current' ? `Consulta completada ${dateText(weather.aemet?.warningsFetchedAt)}`
-    : warningStatus === 'stale' ? `No se pudo actualizar; se conserva la última respuesta utilizable${warningAge}${weather.aemet?.warnings?.length ? '' : ', que no contiene avisos vigentes'}`
-      : warningStatus === 'unconfigured' ? 'Consulta AEMET no configurada para esta zona'
-        : 'No se ha podido consultar AEMET';
+    : warningStatus === 'empty' ? `AEMET no devolvió datos (${dateText(weather.aemet?.warningsCheckedAt)}): no se interpreta como ausencia de avisos`
+      : warningStatus === 'stale' ? `No se pudo actualizar; se conserva la última respuesta utilizable${warningAge}${weather.aemet?.warnings?.length ? '' : ', que no contiene avisos vigentes'}`
+        : warningStatus === 'unconfigured' ? 'Consulta AEMET no configurada para esta zona'
+          : 'No se ha podido consultar AEMET';
   const officialAlerts = weather.aemet?.warnings?.length ? `<div class="weather-alert-group"><h4>Avisos oficiales AEMET</h4><p class="hint">${escapeText(warningStatusText)} · área ${escapeText(weather.aemet.warningsAreaCode || 'no indicada')}</p>${weather.aemet.warnings.map((alert) => `<article class="weather-alert official">
     <strong>${escapeText(alert.event || alert.headline || 'Aviso meteorológico')} · ${escapeText(alert.severity || 'Sin nivel')}</strong>
     ${alert.area ? `<span>${escapeText(alert.area)}</span>` : ''}
