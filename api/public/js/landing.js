@@ -139,6 +139,16 @@ export function renderThreeHourHistory(station, now = Date.now()) {
   </div>`;
 }
 
+// La vista se centra en la tarjeta grande del tiempo local al abrir la portada.
+function focusWeatherCard(container) {
+  const card = container?.firstElementChild;
+  if (!card || typeof card.scrollIntoView !== 'function') return;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  card.setAttribute('tabindex', '-1');
+  card.focus({ preventScroll: true });
+  card.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+}
+
 function setPublicFailure(root, message) {
   const loading = root.querySelector('#local-weather-state');
   const card = root.querySelector('#local-weather-card');
@@ -166,6 +176,11 @@ export async function loadPublicWeather(root = document) {
     const station = selectUrbanStation(stations);
     settle(root.querySelector('#local-weather-state')).innerHTML = '';
     root.querySelector('#local-weather-card').innerHTML = renderLocalWeatherCard(station);
+    // Solo si se abre en la portada: en otras secciones públicas el scroll lo
+    // manda la ruta y no se le disputa.
+    if (!location.hash || location.hash === '#' || location.hash === '#/') {
+      focusWeatherCard(root.querySelector('#local-weather-card'));
+    }
     settle(root.querySelector('#public-comparison')).innerHTML = station
       ? renderPublicZones([station])
       : '<p class="public-state-card tone-muted">Aún no hay una estación urbana con permiso de publicación. La comparación con AEMET aparecerá cuando haya observaciones reales.</p>';

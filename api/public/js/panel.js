@@ -308,6 +308,16 @@ function heroFirstSection(item) {
   </section>`;
 }
 
+// Al abrir el panel, la vista se centra en la tarjeta grande de temperatura.
+// Solo en la primera carga: los refrescos silenciosos no mueven el scroll.
+function focusHeroSlot(slot) {
+  const hero = slot?.querySelector('.station-hero');
+  if (!hero || typeof hero.scrollIntoView !== 'function') return;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  hero.focus({ preventScroll: true });
+  hero.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+}
+
 function comparisonBlock({ latest, history, trendHistory, weather, sensors, status, detailKey }) {
   const observation = weather?.aemet?.observation;
   const trends = trendHistory?.length ? trendHistory : history;
@@ -583,6 +593,7 @@ async function renderSimplePanel(root) {
 
   resetStationDetails();
   renderSupport(root);
+  let heroFocused = false;
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) $('[data-error]', root).textContent = '';
     try {
@@ -606,6 +617,7 @@ async function renderSimplePanel(root) {
       $('#simple-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
+      if (!heroFocused && data.devices.length) { heroFocused = true; focusHeroSlot($('#simple-hero', root)); }
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
       if (error.message === 'authentication_required' || error.message === 'session_expired') return [];
@@ -755,6 +767,7 @@ async function renderDemoPanel(root) {
   resetStationDetails();
   renderSupport(root);
   let lastDevices = [];
+  let heroFocused = false;
 
   const loadAnalysis = async () => {
     const deviceId = $('#demo-device', root)?.value;
@@ -785,6 +798,7 @@ async function renderDemoPanel(root) {
       const previous = select.value;
       select.innerHTML = lastDevices.map((item) => `<option value="${escapeText(item.device.id)}">${escapeText(item.device.name)}</option>`).join('');
       if (lastDevices.some((item) => item.device.id === previous)) select.value = previous;
+      if (!heroFocused && lastDevices.length) { heroFocused = true; focusHeroSlot($('#demo-hero', root)); }
       await loadAnalysis();
     } catch (error) {
       $('[data-error]', root).textContent = `No se pudo cargar el panel: ${error.message}`;
@@ -841,6 +855,7 @@ export async function renderPanel(root) {
 
   resetStationDetails();
   renderSupport(root);
+  let heroFocused = false;
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) $('[data-error]', root).textContent = '';
     try {
@@ -863,6 +878,7 @@ export async function renderPanel(root) {
       $('#panel-history', root).innerHTML = visible(data.alerts).length
         ? visible(data.alerts).map((alert) => renderAlertRow(alert, { technical: canEdit() })).join('')
         : `<p class="empty">No hay avisos recientes.</p>${caveatBlock(caveat)}`;
+      if (!heroFocused && data.devices.length) { heroFocused = true; focusHeroSlot($('#panel-hero', root)); }
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
       if (error.message === 'authentication_required' || error.message === 'session_expired') return [];
