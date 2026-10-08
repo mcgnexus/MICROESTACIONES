@@ -117,6 +117,7 @@ router.get('/summary', async (_req, res) => {
       (SELECT max(observed_at) FROM measurements m
         WHERE m.device_id = d.id AND m.is_validated AND m.deleted_at IS NULL) AS last_data
     FROM devices d LEFT JOIN device_status ds ON ds.device_id = d.id
+      LEFT JOIN device_configs c ON c.device_id = d.id
     WHERE ${PUBLIC_WHERE}`;
   const zones = [...new Set(rows.map((row) => row.publicZone).filter(Boolean))];
   const latest = rows.map((row) => row.lastData).filter(Boolean)
