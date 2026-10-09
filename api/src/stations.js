@@ -5,12 +5,15 @@ import { requireSubscriber, requireRole, requireStationAccess, csrfGuard, access
 import { audit } from './audit.js';
 import { CONFIG_DEFAULTS } from './device-config.js';
 import { ensureSystemRules, batteryImpact } from './alert-engine.js';
-import { statisticsFor, demoAnalysisFor } from './statistics.js';
+import { statisticsFor, demoAnalysisFor, coverageReport, sequenceIntegrity, expectedBetween, intervalSegments } from './statistics.js';
 import { connectivityFor, dataFreshnessFor } from './station-status.js';
 
 const router = Router();
 
 const idSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:_-]{0,79}$/, 'identificador inválido');
+
+// jsonb puede llegar como objeto o como cadena según el camino; se normaliza.
+const asObject = (value) => (typeof value === 'string' ? JSON.parse(value) : (value || {}));
 
 const sensorsSchema = z.object({
   temperature: z.boolean(),
@@ -19,6 +22,36 @@ const sensorsSchema = z.object({
   battery: z.boolean(),
   lux: z.boolean(),
 }).partial();
+
+// Documentación del emplazamiento: cómo está montado el sensor. No son números
+// de precisión, son hechos del sitio que condicionan la interpretación.
+const siteInfoSchema = z.object({
+  sensor_model: z.string().max(160).nullable().optional(),
+  shelter: z.string().max(160).nullable().optional(),
+  height_m: z.number().min(-50).max(9000).nullable().optional(),
+  ventilation: z.string().max(200).nullable().optional(),
+  orientation: z.string().max(160).nullable().optional(),
+  power: z.string().max(160).nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+}).partial().strict();
+export { siteInfoSchema };
+
+// Registro de verificación frente a una referencia. Los valores de error, sesgo
+// y tolerancia se registran como texto acordado por el equipo: no se inventan
+// umbrales aquí. Sin registro, la estación queda «sin verificar».
+const verificationSchema = z.object({
+  status: z.enum(['unverified', 'pending', 'verified']).optional(),
+  reference: z.string().max(200).nullable().optional(),
+  method: z.string().max(600).nullable().optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'fecha de verificación inválida').nullable().optional(),
+  error: z.string().max(300).nullable().optional(),
+  bias: z.string().max(300).nullable().optional(),
+  conditions: z.string().max(500).nullable().optional(),
+  limitations: z.string().max(1000).nullable().optional(),
+  tolerance: z.string().max(300).nullable().optional(),
+  responsible: z.string().max(200).nullable().optional(),
+}).partial().strict();
+export { verificationSchema };
 
 const patchSchema = z.object({
   name: z.string().min(1).max(120),
@@ -34,6 +67,8 @@ const patchSchema = z.object({
   installation_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   sensors: sensorsSchema,
   firmware_version: z.string().max(60).nullable(),
+  site_info: siteInfoSchema,
+  verification: verificationSchema,
   publish_permission: z.boolean(),
   coverage_km: z.number().gt(0).max(500),
   active: z.boolean(),
@@ -47,14 +82,14 @@ const createSchema = patchSchema.extend({
 // Fragmento reutilizable: en sql`` se inserta como SQL crudo, nunca como valor.
 const deviceCols = sql`id, name, owner, location_type, latitude, longitude, public_zone,
   aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission,
-  coverage_km, active, created_at, last_seen_at`;
+  site_info, verification, coverage_km, active, created_at, last_seen_at`;
 
 const deviceSelect = sql`SELECT ${deviceCols} FROM devices`;
 
 // Mismo listado calificado para el JOIN con device_status (firmware_version existe en ambas tablas).
 const deviceColsJoined = sql`d.id, d.name, d.owner, d.location_type, d.latitude, d.longitude, d.public_zone,
   d.aemet_municipality_code, d.aemet_station_id, d.aemet_warning_area, d.altitude, d.installation_date, d.sensors, d.firmware_version, d.publish_permission,
-  d.coverage_km, d.active, d.created_at, d.last_seen_at`;
+  d.site_info, d.verification, d.coverage_km, d.active, d.created_at, d.last_seen_at`;
 
 const stationSelect = sql`SELECT ${deviceColsJoined}, c.config,
   s.last_contact, s.last_valid_data, s.battery_mv, s.battery_level,
@@ -96,6 +131,8 @@ export function stationPayload(row) {
     installationDate: row.installationDate,
     sensors: row.sensors,
     firmwareVersion: row.firmwareVersion,
+    siteInfo: row.siteInfo ?? {},
+    verification: row.verification ?? {},
     publishPermission: row.publishPermission,
     coverageKm: row.coverageKm,
     active: row.active,
@@ -158,8 +195,9 @@ router.get('/:id', requireSubscriber, requireStationAccess, async (req, res) => 
   });
 });
 
-// Huecos de secuencia en un rango: muestras que el equipo no llegó a entregar.
-// Se calcula sobre observed_at para reconstruir correctamente lotes tardíos.
+// Integridad de la serie: separa lo que falta por tiempo (esperadas menos
+// recibidas) de los huecos de secuencia del equipo. El denominador usa la vida
+// útil de la estación y las cadencias efectivas, no solo el intervalo actual.
 router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, async (req, res) => {
   const to = req.query.to ? new Date(String(req.query.to)) : new Date();
   const from = req.query.from
@@ -169,36 +207,76 @@ router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, as
   if (from >= to) return res.status(400).json({ error: 'invalid_range' });
 
   const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${req.stationId}`;
+  const [station] = await sql`SELECT to_char(installation_date, 'YYYY-MM-DD') AS installation_date
+    FROM devices WHERE id = ${req.stationId}`;
   const [counts] = await sql`SELECT count(*)::integer AS received,
       count(*) FILTER (WHERE is_validated)::integer AS valid,
-      count(*) FILTER (WHERE NOT is_validated)::integer AS invalid
+      count(*) FILTER (WHERE NOT is_validated)::integer AS invalid,
+      min(observed_at) AS first, max(observed_at) AS last
     FROM measurements
     WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${to}
       AND deleted_at IS NULL`;
-  const gaps = await sql`WITH numbered AS (
-      SELECT sequence, LAG(sequence) OVER (ORDER BY sequence) AS prev
-      FROM measurements
-      WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${to}
-        AND deleted_at IS NULL
-    )
-    SELECT (prev + 1)::text AS gap_from, (sequence - 1)::text AS gap_to,
-      (sequence - prev - 1)::integer AS missing
-    FROM numbered WHERE prev IS NOT NULL AND sequence > prev + 1
-    ORDER BY prev`;
-  const interval = Number(configRow?.config?.interval_normal_s) || null;
-  const expected = interval ? Math.max(1, Math.floor((to.getTime() - from.getTime()) / 1000 / interval)) : null;
-  const missingTotal = gaps.reduce((acc, gap) => acc + Number(gap.missing || 0), 0);
+  // La secuencia se lee en orden temporal para no confundir un reinicio con un hueco.
+  const points = await sql`SELECT sequence, observed_at FROM measurements
+    WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${to}
+      AND deleted_at IS NULL
+    ORDER BY observed_at ASC, sequence ASC`;
+  const versions = await sql`SELECT config, coalesce(applied_at, created_at) AS effective_at
+    FROM device_config_versions WHERE device_id = ${req.stationId}
+    ORDER BY coalesce(applied_at, created_at) ASC, version ASC`;
+
+  const currentInterval = Number(configRow?.config?.interval_normal_s) || null;
+  const installationMs = station?.installationDate ? new Date(`${station.installationDate}T00:00:00Z`).getTime() : null;
+  const firstMs = counts.first ? new Date(counts.first).getTime() : null;
+  const lastMs = counts.last ? new Date(counts.last).getTime() : null;
+  const basis = installationMs != null ? 'installation_date' : 'first_measurement';
+  const serviceStartMs = installationMs ?? firstMs;
+  const serviceFromMs = serviceStartMs != null ? Math.max(from.getTime(), serviceStartMs) : from.getTime();
+  const serviceFromIso = new Date(serviceFromMs).toISOString();
+  const segments = intervalSegments({
+    versions: versions.map((version) => ({
+      at: version.effectiveAt, intervalSeconds: version.config?.interval_normal_s,
+    })),
+    currentIntervalSeconds: currentInterval,
+    from: serviceFromIso,
+    to: to.toISOString(),
+    defaultIntervalSeconds: CONFIG_DEFAULTS.interval_normal_s,
+  });
+  const report = coverageReport({
+    received: counts.received, valid: counts.valid, invalid: counts.invalid,
+    intervalSeconds: currentInterval, from: from.toISOString(), to: to.toISOString(),
+    serviceFrom: serviceFromIso, segments,
+  });
+  const sequence = sequenceIntegrity(points.map((point) => ({ at: point.observedAt, sequence: point.sequence })));
+  const leadingMissing = firstMs != null && firstMs > serviceFromMs
+    ? expectedBetween(segments, serviceFromIso, new Date(firstMs).toISOString()) : 0;
+  const trailingMissing = lastMs != null && lastMs < to.getTime()
+    ? expectedBetween(segments, new Date(lastMs).toISOString(), to.toISOString()) : 0;
+
   res.json({
+    requested: { from: from.toISOString(), to: to.toISOString() },
+    available: { from: counts.first ?? null, to: counts.last ?? null },
+    service: { from: serviceFromIso, to: to.toISOString() },
+    denominator: { basis, intervalSeconds: currentInterval, segments },
+    // Campos heredados: from/to, intervalSeconds, missing y coveragePct siguen
+    // disponibles para no romper consumidores antiguos.
     from: from.toISOString(),
     to: to.toISOString(),
-    intervalSeconds: interval,
+    intervalSeconds: currentInterval,
     received: counts.received,
     valid: counts.valid,
     invalid: counts.invalid,
-    expected,
-    missing: missingTotal,
-    coveragePct: expected ? Math.round((counts.received / expected) * 1000) / 10 : null,
-    gaps,
+    expected: report.expected,
+    missing: report.timeMissing,
+    timeMissing: report.timeMissing,
+    validMissing: report.validMissing,
+    coveragePct: report.receivedPct,
+    receivedPct: report.receivedPct,
+    validPct: report.validPct,
+    leadingMissing,
+    trailingMissing,
+    gaps: sequence.gaps.map((gap) => ({ gapFrom: String(gap.from), gapTo: String(gap.to), missing: gap.missing })),
+    sequence,
   });
 });
 
@@ -266,13 +344,15 @@ router.post('/', requireSubscriber, requireRole('operator'), csrfGuard, async (r
   try {
     const row = await sql.begin(async (tx) => {
       const [created] = await tx`INSERT INTO devices (id, name, owner, location_type, latitude, longitude,
-          public_zone, aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission, coverage_km, active)
+          public_zone, aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission,
+          site_info, verification, coverage_km, active)
         VALUES (${data.id}, ${data.name}, ${data.owner ?? null}, ${data.location_type ?? 'finca'},
           ${data.latitude ?? null}, ${data.longitude ?? null}, ${data.public_zone ?? null},
           ${data.aemet_municipality_code ?? null}, ${data.aemet_station_id ?? null}, ${data.aemet_warning_area ?? null},
           ${data.altitude ?? null}, ${data.installation_date ?? null},
           ${tx.json({ temperature: true, humidity: true, pressure: true, battery: true, lux: false, ...(data.sensors || {}) })},
           ${data.firmware_version ?? null}, ${data.publish_permission ?? false},
+          ${tx.json(data.site_info ?? {})}, ${tx.json(data.verification ?? {})},
           ${data.coverage_km ?? 25}, ${data.active ?? true})
         RETURNING ${deviceCols}`;
       // Una estación nueva nace con valores por defecto seguros (medir 6 min, enviar 30 min)
@@ -319,6 +399,12 @@ router.patch('/:id', requireSubscriber, requireRole('operator'), csrfGuard, requ
     // Se fusiona como objeto: un string pre-serializado se guardaría como JSON string (jsonb_typeof = 'string').
     const base = typeof before.sensors === 'string' ? JSON.parse(before.sensors) : (before.sensors || {});
     patch.sensors = { ...base, ...data.sensors };
+  }
+  if (data.site_info !== undefined) {
+    patch.site_info = { ...asObject(before.siteInfo), ...data.site_info };
+  }
+  if (data.verification !== undefined) {
+    patch.verification = { ...asObject(before.verification), ...data.verification };
   }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'empty_patch' });
 

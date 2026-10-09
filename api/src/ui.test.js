@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText, trendWindowRows } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText, trendWindowRows, validationBadge, verificationBadge } from '../public/js/ui.js';
 import { renderStationCard } from '../public/js/panel.js';
+
+test('an accepted reading is labelled as automatic-control accepted, not certified', () => {
+  const html = validationBadge({ isValidated: true });
+  assert.match(html, />Aceptada</);
+  assert.match(html, /No demuestra calibración/);
+  assert.match(validationBadge({ isValidated: false, validationFlags: 1 }), />Inválida</);
+});
+
+test('verification badge separates "unverified" from "verified against a reference"', () => {
+  assert.match(verificationBadge({}), /Sin verificar/);
+  assert.match(verificationBadge({ status: 'unverified' }), /no demuestra calibración/i);
+  assert.match(verificationBadge({ status: 'pending' }), /Verificación pendiente/);
+  const verified = verificationBadge({ status: 'verified', reference: 'patrón 5051X' });
+  assert.match(verified, /Verificada frente a referencia/);
+  assert.match(verified, /Referencia: patrón 5051X/);
+});
 
 test('pressure values are converted from Pa to mbar in the UI and station charts', () => {
   assert.equal(pressureMbar(101325), 1013.25);

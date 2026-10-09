@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS devices (
   sensors jsonb NOT NULL DEFAULT '{"temperature":true,"humidity":true,"pressure":true,"battery":true,"lux":false}'::jsonb,
   firmware_version text,
   publish_permission boolean NOT NULL DEFAULT false,
+  -- Documentación del emplazamiento y registro de verificación frente a una
+  -- referencia: separan «aceptada por los controles automáticos» de «verificada».
+  site_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+  verification jsonb NOT NULL DEFAULT '{}'::jsonb,
   CHECK ((latitude IS NULL AND longitude IS NULL) OR
          (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180))
 );

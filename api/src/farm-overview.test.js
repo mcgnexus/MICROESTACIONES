@@ -61,3 +61,34 @@ test('overview html carries the farm name, the station advice and its tone', () 
   assert.match(html, /Batería crítica/);
   assert.equal(toneLabel('ok'), 'Todo en orden');
 });
+
+test('open alerts are never hidden behind an all-clear station state', () => {
+  const item = () => ({ status: { connectivity: 'online' }, latest: { temperatureC: 18, observedAt: 'x' } });
+  assert.equal(plainDeviceStatus(item()).tone, 'ok');
+  const warn = plainDeviceStatus(item(), { openAlerts: [{ level: 2, closedAt: null }] });
+  assert.equal(warn.tone, 'warn');
+  assert.match(warn.text, /1 aviso pendiente de revisión/i);
+  const alert = plainDeviceStatus(item(), { openAlerts: [{ level: 1 }, { level: 2 }] });
+  assert.equal(alert.tone, 'alert');
+  assert.match(alert.text, /2 avisos pendientes/i);
+  assert.equal(alert.pendingAlerts, 2);
+});
+
+test('closed alerts do not count and pending alerts lower the farm tone', () => {
+  const farms = [{ id: '1', name: 'El Llano', devices: ['a'] }];
+  const devices = [{ ...device('a', 'Huéscar'), status: { connectivity: 'online' }, latest: { temperatureC: 18, observedAt: 'x' } }];
+  const { farms: groups, pendingAlerts } = summarizeFarms(farms, devices, {
+    alerts: [
+      { deviceId: 'a', level: 2, closedAt: null },
+      { deviceId: 'a', level: 2, closedAt: '2026-01-01T00:00:00Z' },
+    ],
+  });
+  assert.equal(groups[0].tone, 'warn');
+  assert.equal(pendingAlerts, 1);
+  const html = renderFarmOverview({ farms: groups, unassigned: [], pendingAlerts }, {
+    caveat: { tone: 'warn', text: 'faltan datos de previsión' },
+  });
+  assert.doesNotMatch(html, /Todo en orden/);
+  assert.match(html, /aviso pendiente de revisión/);
+  assert.match(html, /no sustituye a los avisos/i);
+});

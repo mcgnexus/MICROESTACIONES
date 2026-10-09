@@ -51,6 +51,20 @@ test('metadata includes category, station, zone, time, source, state, validity a
   assert.match(meta, /hace 12 min/);
 });
 
+test('metadata names the variable, the measured value and the threshold', () => {
+  const meta = alertMeta(alert({ ruleSnapshot: { metric: 'temperature', threshold: 0, category: 'frost' } })).join(' · ');
+  assert.match(meta, /Variable: temperatura/);
+  assert.match(meta, /Valor: 1,8 °C/);
+  assert.match(meta, /Umbral: 0 °C/);
+});
+
+test('a generic message is completed with the variable instead of repeating the station', () => {
+  const generic = alert({ category: 'general', message: 'Aviso de la estación', ruleSnapshot: { metric: 'temperature' } });
+  assert.equal(alertTitle(generic), 'Aviso de temperatura');
+  assert.equal(alertTitle(alert({ category: 'general', message: 'Puerta abierta' })), 'Puerta abierta');
+  assert.equal(alertTitle(alert({ category: 'general', message: '' })), 'Aviso');
+});
+
 test('the explanation cites the datum or forecast that originates the notice', () => {
   // Nada de "detectamos que viene una helada": siempre la fuente y el valor.
   const measured = alertExplanation(alert());

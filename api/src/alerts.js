@@ -187,6 +187,80 @@ router.delete('/rules/:ruleId', requireSubscriber, requireRole('operator'), csrf
   res.status(204).end();
 });
 
+// ---- Registros heredados ---------------------------------------------------
+// El motor deduplica por episodio, pero no repara los avisos ya guardados antes
+// de esa lógica: quedan abiertos avisos cuya regla ya no tiene la condición
+// activa, avisos sin regla y duplicados de un mismo episodio. Administración
+// puede revisarlos y cerrarlos en lote, agrupados, sin borrar su rastro.
+const LEGACY_REASON = {
+  inactive: 'Regla sin condición activa: el aviso ya no está vigente.',
+  orphan: 'Aviso sin regla asociada: registro heredado.',
+  duplicate: 'Duplicado de un aviso más reciente del mismo episodio.',
+};
+
+// Agrupa los avisos abiertos en incidentes equivalentes y marca cuáles son
+// candidatos a cierre. No borra nada: solo describe.
+export function groupLegacyAlerts(rows = []) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = row.ruleId != null ? `rule:${row.ruleId}` : `legacy:${row.deviceId}:${row.message ?? ''}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  const result = [];
+  for (const alerts of groups.values()) {
+    const ordered = [...alerts].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const [newest] = ordered;
+    const ruleInactive = newest.ruleId != null && newest.conditionActive === false;
+    const orphan = newest.ruleId == null;
+    const reason = ruleInactive ? LEGACY_REASON.inactive : orphan ? LEGACY_REASON.orphan : LEGACY_REASON.duplicate;
+    // Con la regla inactiva o sin regla, todos son candidatos; si la regla sigue
+    // activa, solo los duplicados anteriores al más reciente.
+    const candidates = (ruleInactive || orphan) ? ordered : ordered.slice(1);
+    if (!candidates.length) continue;
+    result.push({
+      ruleId: newest.ruleId ?? null,
+      deviceId: newest.deviceId,
+      deviceName: newest.deviceName ?? null,
+      metric: newest.ruleMetric ?? null,
+      reason,
+      alerts: candidates.map((alert) => ({ id: alert.id, level: alert.level, message: alert.message, createdAt: alert.createdAt })),
+    });
+  }
+  return result;
+}
+
+router.get('/legacy', requireSubscriber, requireRole('admin'), async (req, res) => {
+  const rows = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name, a.level, a.message,
+      a.category, a.observed_at, a.created_at, a.rule_id::text AS rule_id,
+      r.metric AS rule_metric, coalesce(r.condition_active, false) AS condition_active
+    FROM alerts a
+    JOIN devices d ON d.id = a.device_id
+    LEFT JOIN alert_rules r ON r.id = a.rule_id
+    WHERE a.closed_at IS NULL
+    ORDER BY a.created_at DESC`;
+  const groups = groupLegacyAlerts(rows);
+  res.json({ groups, total: groups.reduce((sum, group) => sum + group.alerts.length, 0) });
+});
+
+const legacyCloseSchema = z.object({
+  ids: z.array(z.string().regex(/^\d{1,18}$/)).min(1).max(500),
+  reason: z.string().max(300).optional(),
+}).strict();
+
+router.post('/legacy/close', requireSubscriber, requireRole('admin'), csrfGuard, async (req, res) => {
+  const parsed = legacyCloseSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const ids = parsed.data.ids.map((id) => Number(id));
+  const reason = parsed.data.reason ?? 'revisión de avisos heredados';
+  const closed = await sql`UPDATE alerts SET closed_at = now(), closed_by = ${req.subscriber.id},
+      closure_reason = ${reason}
+    WHERE id IN ${ids} AND closed_at IS NULL RETURNING id::text AS id`;
+  await audit(sql, req, 'alert.cleanup', 'alert', null, null,
+    { closed: closed.length, ids: closed.map((row) => row.id), reason });
+  res.json({ closed: closed.length });
+});
+
 // ---- Ciclo de vida de los avisos ------------------------------------------
 
 async function loadAlert(subscriber, alertId) {

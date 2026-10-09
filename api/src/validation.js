@@ -89,6 +89,13 @@ export function evaluateMeasurement(record, { now = new Date(), futureToleranceM
   };
 }
 
+// Qué garantiza (y qué no) el pipeline automático. Lo usan los informes para no
+// confundir «aceptada por controles» con «verificada frente a una referencia».
+export const AUTOMATIC_VALIDATION_LIMITS = [
+  'La validación automática comprueba rango físico, marcas del equipo y referencia temporal: no demuestra calibración, exactitud ni ausencia de influencia del emplazamiento (sol, pared o electrónica).',
+  'Una lectura «aceptada» no es una lectura «verificada frente a una referencia»: afirmar exactitud exige compararla con un patrón colocado correctamente y registrar el error y sus condiciones.',
+];
+
 // La evaluación de reglas de aviso vive en alert-engine.js: allí están la
 // duración mínima, la recuperación con margen y los detectores de sistema.
 export const RULE_METRIC_KEYS = {

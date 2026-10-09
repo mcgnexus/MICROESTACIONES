@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { measurementSchema, hasAnyValue } from './contracts.js';
-import { evaluateMeasurement, VFLAG } from './validation.js';
+import { evaluateMeasurement, VFLAG, AUTOMATIC_VALIDATION_LIMITS } from './validation.js';
 
 const base = {
   device_id: 'esp32c3-01', sequence: 1, ts: 1760000000, quality: 2,
@@ -80,4 +80,11 @@ test('future and unreferenced timestamps cannot feed current data or alerts', ()
   assert.equal(noTime.time_valid, false);
   assert.equal(noTime.valid_values.temp_c, 20.5);
   assert.equal(noTime.raw_payload.quality, 0);
+});
+
+test('automatic validation declares what it does not prove', () => {
+  const text = AUTOMATIC_VALIDATION_LIMITS.join(' ');
+  assert.match(text, /no demuestra calibración/i);
+  assert.match(text, /influencia del emplazamiento/i);
+  assert.match(text, /no es una lectura «verificada frente a una referencia»/i);
 });

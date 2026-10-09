@@ -6,6 +6,7 @@
 import { sql } from './db.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 import { aemetPairWindowMs } from './weather.js';
+import { AUTOMATIC_VALIDATION_LIMITS } from './validation.js';
 
 // La clave es la columna en la base de datos; `column` es como la devuelve el
 // cliente (camelCase) y `key` es como se expone en el informe.
@@ -207,20 +208,123 @@ export function trendOf(points, { digits = 3 } = {}) {
   return { direction, slopePerHour: round(slopePerHour, digits), totalChange: round(totalChange, digits), points: usable.length };
 }
 
-// Cobertura: datos recibidos frente a los esperados por el intervalo configurado.
-export function coverageReport({ received, valid, invalid, intervalSeconds, from, to }) {
-  const spanSeconds = Math.max(0, (new Date(to).getTime() - new Date(from).getTime()) / 1000);
+// Muestras esperadas en un tramo según un intervalo fijo. Null si no hay intervalo.
+export function expectedSamples({ from, to, intervalSeconds }) {
   const interval = Number(intervalSeconds) || 0;
-  const expected = interval ? Math.max(1, Math.floor(spanSeconds / interval)) : null;
+  if (!interval) return null;
+  const spanSeconds = Math.max(0, (new Date(to).getTime() - new Date(from).getTime()) / 1000);
+  return Math.max(1, Math.floor(spanSeconds / interval));
+}
+
+// Esperadas sumando tramos de intervalo efectivo (la cadencia puede cambiar en
+// el tiempo: un cambio de configuración no debe distorsionar el denominador).
+export function expectedFromSegments(segments = []) {
+  if (!segments.length) return null;
+  let total = 0;
+  let usable = false;
+  for (const segment of segments) {
+    const expected = expectedSamples(segment);
+    if (expected == null) continue;
+    usable = true;
+    total += expected;
+  }
+  return usable ? total : null;
+}
+
+// Esperadas dentro de un sub-rango, recortando los tramos que lo cruzan.
+export function expectedBetween(segments = [], fromIso, toIso) {
+  const lo = new Date(fromIso).getTime();
+  const hi = new Date(toIso).getTime();
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return 0;
+  let total = 0;
+  for (const segment of segments) {
+    const interval = Number(segment.intervalSeconds) || 0;
+    if (!interval) continue;
+    const start = Math.max(lo, new Date(segment.from).getTime());
+    const end = Math.min(hi, new Date(segment.to).getTime());
+    if (end <= start) continue;
+    total += Math.max(0, Math.floor((end - start) / 1000 / interval));
+  }
+  return total;
+}
+
+// Construye tramos de intervalo efectivo desde el historial de configuraciones.
+// `versions`: [{ at, intervalSeconds }]. El último tramo abierto usa la
+// configuración vigente o el intervalo por defecto.
+export function intervalSegments({
+  versions = [], currentIntervalSeconds = null, from, to, defaultIntervalSeconds = 360,
+} = {}) {
+  const fromMs = new Date(from).getTime();
+  const toMs = new Date(to).getTime();
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return [];
+  const fallback = Number(currentIntervalSeconds) || Number(defaultIntervalSeconds) || 360;
+  const points = versions
+    .map((version) => ({ at: new Date(version.at).getTime(), interval: Number(version.intervalSeconds) || null }))
+    .filter((point) => Number.isFinite(point.at))
+    .sort((a, b) => a.at - b.at);
+  const intervalAt = (time) => {
+    let interval = fallback;
+    for (const point of points) {
+      if (point.at <= time && point.interval) interval = point.interval;
+    }
+    return interval;
+  };
+  const boundaries = [...new Set(points.map((point) => point.at).filter((time) => time > fromMs && time < toMs))];
+  const segments = [];
+  let cursor = fromMs;
+  for (const boundary of boundaries) {
+    segments.push({
+      from: new Date(cursor).toISOString(), to: new Date(boundary).toISOString(), intervalSeconds: intervalAt(cursor),
+    });
+    cursor = boundary;
+  }
+  segments.push({
+    from: new Date(cursor).toISOString(), to: new Date(toMs).toISOString(), intervalSeconds: intervalAt(cursor),
+  });
+  return segments;
+}
+
+// Integridad de la secuencia del equipo: separa huecos (el contador salta hacia
+// adelante) de reinicios (retrocede), que no son muestras perdidas.
+export function sequenceIntegrity(points = []) {
+  const ordered = points
+    .map((point) => ({ at: point.at, sequence: Number(point.sequence) }))
+    .filter((point) => Number.isFinite(point.sequence) && point.at != null)
+    .sort((a, b) => new Date(a.at) - new Date(b.at));
+  const gaps = [];
+  const resets = [];
+  for (let i = 1; i < ordered.length; i += 1) {
+    const prev = ordered[i - 1].sequence;
+    const current = ordered[i].sequence;
+    if (current === prev + 1) continue;
+    if (current > prev + 1) gaps.push({ from: prev + 1, to: current - 1, missing: current - prev - 1 });
+    else resets.push({ at: ordered[i].at, from: prev, to: current });
+  }
+  return { total: gaps.reduce((sum, gap) => sum + gap.missing, 0), gaps, resets };
+}
+
+// Cobertura: datos recibidos frente a los esperados. `serviceFrom` acota el
+// denominador a la vida útil de la estación; `segments` usa las cadencias
+// efectivas. `missing` se mantiene como alias de `timeMissing` por compatibilidad.
+export function coverageReport({ received, valid, invalid, intervalSeconds, from, to, serviceFrom = from, segments = null }) {
+  const expected = segments && segments.length
+    ? expectedFromSegments(segments)
+    : expectedSamples({ from: serviceFrom, to, intervalSeconds });
+  const receivedCount = Number(received) || 0;
+  const validCount = Number(valid) || 0;
+  const timeMissing = expected == null ? null : Math.max(0, expected - receivedCount);
+  const validMissing = expected == null ? null : Math.max(0, expected - validCount);
   return {
-    received: Number(received) || 0,
-    valid: Number(valid) || 0,
+    received: receivedCount,
+    valid: validCount,
     invalid: Number(invalid) || 0,
-    intervalSeconds: interval || null,
+    intervalSeconds: Number(intervalSeconds) || null,
     expected,
-    missing: expected == null ? null : Math.max(0, expected - Number(received || 0)),
-    receivedPct: expected ? round(Math.min(100, (Number(received || 0) / expected) * 100), 1) : null,
-    validPct: expected ? round(Math.min(100, (Number(valid || 0) / expected) * 100), 1) : null,
+    missing: timeMissing,
+    timeMissing,
+    validMissing,
+    receivedPct: expected ? round(Math.min(100, (receivedCount / expected) * 100), 1) : null,
+    validPct: expected ? round(Math.min(100, (validCount / expected) * 100), 1) : null,
   };
 }
 
@@ -335,9 +439,10 @@ export async function statisticsFor(deviceId, { from, to, includeCommunicationAl
     alerts: { total: alertCounts.total, open: alertCounts.open, autoResolved: alertCounts.auto_resolved },
     // Lo que un informe automatico podría afirmar, y lo que no.
     limits: [
-      'Solo se usan mediciones validadas y no borradas.',
+      'Solo se usan mediciones aceptadas por los controles automáticos y no borradas.',
       'La tendencia es una pendiente por hora; no implica causalidad.',
       'Estos sensores no miden lluvia, viento ni estado del cultivo: no se deducen de ellos.',
+      ...AUTOMATIC_VALIDATION_LIMITS,
     ],
   };
 }
@@ -436,9 +541,10 @@ export async function demoAnalysisFor(deviceId, { from, to }) {
       comparison: pairTemperatureSeries(temperaturePoints, aemetRows, aemetPairWindowMs()),
     },
     limits: [
-      'Solo se usan mediciones validadas y no borradas.',
+      'Solo se usan mediciones aceptadas por los controles automáticos y no borradas.',
       'El punto de rocío y las diferencias con AEMET son cálculos, no medidas directas.',
       'AEMET es una referencia externa; no se mezcla con las series de la microestación.',
+      ...AUTOMATIC_VALIDATION_LIMITS,
     ],
   };
 }

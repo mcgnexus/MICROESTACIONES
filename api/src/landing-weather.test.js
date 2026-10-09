@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPublicZones, selectUrbanStation, renderLocalWeatherCard, renderThreeHourHistory } from '../public/js/landing.js';
+import { renderPublicZones, selectUrbanStation, renderLocalWeatherCard, renderDayHistory } from '../public/js/landing.js';
 import { readFile } from 'node:fs/promises';
 
 const station = (overrides = {}) => ({
@@ -81,19 +81,22 @@ test('the public current card keeps the last reading even when stale, clearly la
   assert.match(currentHtml, /no toda la ciudad/i);
 });
 
-test('the three-hour graph only draws supplied real points and has an explicit empty state', () => {
+test('the day graph only draws supplied real points and has an explicit empty state', () => {
   const now = Date.now();
   const station = { history: [
     { observedAt: new Date(now - 60 * 60_000).toISOString(), temperatureC: 8, humidityPct: 66 },
     { observedAt: new Date(now - 30 * 60_000).toISOString(), temperatureC: 9, humidityPct: 62 },
   ] };
-  const html = renderThreeHourHistory(station, now);
-  assert.match(html, /Temperatura · últimas 3 horas/);
-  assert.match(html, /Humedad · últimas 3 horas/);
+  const html = renderDayHistory(station, now);
+  assert.match(html, /Temperatura · últimas 24 horas/);
+  assert.match(html, /Humedad · últimas 24 horas/);
   assert.match(html, /8/);
   assert.match(html, /62/);
-  assert.match(renderThreeHourHistory({ history: [] }, now), /No hay suficientes mediciones reales/);
-  assert.doesNotMatch(renderThreeHourHistory({ history: [] }, now), /chart-box/);
+  // Una muestra de hace más de 24 h no entra en la ventana.
+  const old = { history: [{ observedAt: new Date(now - 30 * 60 * 60_000).toISOString(), temperatureC: 1 }] };
+  assert.match(renderDayHistory(old, now), /No hay suficientes mediciones reales/);
+  assert.match(renderDayHistory({ history: [] }, now), /No hay suficientes mediciones reales/);
+  assert.doesNotMatch(renderDayHistory({ history: [] }, now), /chart-box/);
 });
 
 test('public landing has loading containers and a single access request form, without sample readings', async () => {
