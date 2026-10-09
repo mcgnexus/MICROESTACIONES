@@ -1,6 +1,6 @@
 import {
   $, api, escapeText, dateText, numberText, connectivityBadge, batteryLabel,
-  locationLabel, canEdit, isAdmin,
+  locationLabel, canEdit, isAdmin, verificationBadge,
 } from './ui.js';
 import { renderStationCard } from './panel.js';
 import { mountMeasurements } from './measurements.js';
@@ -57,6 +57,37 @@ export async function renderStations(root) {
         <p class="hint">Open-Meteo usa las coordenadas automáticamente. Para AEMET, añade el código municipal, el indicativo de la estación observadora más cercana y el área de avisos; la API key debe estar guardada como variable privada AEMET_API_KEY en el servidor. Para Huéscar se sugieren el municipio 18098 y la estación observadora 5051X.</p>
         <fieldset class="sensor-set"><legend>Sensores activos</legend>${SENSOR_KEYS
           .map(([key, label]) => `<label class="check"><input type="checkbox" name="sensor_${key}" checked> ${label}</label>`).join('')}</fieldset>
+        <fieldset class="sensor-set"><legend>Documentación del emplazamiento</legend>
+          <div class="form-grid">
+            ${TEXT_FIELD('site_sensor_model', 'Modelo de sensor', 'maxlength="160"')}
+            ${TEXT_FIELD('site_shelter', 'Garita o abrigo', 'maxlength="160"')}
+            ${TEXT_FIELD('site_height_m', 'Altura del sensor (m)', 'type="number" step="0.1"')}
+            ${TEXT_FIELD('site_ventilation', 'Ventilación', 'maxlength="200"')}
+            ${TEXT_FIELD('site_orientation', 'Orientación', 'maxlength="160"')}
+            ${TEXT_FIELD('site_power', 'Alimentación', 'maxlength="160"')}
+            ${TEXT_FIELD('site_notes', 'Notas del emplazamiento', 'maxlength="1000"')}
+          </div>
+          <p class="hint">Documentar el montaje (sensor, abrigo, altura, ventilación, orientación y alimentación) permite interpretar la medida; no la convierte en exacta.</p>
+        </fieldset>
+        <fieldset class="sensor-set"><legend>Verificación frente a referencia</legend>
+          <label>Estado<select name="verification_status">
+            <option value="unverified">Sin verificar</option>
+            <option value="pending">Verificación pendiente</option>
+            <option value="verified">Verificada frente a referencia</option>
+          </select></label>
+          <div class="form-grid">
+            ${TEXT_FIELD('verification_reference', 'Referencia usada', 'maxlength="200" placeholder="patrón, estación oficial..."')}
+            ${TEXT_FIELD('verification_method', 'Método', 'maxlength="600"')}
+            ${TEXT_FIELD('verification_date', 'Fecha de verificación', 'type="date"')}
+            ${TEXT_FIELD('verification_error', 'Error observado', 'maxlength="300" placeholder="p. ej. ±0,4 °C frente al patrón"')}
+            ${TEXT_FIELD('verification_bias', 'Sesgo observado', 'maxlength="300"')}
+            ${TEXT_FIELD('verification_tolerance', 'Tolerancia acordada', 'maxlength="300" placeholder="la define el equipo"')}
+            ${TEXT_FIELD('verification_conditions', 'Condiciones', 'maxlength="500"')}
+            ${TEXT_FIELD('verification_limitations', 'Limitaciones', 'maxlength="1000"')}
+            ${TEXT_FIELD('verification_responsible', 'Responsable', 'maxlength="200"')}
+          </div>
+          <p class="hint">La tolerancia y el error dependen del modelo y del uso acordado: este formulario registra lo medido, no fija umbrales. Los controles automáticos de rango no sustituyen esta prueba.</p>
+        </fieldset>
         <div class="form-grid">
           <label class="check"><input type="checkbox" name="publish_permission"> Permitir datos públicos agregados</label>
           <label class="check"><input type="checkbox" name="active" checked data-edit-only> Estación activa</label>
@@ -101,6 +132,7 @@ export async function renderStations(root) {
               ${station.active ? connectivityBadge(status.connectivity) : '<span class="badge badge-muted">Desactivada</span>'}
               ${status.dataFreshness === 'stale' ? '<span class="badge badge-warn">Datos antiguos</span>' : status.dataFreshness === 'unknown' ? '<span class="badge badge-muted">Sin datos válidos</span>' : ''}
               ${station.publishPermission ? '<span class="badge badge-muted">Datos públicos</span>' : ''}
+              ${verificationBadge(station.verification)}
             </div>
           </div>
           <p class="coverage">Último contacto: ${dateText(status.lastContact)} · último dato válido: ${dateText(status.lastValidData)} · batería ${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)}) · configuración v${status.configVersion}</p>
@@ -135,8 +167,28 @@ export async function renderStations(root) {
       form.elements.coverage_km.value = station.coverageKm ?? '';
       form.elements.publish_permission.checked = !!station.publishPermission;
       form.elements.active.checked = !!station.active;
+      const site = station.siteInfo || {};
+      form.elements.site_sensor_model.value = site.sensor_model ?? '';
+      form.elements.site_shelter.value = site.shelter ?? '';
+      form.elements.site_height_m.value = site.height_m ?? '';
+      form.elements.site_ventilation.value = site.ventilation ?? '';
+      form.elements.site_orientation.value = site.orientation ?? '';
+      form.elements.site_power.value = site.power ?? '';
+      form.elements.site_notes.value = site.notes ?? '';
+      const verification = station.verification || {};
+      form.elements.verification_status.value = verification.status ?? 'unverified';
+      form.elements.verification_reference.value = verification.reference ?? '';
+      form.elements.verification_method.value = verification.method ?? '';
+      form.elements.verification_date.value = verification.date ?? '';
+      form.elements.verification_error.value = verification.error ?? '';
+      form.elements.verification_bias.value = verification.bias ?? '';
+      form.elements.verification_tolerance.value = verification.tolerance ?? '';
+      form.elements.verification_conditions.value = verification.conditions ?? '';
+      form.elements.verification_limitations.value = verification.limitations ?? '';
+      form.elements.verification_responsible.value = verification.responsible ?? '';
     } else {
       form.elements.location_type.value = 'finca';
+      form.elements.verification_status.value = 'unverified';
       SENSOR_KEYS.forEach(([key]) => { form.elements[`sensor_${key}`].checked = key !== 'lux'; });
       form.elements.active.checked = true;
     }
@@ -201,6 +253,27 @@ export async function renderStations(root) {
       firmware_version: text('firmware_version') || null,
       publish_permission: form.elements.publish_permission.checked,
       sensors: Object.fromEntries(SENSOR_KEYS.map(([key]) => [key, form.elements[`sensor_${key}`].checked])),
+      site_info: {
+        sensor_model: text('site_sensor_model') || null,
+        shelter: text('site_shelter') || null,
+        height_m: num('site_height_m'),
+        ventilation: text('site_ventilation') || null,
+        orientation: text('site_orientation') || null,
+        power: text('site_power') || null,
+        notes: text('site_notes') || null,
+      },
+      verification: {
+        status: text('verification_status') || 'unverified',
+        reference: text('verification_reference') || null,
+        method: text('verification_method') || null,
+        date: text('verification_date') || null,
+        error: text('verification_error') || null,
+        bias: text('verification_bias') || null,
+        tolerance: text('verification_tolerance') || null,
+        conditions: text('verification_conditions') || null,
+        limitations: text('verification_limitations') || null,
+        responsible: text('verification_responsible') || null,
+      },
     };
     if (text('coverage_km') !== '') body.coverage_km = Number(text('coverage_km'));
     try {
@@ -243,10 +316,19 @@ async function renderResumen(content, stationId) {
   content.innerHTML = item
     ? `${renderStationCard(item)}<section class="panel"><div class="section-heading"><div>
         <p class="eyebrow">COBERTURA</p><h2>Integridad de la serie (7 días)</h2></div></div>
-        <p class="coverage">Esperadas ${gaps.expected ?? '—'} según intervalo ${gaps.intervalSeconds ?? '—'} s ·
-          recibidas ${gaps.received} · válidas ${gaps.valid} · inválidas ${gaps.invalid} ·
-          ausentes ${gaps.missing} · cobertura ${gaps.coveragePct ?? '—'} %</p>
-        ${gaps.gaps.length ? `<div class="table-wrap"><table><thead><tr><th>Desde</th><th>Hasta</th><th>Faltantes</th></tr></thead><tbody>${gaps.gaps
+        <p class="coverage">Periodo solicitado ${dateText(gaps.requested?.from)} → ${dateText(gaps.requested?.to)} ·
+          con datos ${gaps.available?.from ? `${dateText(gaps.available.from)} → ${dateText(gaps.available.to)}` : 'sin datos'} ·
+          denominador desde ${gaps.denominator?.basis === 'installation_date' ? 'la fecha de instalación' : 'la primera medición'} (${dateText(gaps.service?.from)})</p>
+        <p class="coverage">Recibidas ${gaps.received} · aceptadas ${gaps.valid} · inválidas ${gaps.invalid} ·
+          esperadas por tiempo ${gaps.expected ?? '—'} · faltan por tiempo ${gaps.timeMissing ?? '—'} ·
+          cobertura de recibidas ${gaps.receivedPct ?? '—'} % · de aceptadas ${gaps.validPct ?? '—'} %</p>
+        <p class="coverage">Huecos de secuencia: ${gaps.sequence?.gaps?.length ?? 0} (${gaps.sequence?.total ?? 0} muestras) ·
+          reinicios de secuencia: ${gaps.sequence?.resets?.length ?? 0} ·
+          ausencia al inicio: ${gaps.leadingMissing ?? 0} · al final: ${gaps.trailingMissing ?? 0}</p>
+        <p class="hint">El denominador son las muestras esperadas entre la puesta en servicio y el final del periodo,
+          con las cadencias que la estación tuvo activas. Los huecos de secuencia son saltos del contador del equipo:
+          no equivalen a las muestras ausentes por tiempo.</p>
+        ${gaps.gaps.length ? `<div class="table-wrap"><table><thead><tr><th>Secuencia desde</th><th>Secuencia hasta</th><th>Muestras</th></tr></thead><tbody>${gaps.gaps
           .map((gap) => `<tr><td>${escapeText(gap.gapFrom)}</td><td>${escapeText(gap.gapTo)}</td><td>${escapeText(gap.missing)}</td></tr>`).join('')}</tbody></table></div>`
           : '<p class="empty">No se detectan huecos de secuencia en el periodo.</p>'}
       </section>`
@@ -260,6 +342,11 @@ function renderEstado(content, detail) {
   const sensorState = SENSOR_KEYS
     .map(([key, label]) => `<li>${label}: ${station.sensors?.[key] === false ? 'desactivado' : 'activo'}</li>`)
     .join('');
+  const site = station.siteInfo || {};
+  const verification = station.verification || {};
+  const verificationText = verification.status === 'verified'
+    ? `verificada frente a referencia${verification.reference ? ` (${verification.reference})` : ''}${verification.date ? ` el ${verification.date}` : ''}`
+    : verification.status === 'pending' ? 'verificación pendiente' : 'sin verificar frente a referencia';
   const rows = [
     ['Identificador', station.id],
     ['Propietario', station.owner],
@@ -270,6 +357,22 @@ function renderEstado(content, detail) {
     ['Instalación', dateText(station.installationDate)],
     ['Cobertura', `${numberText(station.coverageKm, 1)} km`],
     ['Firmware', station.firmwareVersion],
+    ['Modelo de sensor', site.sensor_model],
+    ['Garita o abrigo', site.shelter],
+    ['Altura del sensor', site.height_m == null ? null : `${numberText(site.height_m, 1)} m`],
+    ['Ventilación', site.ventilation],
+    ['Orientación', site.orientation],
+    ['Alimentación', site.power],
+    ['Notas del emplazamiento', site.notes],
+    ['Verificación', verificationText],
+    ['Referencia de verificación', verification.reference],
+    ['Método de verificación', verification.method],
+    ['Error observado', verification.error],
+    ['Sesgo observado', verification.bias],
+    ['Tolerancia acordada', verification.tolerance],
+    ['Condiciones de verificación', verification.conditions],
+    ['Limitaciones de verificación', verification.limitations],
+    ['Responsable de verificación', verification.responsible],
     ['Permiso de publicación', station.publishPermission ? 'concedido' : 'no concedido'],
     ['Alta en el sistema', dateText(station.createdAt)],
     ['Connectividad', status.connectivity],
@@ -324,6 +427,7 @@ export async function renderStationDetail(root, stationId, tab = 'resumen') {
         ${station.active ? connectivityBadge(status.connectivity) : '<span class="badge badge-muted">Desactivada</span>'}
         ${canEdit() ? `<span class="badge badge-muted">Config v${status.configVersion ?? 0}</span>` : ''}
         <span class="badge badge-muted">${batteryLabel(status.batteryLevel)}</span>
+        ${verificationBadge(station.verification)}
         ${canEdit() ? `<a class="button-link" href="#/estaciones/${encodeURIComponent(station.id)}/remoto">Control remoto</a>` : ''}
       </div>
     </div>

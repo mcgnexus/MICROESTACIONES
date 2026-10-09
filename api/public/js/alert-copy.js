@@ -7,7 +7,7 @@
 // o la previsión que origina el aviso; nunca promete "detectamos que viene…".
 import { escapeText, dateText, numberText } from './ui.js';
 import {
-  classifyNotice, coverageCaveat, validityText, NOTICE_CATEGORIES,
+  classifyNotice, coverageCaveat, validityText, NOTICE_CATEGORIES, metricOf, formatValue,
 } from './notice-taxonomy.js';
 
 export { coverageCaveat };
@@ -54,9 +54,36 @@ export function alertValue(alert) {
   return typeof raw === 'number' ? raw : null;
 }
 
+const METRIC_LABELS = {
+  temperature: 'temperatura', humidity: 'humedad', pressure: 'presión',
+  battery: 'batería', lux: 'luz', connectivity: 'comunicación',
+};
+
+// Mensajes que no explican nada por sí solos: el título debe completarse con la
+// variable que originó el aviso en lugar de repetir "Aviso de la estación".
+const GENERIC_MESSAGE = /^(aviso( de la estaci[oó]n)?|condici[oó]n cr[ií]tica|alerta)\.?$/i;
+
+function metricOfAlert(alert) {
+  return alert?.metric ?? alert?.ruleSnapshot?.metric ?? alert?.rule_snapshot?.metric
+    ?? metricOf(alert);
+}
+
+function alertThreshold(alert) {
+  const value = alert?.threshold ?? alert?.ruleSnapshot?.threshold ?? alert?.rule_snapshot?.threshold;
+  return typeof value === 'number' ? value : null;
+}
+
 export function alertTitle(alert, zone = null) {
   const category = alertCategory(alert);
-  const base = category === 'general' ? (alert.message || 'Aviso') : CATEGORY_LABELS[category];
+  const raw = String(alert?.message ?? '').trim();
+  const generic = !raw || GENERIC_MESSAGE.test(raw);
+  let base;
+  if (category !== 'general') base = CATEGORY_LABELS[category];
+  else if (!generic) base = raw;
+  else {
+    const metric = metricOfAlert(alert);
+    base = metric && METRIC_LABELS[metric] ? `Aviso de ${METRIC_LABELS[metric]}` : 'Aviso';
+  }
   return zone ? `${base} — ${zone}` : base;
 }
 
@@ -80,17 +107,25 @@ export function alertExplanation(alert) {
     case 'humidity':
       return `${origin} Revisa la ventilación y el riesgo de hongos.`;
     default:
-      return `${origin}${alert.message ? ` ${alert.message}.` : ''}`.trim();
+      return `${origin}${alert.message ? ` ${alert.message}.` : ''} Revisa el aviso y confirma su vigencia; si ya no aplica, ciérralo.`.trim();
   }
 }
 
-// Los cinco datos de la taxonomía, en una sola línea legible.
+// Los cinco datos de la taxonomía, en una sola línea legible, más el valor
+// medido y el umbral que disparó el aviso: variable, valor, umbral, hora y
+// siguiente acción quedan siempre identificables.
 export function alertMeta(alert, { zone = null, engineVerified = true } = {}) {
   const meta = classifyNotice({ ...alert, engineVerified });
+  const metric = metricOfAlert(alert);
+  const value = formatValue(metric, alertValue(alert));
+  const threshold = alertThreshold(alert);
   return [
     `Estación: ${alert.deviceName || alert.deviceId || '—'}`,
     zone ? `Zona: ${zone}` : null,
     `Categoría: ${meta.categoryLabel}`,
+    metric && METRIC_LABELS[metric] ? `Variable: ${METRIC_LABELS[metric]}` : null,
+    value != null ? `Valor: ${value}` : null,
+    threshold != null ? `Umbral: ${formatValue(metric, threshold)}` : null,
     `Hora: ${dateText(alert.observedAt)}${alertSince(alert) ? ` (${alertSince(alert)})` : ''}`,
     `Fuente: ${meta.sourceLabel}`,
     meta.official ? 'Aviso oficial' : null,

@@ -101,13 +101,14 @@ function stationReport(entry) {
   return `<section class="panel stats-station">
     <div class="section-heading">
       <div><p class="eyebrow">ESTACIÓN · ${escapeText(data.deviceId)}</p><h2>${escapeText(entry.name)}</h2></div>
-      <p class="coverage">${dateText(data.from)} → ${dateText(data.to)} · ${data.samples} medidas validadas</p>
+      <p class="coverage">${dateText(data.from)} → ${dateText(data.to)} · ${data.samples} medidas aceptadas por controles automáticos</p>
     </div>
     <div class="fact-grid">
       <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
       <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
-      <div><span>Cobertura</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
-      <div><span>Válidos</span><strong>${coverage.valid} · ${coverage.invalid} inválidos</strong></div>
+      <div><span>Cobertura de recibidas</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
+      <div><span>Cobertura de aceptadas</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
+      <div><span>Aceptadas</span><strong>${coverage.valid} · ${coverage.invalid} inválidas</strong></div>
       <div><span>Avisos</span><strong>${data.alerts.total}${data.alerts.open ? ` · ${data.alerts.open} abiertos` : ''}</strong></div>
     </div>
     <div class="stat-grid">${metricCards}</div>
@@ -137,7 +138,7 @@ function resultsCsv(entries, range) {
 
 export async function mountAdminStatistics(root) {
   root.innerHTML = `
-    <div class="section-heading"><div><p class="eyebrow">ANÁLISIS ESTADÍSTICO</p><h2>Cálculo sobre datos validados</h2></div></div>
+    <div class="section-heading"><div><p class="eyebrow">ANÁLISIS ESTADÍSTICO</p><h2>Cálculo sobre datos aceptados por controles automáticos</h2></div></div>
     <div class="stats-controls">
       <div class="stats-field stats-field-stations"><span>Estaciones</span><div class="stats-stations" data-stations><small>Cargando…</small></div></div>
       <div class="stats-field"><label>Periodo<select data-period>

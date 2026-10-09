@@ -1,12 +1,13 @@
-import { $, api, escapeText, dateText, numberText, pressureMbar, canEdit, METRIC_ICONS } from './ui.js';
+import { $, api, escapeText, dateText, numberText, pressureMbar, canEdit, METRIC_ICONS, verificationBadge } from './ui.js';
 import { makeChart } from './ui.js';
 
 const TREND_LABELS = { sube: 'sube', baja: 'baja', estable: 'estable', insuficiente: 'sin datos suficientes' };
 
 const TREND_COLORS = { sube: '#a13333', baja: '#4286a8', estable: '#5d6f62', insuficiente: '#8a938c' };
 
-// Informe estadístico del periodo. Solo se usan mediciones validadas, y se
-// citan siempre el periodo y la estación usados para no insinuar más de lo medido.
+// Informe estadístico del periodo. Solo se usan mediciones aceptadas por los
+// controles automáticos, y se citan siempre el periodo y la estación usados
+// para no insinuar más de lo medido.
 export async function renderStatisticsTab(content, stationId, station) {
   const to = new Date();
   const from = new Date(to.getTime() - 7 * 24 * 3600 * 1000);
@@ -101,13 +102,15 @@ export async function renderStatisticsTab(content, stationId, station) {
     <section class="panel">
       <div class="section-heading">
         <div><p class="eyebrow">ESTADÍSTICAS</p><h2>${escapeText(station.name)} · últimos ${data.hours >= 48 ? `${Math.round(data.hours / 24)} días` : `${data.hours} h`}</h2></div>
-        <p class="coverage">${dateText(data.from)} → ${dateText(data.to)} · ${data.samples} medidas validadas</p>
+        <p class="coverage">${dateText(data.from)} → ${dateText(data.to)} · ${data.samples} medidas aceptadas por controles automáticos</p>
       </div>
+      <p class="hint">${verificationBadge(station?.verification)} «Aceptada por los controles automáticos» (rango, marcas y hora) no es «verificada frente a una referencia». Este informe usa lo primero.</p>
       <div class="fact-grid">
         <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
         <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
-        <div><span>Cobertura</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
-        <div><span>Válidos</span><strong>${coverage.valid} (${coverage.invalid} inválidos)</strong></div>
+        <div><span>Cobertura de recibidas</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
+        <div><span>Cobertura de aceptadas</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
+        <div><span>Aceptadas</span><strong>${coverage.valid} (${coverage.invalid} inválidas)</strong></div>
         <div><span>Avisos del periodo</span><strong>${data.alerts.total}${data.alerts.open ? ` · ${data.alerts.open} abiertos` : ''}</strong></div>
       </div>
       ${coverage.expected && coverage.receivedPct != null && coverage.receivedPct < 90
@@ -117,7 +120,7 @@ export async function renderStatisticsTab(content, stationId, station) {
       <div class="stat-grid">${metricCards}</div>
       <section class="dixon-analysis" aria-labelledby="dixon-heading">
         <div class="dixon-heading"><div><p class="eyebrow">CONTROL ESTADÍSTICO · ADMINISTRACIÓN</p><h3 id="dixon-heading">Valores atípicos · Q de Dixon</h3></div><span class="badge badge-muted">95 % · α = 0,05</span></div>
-        <p class="hint">Evalúa el valor mínimo o máximo más extremo de las últimas 30 mediciones validadas por variable. Es una señal para revisar, no elimina ni invalida datos automáticamente.</p>
+        <p class="hint">Evalúa el valor mínimo o máximo más extremo de las últimas 30 mediciones aceptadas por variable. Es una señal para revisar, no elimina ni invalida datos automáticamente.</p>
         <div class="dixon-grid">${dixonCards}</div>
       </section>
       <p class="hint">${(data.limits || []).map((limit) => escapeText(limit)).join(' ')}</p>

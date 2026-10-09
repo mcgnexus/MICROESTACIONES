@@ -267,7 +267,14 @@ export async function renderAlertsCenter(root) {
       <div data-rows></div>
       <p data-delivery-note></p>
     </section>
-    <section class="panel${editable ? '' : ' hidden'}" data-rules></section>`;
+    <section class="panel${editable ? '' : ' hidden'}" data-rules></section>
+    ${isAdmin() ? `<section class="panel" data-legacy>
+      <div class="section-heading"><div><p class="eyebrow">MANTENIMIENTO</p><h2>Avisos heredados</h2></div>
+        <button type="button" class="quiet" data-action="review-legacy">Revisar</button></div>
+      <p class="hint">Avisos abiertos cuya regla ya no está activa, sin regla asociada, o duplicados de un
+        mismo episodio. Se agrupan por incidente y se cierran sin borrar su rastro.</p>
+      <div data-legacy-body></div>
+    </section>` : ''}`;
 
   const stations = (await api('/api/v1/stations')).stations;
   $('[data-filter="device"]', root).innerHTML = '<option value="">Todas</option>'
@@ -300,11 +307,52 @@ export async function renderAlertsCenter(root) {
     }
   };
 
+  // Revisión de avisos heredados: solo administración. Agrupa por incidente y
+  // permite cerrar en lote sin borrar; el cierre queda auditado en el servidor.
+  const loadLegacy = async () => {
+    const body = $('[data-legacy-body]', root);
+    if (!body) return;
+    try {
+      const data = await api('/api/v1/alerts/legacy');
+      if (!data.total) {
+        body.innerHTML = '<p class="empty">No hay avisos heredados que revisar.</p>';
+        return;
+      }
+      const rows = data.groups.flatMap((group) => group.alerts.map((alert) => ({ alert, group })));
+      body.innerHTML = `<p class="hint">${data.total} aviso(s) candidato(s) en ${data.groups.length} incidente(s).</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th></th><th>Estación</th><th>Variable</th><th>Motivo</th><th>Aviso</th></tr></thead>
+          <tbody>${rows.map(({ alert, group }) => `<tr>
+            <td><input type="checkbox" data-legacy-id="${escapeText(alert.id)}" checked></td>
+            <td>${escapeText(group.deviceName || group.deviceId)}</td>
+            <td>${escapeText(METRIC_LABELS[group.metric] || group.metric || '—')}</td>
+            <td>${escapeText(group.reason)}</td>
+            <td>${escapeText(alert.message)} <span class="badge badge-muted">${dateText(alert.createdAt)}</span></td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+        <button type="button" class="danger" data-action="close-legacy">Cerrar seleccionados</button>`;
+    } catch (error) {
+      body.innerHTML = `<p class="error">No se pudieron revisar los avisos heredados: ${escapeText(error.message)}</p>`;
+    }
+  };
+
   root.onclick = async (event) => {
     const button = event.target.closest('button');
     if (!button) return;
     if (button.dataset.action === 'apply') { await load(); return; }
+    if (button.dataset.action === 'review-legacy') { await loadLegacy(); return; }
     try {
+      if (button.dataset.action === 'close-legacy') {
+        const ids = [...root.querySelectorAll('[data-legacy-id]:checked')].map((box) => box.value);
+        if (!ids.length) return;
+        const reason = window.prompt('Motivo del cierre (opcional):', '') || undefined;
+        await api('/api/v1/alerts/legacy/close', {
+          method: 'POST', body: JSON.stringify(reason ? { ids, reason } : { ids }),
+        });
+        await loadLegacy();
+        await load();
+        return;
+      }
       if (button.dataset.toggleRule) {
         await api(`/api/v1/alerts/rules/${button.dataset.toggleRule}`, { method: 'PATCH', body: JSON.stringify({ enabled: button.dataset.next === 'true' }) });
       } else if (button.dataset.deleteRule) {

@@ -522,11 +522,11 @@ export function renderStationCard(item) {
   const updated = latest?.observedAt || status.lastContact;
   const latestNote = latest
     ? (latest.isValidated
-      ? '<span class="badge badge-valid">Última lectura validada</span>'
+      ? '<span class="badge badge-valid" title="Aceptada por los controles automáticos (rango, marcas del equipo y hora). No demuestra calibración ni exactitud del sensor.">Última lectura aceptada</span>'
       : `<span class="badge badge-invalid" title="${escapeText(latest.invalidatedReason || '')}">Última lectura inválida</span>`)
     : '<span class="badge badge-muted">Sin lecturas</span>';
   const coverage = summary.expected
-    ? `Cobertura ${numberText(summary.coverage_pct)} % · ${summary.valid_count} válidas · ${summary.invalid_count} inválidas de ${summary.expected} esperadas`
+    ? `Cobertura ${numberText(summary.coverage_pct)} % · ${summary.valid_count} aceptadas por controles · ${summary.invalid_count} inválidas de ${summary.expected} esperadas`
     : 'Sin intervalo configurado para la cobertura';
   const coverageClass = summary.expected && summary.coverage_pct < 90 ? 'warn-box reliability-summary' : 'coverage reliability-summary';
   const nearbyRows = nearby.stations.length
@@ -736,9 +736,10 @@ function renderDemoAnalysis(data) {
   const coverageBlock = `<div class="fact-grid">
     <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
     <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
-    <div><span>Cobertura</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
-    <div><span>Válidos</span><strong>${coverage.valid} (${coverage.invalid} inválidos)</strong></div>
-    <div><span>Hueco estimado</span><strong>${coverage.missing ?? '—'}</strong></div>
+    <div><span>Cobertura de recibidas</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
+    <div><span>Cobertura de aceptadas</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
+    <div><span>Aceptadas</span><strong>${coverage.valid} (${coverage.invalid} inválidas)</strong></div>
+    <div><span>Faltantes por tiempo</span><strong>${coverage.timeMissing ?? '—'}</strong></div>
   </div>`;
   const dew = data.dewPoint;
   const dewBlock = `<p class="coverage">Punto de rocío: <strong>${numberText(dew.value, 1)} °C</strong> <span class="badge badge-muted">Calculado</span>${dew.count ? ` · mín ${numberText(dew.min, 1)} / máx ${numberText(dew.max, 1)} °C en el periodo` : ''}</p>
@@ -801,7 +802,7 @@ async function renderDemoPanel(root) {
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Gráficos de 24 h, 7 días y 30 días</h2></div></div>
-      <p class="hint">Evolución de mediciones validadas de la microestación. Elige el periodo arriba para 24 horas, 7 días o 30 días.</p>
+      <p class="hint">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Elige el periodo arriba para 24 horas, 7 días o 30 días.</p>
       <div id="demo-stations" class="station-list"></div>
     </section>
     <section class="panel">
@@ -911,13 +912,17 @@ export async function renderPanel(root) {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
       $('#panel-hero', root).innerHTML = heroFirstSection(primaryReading(data.devices));
-      const overview = summarizeFarms(session.me?.farms || [], data.devices);
-      $('#panel-overview', root).innerHTML = renderFarmOverview(overview, { updatedAt: new Date().toISOString() });
       const caveat = coverageCaveat(data.devices);
       const engineOk = data.engine_verified !== false;
       const visible = (list) => (engineOk ? list
         : list.filter((alert) => classifyNotice({ ...alert, engineVerified: engineOk }).category !== 'threshold'));
       const open = visible(data.alerts).filter((alert) => !alert.closedAt);
+      // El resumen de la finca recibe los mismos avisos abiertos que la sección
+      // «Alertas abiertas»: así nunca dice «Todo en orden» con avisos pendientes.
+      const overview = summarizeFarms(session.me?.farms || [], data.devices, { alerts: open });
+      $('#panel-overview', root).innerHTML = renderFarmOverview(overview, {
+        updatedAt: new Date().toISOString(), caveat,
+      });
       $('#panel-alerts', root).innerHTML = open.length
         ? open.map(renderOpenAlert).join('')
         : emptyAlertsHtml(caveat);

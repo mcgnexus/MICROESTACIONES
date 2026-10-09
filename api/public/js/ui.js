@@ -76,7 +76,7 @@ export function flagText(row) {
 
 export function validationBadge(row) {
   if (row.deletedAt) return `<span class="badge badge-deleted" title="${escapeText(row.invalidatedReason || 'borrada manualmente')}">Borrada</span>`;
-  if (row.isValidated) return `<span class="badge badge-valid">Validada</span>`;
+  if (row.isValidated) return `<span class="badge badge-valid" title="Aceptada por los controles automáticos (rango, marcas del equipo y hora). No demuestra calibración, exactitud ni ausencia de influencia del emplazamiento.">Aceptada</span>`;
   return `<span class="badge badge-invalid" title="${escapeText(flagText(row))}">Inválida</span>`;
 }
 
@@ -90,6 +90,23 @@ const CONNECTIVITY = {
 export function connectivityBadge(connectivity) {
   const [label, css] = CONNECTIVITY[connectivity] || CONNECTIVITY.unknown;
   return `<span class="badge ${css}">${label}</span>`;
+}
+
+// Estado de verificación física: separa «aceptada por controles automáticos» de
+// «verificada frente a una referencia». Sin registro, no se afirma verificación.
+const VERIFICATION = {
+  verified: ['Verificada frente a referencia', 'badge-valid'],
+  pending: ['Verificación pendiente', 'badge-warn'],
+  unverified: ['Sin verificar', 'badge-muted'],
+};
+
+export function verificationBadge(verification = {}) {
+  const key = ['verified', 'pending'].includes(verification?.status) ? verification.status : 'unverified';
+  const [label, css] = VERIFICATION[key];
+  const title = key === 'unverified'
+    ? 'Los controles automáticos aceptan el dato por rango, marcas y hora; eso no demuestra calibración ni exactitud.'
+    : verification?.reference ? `Referencia: ${verification.reference}` : '';
+  return `<span class="badge ${css}" title="${escapeText(title)}">${label}</span>`;
 }
 
 const BATTERY = { ok: 'Correcta', low: 'Baja', critical: 'Crítica', unknown: 'Sin dato' };
@@ -246,7 +263,7 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
   const detailAttrs = detail
     ? ` data-detail-key="${escapeText(detail.key)}" data-detail-metric="${escapeText(detail.metric || key)}" data-detail-source="${escapeText(detail.source || 'local')}" role="button" tabindex="0" aria-label="Ampliar ${escapeText(title)}"`
     : '';
-  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"${detailAttrs}><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones validadas en este periodo.</p></div>`;
+  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"${detailAttrs}><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones aceptadas por los controles automáticos en este periodo.</p></div>`;
   const width = 560, height = 200, left = 58, right = 14, top = 16, bottom = 34;
   const values = allPoints.map((row) => Number(row[key]));
   const min = exactStats?.min ?? Math.min(...values);
@@ -353,7 +370,7 @@ export const chartSection = (history, summary = {}, options = {}) => {
   const lux = options.sensors?.lux === true && history.some((row) => row.lux != null)
     ? card('Iluminancia', history, 'lux', '#d99a1f', 'lux', 0)
     : '';
-  return `<div class="chart-grid">${card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}${lux}</div><p class="chart-trend-help">Evolución de mediciones validadas de la microestación. Las flechas resumen el día en curso. Toca un gráfico o una tarjeta para ampliar.</p>`;
+  return `<div class="chart-grid">${card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}${lux}</div><p class="chart-trend-help">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Las flechas resumen el día en curso. Toca un gráfico o una tarjeta para ampliar.</p>`;
 };
 
 // ---- Diálogo de detalle ----------------------------------------------------

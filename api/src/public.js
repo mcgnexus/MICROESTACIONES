@@ -45,7 +45,7 @@ router.get('/stations', async (_req, res) => {
           count(*) OVER (PARTITION BY device_id) AS sample_count
         FROM measurements
         WHERE device_id = ANY(${stationIds}) AND is_validated AND deleted_at IS NULL
-          AND observed_at >= now() - interval '3 hours' AND observed_at <= now()
+          AND observed_at >= now() - interval '24 hours' AND observed_at <= now()
       )
       SELECT device_id, observed_at, temperature_c, humidity_pct
       FROM ranked

@@ -122,8 +122,8 @@ export function renderPublicZones(stations) {
   return `${table}${metadata ? `<div class="public-metadata">${metadata}</div>` : ''}<p class="hint">Las diferencias solo se calculan cuando observación y medición están separadas por un máximo de ±10 minutos. Positivo significa que la urbana midió más; negativo, menos. La distancia, altitud, exposición y entorno pueden influir; no se atribuye el resultado a un factor único.</p>${forecasts || forecastNotice ? `<section class="public-forecast"><h3>Previsión · independiente de las observaciones</h3>${forecasts}${forecastNotice}</section>` : ''}${warnings ? `<section class="public-forecast"><h3>Avisos oficiales AEMET</h3>${warnings}</section>` : ''}`;
 }
 
-export function renderThreeHourHistory(station, now = Date.now()) {
-  const start = now - 3 * 60 * 60 * 1000;
+export function renderDayHistory(station, now = Date.now()) {
+  const start = now - 24 * 60 * 60 * 1000;
   const history = (station?.history || []).filter((row) => {
     const timestamp = new Date(row.observedAt).getTime();
     return Number.isFinite(timestamp) && timestamp >= start && timestamp <= now;
@@ -132,11 +132,11 @@ export function renderThreeHourHistory(station, now = Date.now()) {
   const temperature = history.filter((row) => row.temperatureC != null);
   const humidity = history.filter((row) => row.humidityPct != null);
   if (temperature.length < 2 && humidity.length < 2) {
-    return `<p class="public-state-card tone-muted">No hay suficientes mediciones reales de las últimas tres horas para dibujar una evolución.</p>`;
+    return `<p class="public-state-card tone-muted">No hay suficientes mediciones reales de las últimas 24 horas para dibujar una evolución.</p>`;
   }
   return `<div class="public-chart-grid">
-    ${temperature.length >= 2 ? makeChart('Temperatura · últimas 3 horas', temperature, 'temperatureC', '#c97742', '°C', 1) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de temperatura en las últimas tres horas.</div>'}
-    ${humidity.length >= 2 ? makeChart('Humedad · últimas 3 horas', humidity, 'humidityPct', '#168b80', '%', 0) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de humedad en las últimas tres horas.</div>'}
+    ${temperature.length >= 2 ? makeChart('Temperatura · últimas 24 horas', temperature, 'temperatureC', '#c97742', '°C', 1) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de temperatura en las últimas 24 horas.</div>'}
+    ${humidity.length >= 2 ? makeChart('Humedad · últimas 24 horas', humidity, 'humidityPct', '#168b80', '%', 0) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de humedad en las últimas 24 horas.</div>'}
   </div>`;
 }
 
@@ -190,7 +190,7 @@ export async function loadPublicWeather(root = document, { focus = true } = {}) 
     settle(root.querySelector('#public-comparison')).innerHTML = station
       ? renderPublicZones([station])
       : '<p class="public-state-card tone-muted">Aún no hay una estación urbana con permiso de publicación. La comparación con AEMET aparecerá cuando haya observaciones reales.</p>';
-    settle(root.querySelector('#public-evolution')).innerHTML = renderThreeHourHistory(station);
+    settle(root.querySelector('#public-evolution')).innerHTML = renderDayHistory(station);
   } catch {
     setPublicFailure(root, 'No se han podido cargar las mediciones públicas. Inténtalo de nuevo más tarde.');
   } finally {

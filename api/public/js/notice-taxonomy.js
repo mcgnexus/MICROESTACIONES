@@ -149,7 +149,7 @@ const UNITS = { temperature: '°C', humidity: '%', pressure: 'hPa', battery: 'mV
 // temperatura y humedad la unidad se deduce, para no publicar "1,8" sin más.
 const CATEGORY_METRIC = { frost: 'temperature', heat: 'temperature', humidity: 'humidity', general: null };
 
-function metricOf(notice) {
+export function metricOf(notice) {
   const declared = notice.metric ?? notice.ruleSnapshot?.metric ?? notice.rule_snapshot?.metric;
   if (declared) return declared;
   if (notice.temperatureC != null) return 'temperature';
@@ -157,7 +157,7 @@ function metricOf(notice) {
   return CATEGORY_METRIC[risk] ?? null;
 }
 
-function formatValue(metric, value) {
+export function formatValue(metric, value) {
   if (value == null) return null;
   const unit = UNITS[metric] || '';
   const digits = metric === 'battery' || metric === 'lux' ? 0 : 1;

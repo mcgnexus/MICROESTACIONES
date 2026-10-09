@@ -23,8 +23,8 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
       <label class="custom-range hidden" data-from-label>Desde<input data-filter="from" type="date"></label>
       <label class="custom-range hidden" data-to-label>Hasta<input data-filter="to" type="date"></label>
       ${fixedStation ? '' : `<label>Estación<select data-filter="device"><option value="">Todas</option>${deviceOptions}</select></label>`}
-      <label>Validación<select data-filter="validated">
-        <option value="">Todas</option><option value="valid">Solo válidas</option><option value="invalid">Solo inválidas</option>
+      <label>Controles automáticos<select data-filter="validated">
+        <option value="">Todas</option><option value="valid">Solo aceptadas</option><option value="invalid">Solo inválidas</option>
       </select></label>
       <button type="button" data-action="apply">Aplicar</button>
     </div>
@@ -141,7 +141,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
         || '<tr><td colspan="12">No hay mediciones en este periodo.</td></tr>';
       if (resetPage || state.gaps === null) await loadGaps(from, to);
       const gapsInfo = state.gaps
-        ? ` · huecos de secuencia: ${state.gaps.gaps.length} (${state.gaps.missing} muestras sin recibir, cobertura ${state.gaps.coveragePct ?? '—'} %)`
+        ? ` · faltan por tiempo: ${state.gaps.timeMissing ?? '—'} · huecos de secuencia: ${state.gaps.sequence?.gaps?.length ?? 0} (${state.gaps.sequence?.total ?? 0} muestras) · reinicios de secuencia: ${state.gaps.sequence?.resets?.length ?? 0} · cobertura de recibidas ${state.gaps.receivedPct ?? '—'} %`
         : '';
       const first = state.total ? state.page * state.pageSize + 1 : 0;
       const last = Math.min((state.page + 1) * state.pageSize, state.total);
@@ -181,7 +181,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
     try {
       const { measurement: row } = await api(`/api/v1/measurements/${id}`);
       const flags = [
-        row.temperatureC == null ? 'temperatura: sin valor validado' : null,
+        row.temperatureC == null ? 'temperatura: sin valor aceptado' : null,
         row.invalidatedReason ? `motivo: ${row.invalidatedReason}` : null,
         row.validatedByEmail ? `revisado por ${row.validatedByEmail} ${dateText(row.validatedAt)}` : null,
       ].filter(Boolean);
