@@ -22,6 +22,8 @@ export function emailDeliveryReady(env = process.env) {
 // se responden genéricos para no revelar si la cuenta o la dirección existen.
 // No llamado con resultados correctos ({ ok: true }).
 export function emailFailureScope(result) {
+  // Una entrega correcta no es un fallo: se clasifican solo resultados con error.
+  if (result?.ok) return null;
   if (result?.manual) return 'global';
   const error = String(result?.error || '');
   if (error.startsWith('provider_not_configured')

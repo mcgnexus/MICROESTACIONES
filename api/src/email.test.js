@@ -36,6 +36,10 @@ test('email delivery is only ready with a usable channel', () => {
 
 test('delivery failures are classified as channel-wide or per-recipient', () => {
   const global = (result) => emailFailureScope(result);
+  // Una entrega correcta no se clasifica: así un proveedor válido (p. ej. console)
+  // no se toma por caída del canal.
+  assert.equal(global({ ok: true, permanent: false, messageId: 'console' }), null);
+  assert.equal(global({ ok: true, messageId: 'resend_1' }), null);
   assert.equal(global({ ok: false, error: 'provider_not_configured' }), 'global');
   assert.equal(global({ ok: false, error: 'console_not_allowed_in_production' }), 'global');
   assert.equal(global({ ok: false, error: 'unknown_email_provider:whatever' }), 'global');

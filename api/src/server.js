@@ -174,7 +174,8 @@ app.post('/api/auth/magic/request', csrfGuard, async (req, res) => {
       // comunica como indisponibilidad; un rechazo de la dirección concreta
       // sigue respondiendo genérico para no revelar nada.
       const delivery = await deliverMagicLink(email, siteUrl, issued.token, returnPath);
-      const scope = emailFailureScope(delivery);
+      // Una entrega correcta no se clasifica: emailFailureScope solo recibe fallos.
+      const scope = delivery?.ok ? null : emailFailureScope(delivery);
       if (scope === 'global') {
         console.error('acceso por enlace: canal de envío no disponible:', delivery.error || 'desconocido');
         if (!delivery.ambiguous) {

@@ -219,8 +219,11 @@ try {
     JSON.stringify(recovered.map((row) => Math.round((row.receivedAt - row.observedAt) / 1000))));
 
   const gapsB = await call(`/api/v1/stations/${DEVICE_B}/measurements/gaps`, { as: 'admin' });
-  check('no seerea hueco por el tiempo sin conexión', gapsB.body.gaps.length === 0 && gapsB.body.missing === 0,
-    JSON.stringify({ gaps: gapsB.body.gaps, missing: gapsB.body.missing }));
+  // El desconectado se expresa como tiempo sin muestras, no como hueco de secuencia:
+  // las muestras llegaron después y el equipo no perdió números.
+  check('no se crea hueco por el tiempo sin conexión',
+    gapsB.body.gaps.length === 0 && gapsB.body.sequence?.total === 0,
+    JSON.stringify({ gaps: gapsB.body.gaps, sequenceTotal: gapsB.body.sequence?.total }));
 
   const windowStart = new Date(bufferedStart * 1000).toISOString();
   const windowEnd = new Date((bufferedStart + 3600) * 1000).toISOString();
