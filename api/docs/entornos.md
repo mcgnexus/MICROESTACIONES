@@ -14,8 +14,9 @@ Poder probar sin afectar a producción. La migración y la retención escriben e
 | `npm run migrate` | Sí (esquema) | Aditivo e idempotente |
 | `npm run retention` | Sí (borra) | **Alto** |
 | `npm run create-user` / `provision-device` | Sí (crea) | Medio |
-| `npm run acceptance` / `acceptance:phase13` | Sí (crea y borra `acp-*`) | Alto si apunta a producción |
+| `npm run acceptance` / `acceptance:phase13` | Sí (crea y borra `acp-*` / `ph13-*`) | Alto si apunta a producción |
 | `npm run env:check` | **No** | Ninguno |
+| `npm run aemet:check` | **No** (solo lectura) | Ninguno |
 
 ## Comprobar el entorno antes de tocar nada
 
@@ -38,6 +39,30 @@ npm run db:restore -- --in backups\backup-tecrural-YYYYMMDDHHMM.dump --target "p
 - Requieren `pg_dump` / `pg_restore` en el PATH (herramientas cliente de PostgreSQL).
 - La restauración **rechaza** el mismo host que `DATABASE_URL` y nunca usa producción como destino por defecto.
 - Alternativa en Neon: crear una **rama** de la base como copia congelada.
+
+## Base de pruebas (rama de Neon)
+
+Las pruebas de aceptación e integración escriben y borran datos. Se ejecutan contra una
+base **distinta** de producción:
+
+1. En la consola de Neon, crear una **rama** (branch) a partir de la base principal.
+   Copiar su cadena de conexión (con `sslmode=require`).
+2. Añadirla al `.env` local como `DATABASE_URL_TEST` (no se versiona).
+3. Añadir el host de producción a `PRODUCTION_DB_HOSTS` para activar el guardián.
+4. Ejecutar:
+
+```sh
+cd api
+npm run migrate                      # aplica el esquema a la base de producción/pruebas activa
+npm run acceptance                   # usa DATABASE_URL_TEST automáticamente
+npm run acceptance:phase13
+```
+
+- `acceptance.mjs` y `acceptance-phase13.mjs` usan `DATABASE_URL_TEST` si existe y **se
+  niegan a ejecutarse** contra un destino clasificado como producción (salvo `--force`).
+- El servidor que levantan hereda `DATABASE_URL` de la base de pruebas.
+- Aplicar el esquema a la rama: `DATABASE_URL="$DATABASE_URL_TEST" npm run migrate` (o
+  cambiar temporalmente `DATABASE_URL`).
 
 ## Guardián de producción
 

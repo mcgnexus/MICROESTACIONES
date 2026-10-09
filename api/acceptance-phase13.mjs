@@ -14,6 +14,21 @@ import { readFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import postgres from 'postgres';
 import { sha256, randomToken } from './src/security.js';
+import { resolveTestDatabaseUrl } from './src/env-guard.js';
+
+// Base de PRUEBAS: prefiere DATABASE_URL_TEST. Se niega a usar producción, porque
+// esta prueba crea y borra filas.
+const testDb = resolveTestDatabaseUrl();
+if (!testDb.url) {
+  console.error('Falta DATABASE_URL_TEST o DATABASE_URL. Define una base de pruebas.');
+  process.exit(1);
+}
+if (testDb.production && !testDb.forced) {
+  console.error('La aceptación crea y borra datos: apunta a una base de pruebas.');
+  for (const reason of testDb.reasons) console.error(`  · ${reason}`);
+  console.error('Usa DATABASE_URL_TEST o repite con --force solo si es intencionado.');
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PHASE13_PORT || 8152);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -30,7 +45,7 @@ const OPERATOR = `${PREFIX}-operator@${DOMAIN}`;
 const LEAD_PHONE = '+34600000013';
 const DEVICES = [PUBLIC_DEVICE, STALE_DEVICE, PRIVATE_A, PRIVATE_B, ALERT_DEVICE];
 
-const sql = postgres(process.env.DATABASE_URL, {
+const sql = postgres(testDb.url, {
   max: 5, ssl: 'require', transform: { ...postgres.camel, value: {} },
 });
 
@@ -47,6 +62,7 @@ const server = spawn(process.execPath, ['src/server.js'], {
   cwd: process.cwd(),
   env: {
     ...process.env,
+    DATABASE_URL: testDb.url,
     PORT: String(PORT),
     COOKIE_SECURE: 'false',
     EMAIL_PROVIDER: 'console',

@@ -43,3 +43,12 @@ export function reportWriteTarget(action, target, { logger = console } = {}) {
   logger.warn(`\n[guardián] ${action}: se ejecuta sobre producción por confirmación explícita.`);
   return false;
 }
+
+// Resuelve la base de PRUEBAS: `DATABASE_URL_TEST` si existe; si no, `DATABASE_URL`.
+// El destino se evalúa con el guardián para que una prueba de aceptación no se
+// ejecute por accidente contra producción.
+export function resolveTestDatabaseUrl({ env = process.env, argv = process.argv } = {}) {
+  const url = env.DATABASE_URL_TEST || env.DATABASE_URL || null;
+  const decision = evaluateWriteTarget({ env: { ...env, DATABASE_URL: url }, argv });
+  return { url, ...decision };
+}

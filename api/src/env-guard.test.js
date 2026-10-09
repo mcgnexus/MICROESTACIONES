@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateWriteTarget, hostOf, productionHosts } from './env-guard.js';
+import { evaluateWriteTarget, hostOf, productionHosts, resolveTestDatabaseUrl } from './env-guard.js';
 
 test('fuera de producción la escritura se permite sin confirmación', () => {
   const target = evaluateWriteTarget({
@@ -64,4 +64,28 @@ test('hostOf y productionHosts normalizan y toleran valores ausentes', () => {
   assert.equal(hostOf(''), null);
   assert.deepEqual(productionHosts({}), []);
   assert.deepEqual(productionHosts({ PRODUCTION_DB_HOSTS: ' A.com , b.com ' }), ['a.com', 'b.com']);
+});
+
+test('la base de pruebas prefiere DATABASE_URL_TEST', () => {
+  const resolved = resolveTestDatabaseUrl({
+    env: {
+      DATABASE_URL: 'postgresql://u:p@prod.neon.tech/neondb',
+      DATABASE_URL_TEST: 'postgresql://u:p@branch-test.neon.tech/neondb',
+    },
+    argv: ['node', 'acceptance.mjs'],
+  });
+  assert.equal(resolved.url, 'postgresql://u:p@branch-test.neon.tech/neondb');
+  assert.equal(resolved.production, false);
+});
+
+test('la base de pruebas se niega a usar producción salvo confirmación', () => {
+  const env = {
+    DATABASE_URL: 'postgresql://u:p@ep-prod.neon.tech/neondb',
+    PRODUCTION_DB_HOSTS: 'ep-prod.neon.tech',
+  };
+  const blocked = resolveTestDatabaseUrl({ env, argv: ['node', 'acceptance.mjs'] });
+  assert.equal(blocked.production, true);
+  assert.equal(blocked.allowed, false);
+  const forced = resolveTestDatabaseUrl({ env, argv: ['node', 'acceptance.mjs', '--force'] });
+  assert.equal(forced.allowed, true);
 });

@@ -357,6 +357,65 @@ export function compareTemperatures(local, external, windowMs = AEMET_PAIR_WINDO
   };
 }
 
+// Última comparación válida: recorre las muestras locales (de la más reciente a
+// la más antigua) y empareja cada una con la observación AEMET temporalmente más
+// próxima dentro de la ventana. Devuelve la pareja más reciente que cumple.
+// Distingue «tiempo local más reciente» de «última comparación válida».
+export function mostRecentComparison(localSamples, external, windowMs = AEMET_PAIR_WINDOW_MS) {
+  const samples = (Array.isArray(localSamples) ? localSamples : [localSamples])
+    .filter((sample) => sample && numeric(sample.temperatureC) != null && sample.observedAt)
+    .map((sample) => ({ sample, at: new Date(sample.observedAt).getTime() }))
+    .filter(({ at }) => Number.isFinite(at))
+    .sort((a, b) => b.at - a.at);
+  const observations = (external?.observations || (external ? [external] : []))
+    .filter((observation) => observation && numeric(observation.temperatureC) != null && observation.observedAt)
+    .map((observation) => ({ observation, at: new Date(observation.observedAt).getTime() }))
+    .filter(({ at }) => Number.isFinite(at));
+
+  for (const { sample, at } of samples) {
+    const nearest = observations
+      .map((entry) => ({ ...entry, deltaMs: at - entry.at }))
+      .sort((a, b) => Math.abs(a.deltaMs) - Math.abs(b.deltaMs))[0] || null;
+    if (nearest && Math.abs(nearest.deltaMs) <= windowMs) {
+      const localTemperature = numeric(sample.temperatureC);
+      return {
+        state: 'matched',
+        windowMinutes: Math.round(windowMs / 60000),
+        local: { temperatureC: localTemperature, observedAt: sample.observedAt, location: sample.location || null },
+        aemet: {
+          temperatureC: numeric(nearest.observation.temperatureC),
+          observedAt: nearest.observation.observedAt,
+          stationId: nearest.observation.stationId,
+        },
+        proximity: external?.proximity ?? null,
+        timeOffsetSeconds: Math.round(nearest.deltaMs / 1000),
+        differenceC: Math.round((localTemperature - numeric(nearest.observation.temperatureC)) * 10) / 10,
+        differenceDefinition: 'temperatura_microestacion_menos_AEMET',
+        // La pareja puede ser anterior a la última muestra local: se declara.
+        isLatestLocal: Boolean(samples[0] && sample.observedAt === samples[0].sample.observedAt),
+      };
+    }
+  }
+
+  const latest = samples[0]?.sample ?? null;
+  const latestObservation = [...observations].sort((a, b) => b.at - a.at)[0]?.observation ?? null;
+  return {
+    state: !latest || !external ? 'missing' : 'no_pair',
+    windowMinutes: Math.round(windowMs / 60000),
+    local: latest
+      ? { temperatureC: numeric(latest.temperatureC), observedAt: latest.observedAt, location: latest.location || null }
+      : null,
+    aemet: latestObservation
+      ? { temperatureC: numeric(latestObservation.temperatureC), observedAt: latestObservation.observedAt, stationId: latestObservation.stationId }
+      : (external ? { temperatureC: numeric(external.temperatureC), observedAt: external.observedAt, stationId: external.stationId } : null),
+    proximity: external?.proximity ?? null,
+    timeOffsetSeconds: null,
+    differenceC: null,
+    differenceDefinition: 'temperatura_microestacion_menos_AEMET',
+    isLatestLocal: false,
+  };
+}
+
 const AEMET_STATIONS = {
   // Coordenadas/altitud verificadas para el indicativo AEMET 5051X.
   '5051X': { latitude: 37 + 51 / 60 + 41 / 3600, longitude: -(2 + 39 / 60 + 10 / 3600), altitudeM: 1101, source: 'ficha de estación AEMET 5051X' },
@@ -724,13 +783,16 @@ export async function weatherForDevice(device) {
   const localRows = aemet?.observation
     ? await sql`SELECT temperature_c, observed_at FROM measurements
         WHERE device_id = ${device.id} AND is_validated AND deleted_at IS NULL AND temperature_c IS NOT NULL
-        ORDER BY observed_at DESC LIMIT 1`
+          AND observed_at >= now() - interval '24 hours'
+        ORDER BY observed_at DESC LIMIT 500`
     : [];
-  const localTemperature = localRows[0] ? {
-    temperatureC: Number(localRows[0].temperatureC),
-    observedAt: localRows[0].observedAt,
+  // La comparación no usa solo la última muestra: recorre el histórico reciente
+  // para encontrar la última pareja válida con AEMET.
+  const localSamples = localRows.map((row) => ({
+    temperatureC: Number(row.temperatureC),
+    observedAt: row.observedAt,
     location: device.publicZone || device.name,
-  } : null;
+  }));
   if (aemet?.observation) {
     aemet = {
       ...aemet,
@@ -781,7 +843,7 @@ export async function weatherForDevice(device) {
     !aemetConfig.stationId ? 'indicativo de estación observadora' : null,
     !aemetConfig.warningZone ? 'área de avisos' : null,
   ].filter(Boolean);
-  const comparison = compareTemperatures(localTemperature, aemetResponse?.observation, aemetPairWindowMs());
+  const comparison = mostRecentComparison(localSamples, aemetResponse?.observation, aemetPairWindowMs());
   return {
     configured: true,
     location: device.publicZone || `${Number(device.latitude).toFixed(3)}, ${Number(device.longitude).toFixed(3)}`,

@@ -5,6 +5,7 @@ import {
   aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
   compareTemperatures, mergeAemetSnapshot, resolveAemetWarnings, resolveAemetWarningsDetailed,
   isAemetCapPayload, aemetPairWindowMs, downloadAreaForZone, parseAemetInstantDetailed,
+  mostRecentComparison,
 } from './weather.js';
 
 test('AEMET sky returns a single representative description', () => {
@@ -247,6 +248,36 @@ test('the 9 October reference case pairs the 14:00 samples and leaves 14:39 unpa
   assert.equal(later.differenceC, null);
   assert.equal(later.local.temperatureC, 21.8);
   assert.equal(later.aemet.observedAt, '2026-10-09T14:00:00Z');
+});
+
+// La comparación debe mostrar la ÚLTIMA PAREJA VÁLIDA, no la muestra local más
+// reciente. Con el histórico local del 9 de octubre, la pareja de las 14:00 se
+// recupera aunque la última lectura sea de las 14:39.
+test('most recent comparison finds the last valid pair within the local history', () => {
+  const external = { observations: [
+    { stationId: '5051X', temperatureC: 20.4, observedAt: '2026-10-09T14:00:00Z' },
+  ] };
+  const localSamples = [
+    { temperatureC: 21.8, observedAt: '2026-10-09T14:39:20Z', location: 'Punto urbano' },
+    { temperatureC: 20.4, observedAt: '2026-10-09T14:00:37Z', location: 'Punto urbano' },
+  ];
+  const comparison = mostRecentComparison(localSamples, external);
+  assert.equal(comparison.state, 'matched');
+  assert.equal(comparison.differenceC, 0);
+  assert.equal(comparison.local.observedAt, '2026-10-09T14:00:37Z');
+  assert.equal(comparison.aemet.observedAt, '2026-10-09T14:00:00Z');
+  assert.equal(comparison.timeOffsetSeconds, 37);
+  assert.equal(comparison.isLatestLocal, false, 'la pareja es anterior a la última lectura');
+
+  // Si la pareja es la última lectura, se declara.
+  const current = mostRecentComparison([localSamples[1]], external);
+  assert.equal(current.isLatestLocal, true);
+
+  // Sin pareja en el histórico: no se inventa una comparación.
+  const none = mostRecentComparison([localSamples[0]], external);
+  assert.equal(none.state, 'no_pair');
+  assert.equal(none.differenceC, null);
+  assert.equal(none.local.observedAt, '2026-10-09T14:39:20Z');
 });
 
 test('provider failure retains last usable AEMET values and marks each component stale', () => {
