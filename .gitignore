@@ -13,3 +13,5 @@ firmware/*.err
 firmware/serial_check*.txt
 firmware/quick_capture.bin
 firmware/module.jpg
+
+.env.local

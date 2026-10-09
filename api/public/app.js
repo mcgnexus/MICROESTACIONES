@@ -236,6 +236,12 @@ function renderMagicView() {
   const notice = $('#magic-unavailable');
   const confirm = $('#magic-confirm');
   if (!form || !notice) return;
+  const title = $('#magic-title');
+  const description = $('#magic-description');
+  if (title) title.textContent = pendingMagicToken ? 'Confirma tu acceso' : 'Entra con tu correo';
+  if (description) description.textContent = pendingMagicToken
+    ? 'Tu enlace está listo. Pulsa «Confirmar y entrar»; no necesitas volver a escribir tu correo.'
+    : 'Te enviamos un enlace de un solo uso. Sin contraseña y sin crear cuenta con antelación.';
   if (pendingMagicToken) {
     form.classList.add('hidden');
     notice.classList.add('hidden');
@@ -328,7 +334,9 @@ const PATH_ROUTES = {
   '/acceso-gratuito': '#/solicitar-piloto', '/solicitar-piloto': '#/solicitar-piloto', '/entrar': '#/entrar',
 };
 const pathRoute = PATH_ROUTES[location.pathname.replace(/\/+$/, '') || '/'];
-if (pathRoute && !location.hash) history.replaceState(null, '', `/${pathRoute}`);
+// Conserva la consulta hasta que handleMagicReturn lea y retire el token.
+// Eliminarla aquí devolvería al usuario al formulario de correo.
+if (pathRoute && !location.hash) history.replaceState(null, '', `/${location.search}${pathRoute}`);
 
 // Un enlace de acceso llega en la URL. El token se quita de la barra de
 // direcciones y NO se consume en la carga: se exige una confirmación explícita
