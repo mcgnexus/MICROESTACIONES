@@ -90,15 +90,25 @@ function xmlValue(xml, tag) {
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, ' ').trim()) : null;
 }
 
-function parseAemetInstant(value) {
-  if (!value) return null;
-  const normalized = String(value).trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+function parseAemetInstantDetailed(value) {
+  if (!value) return { date: null, rule: 'empty' };
+  const raw = String(value).trim();
+  const normalized = raw.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  // AEMET usa el sufijo literal "UTC" en `fint`; equivale a la marca Z. Sin esto,
+  // una hora UTC se reinterpretaría como hora de Madrid y se desplazaría 1-2 h.
+  if (/utc$/i.test(normalized)) {
+    const parsed = new Date(normalized.replace(/utc$/i, 'Z'));
+    return { date: Number.isFinite(parsed.getTime()) ? parsed : null, rule: 'utc_suffix' };
+  }
   if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized)) {
     const parsed = new Date(normalized);
-    return Number.isFinite(parsed.getTime()) ? parsed : null;
+    return {
+      date: Number.isFinite(parsed.getTime()) ? parsed : null,
+      rule: /[zZ]/.test(normalized) ? 'z_suffix' : 'offset',
+    };
   }
   const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (!match) return null;
+  if (!match) return { date: null, rule: 'unparsed' };
   const [, year, month, day, hour, minute, second = '0'] = match;
   const targetUtc = Date.UTC(+year, +month - 1, +day, +hour, +minute, +second);
   let guess = targetUtc;
@@ -112,8 +122,15 @@ function parseAemetInstant(value) {
       +parts.hour, +parts.minute, +parts.second);
     guess += targetUtc - representedUtc;
   }
-  return new Date(guess);
+  // Sin sufijo: se asume hora local de Madrid. La regla se conserva para auditoría.
+  return { date: new Date(guess), rule: 'madrid_assumed' };
 }
+
+export function parseAemetInstant(value) {
+  return parseAemetInstantDetailed(value).date;
+}
+
+export { parseAemetInstantDetailed };
 
 function xmlBlocks(xml, tag) {
   const regex = new RegExp(`<(?:\\w+:)?${tag}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${tag}>`, 'gi');
@@ -287,10 +304,15 @@ export function normalizeAemetObservation(rows, stationId, { now = new Date(), f
   const number = (value) => numeric(value);
   const windSpeed = number(row.vv);
   const gustSpeed = number(row.vmax);
+  // Se conserva el valor original de `fint` y la regla aplicada, para poder
+  // auditar la normalización sin desplazar el histórico por intuición.
+  const parsed = parseAemetInstantDetailed(row.fint);
   return {
     provider: 'AEMET',
     stationId: row.idema || stationId,
-    observedAt: parseAemetInstant(row.fint)?.toISOString() ?? null,
+    observedAt: parsed.date?.toISOString() ?? null,
+    dateRule: parsed.rule,
+    rawFint: row.fint ?? null,
     latitude: number(row.lat ?? row.latitude),
     longitude: number(row.lon ?? row.longitude),
     altitudeM: number(row.alt ?? row.altitude),
@@ -306,7 +328,7 @@ export function normalizeAemetObservation(rows, stationId, { now = new Date(), f
     && new Date(row.observedAt).getTime() <= now.getTime() + futureToleranceMs)
     .sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
   if (!observations.length) return null;
-  return { ...observations.at(-1), observations };
+  return { ...observations.at(-1), observations, adapterVersion: 'aemet-observation-v1' };
 }
 
 export function compareTemperatures(local, external, windowMs = AEMET_PAIR_WINDOW_MS) {

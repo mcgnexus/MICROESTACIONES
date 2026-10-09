@@ -4,7 +4,7 @@ import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
   aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
   compareTemperatures, mergeAemetSnapshot, resolveAemetWarnings, resolveAemetWarningsDetailed,
-  isAemetCapPayload, aemetPairWindowMs, downloadAreaForZone,
+  isAemetCapPayload, aemetPairWindowMs, downloadAreaForZone, parseAemetInstantDetailed,
 } from './weather.js';
 
 test('AEMET sky returns a single representative description', () => {
@@ -166,11 +166,32 @@ test('AEMET observation timestamps use Madrid time when the provider omits an of
   const summer = normalizeAemetObservation([{ idema: '5051X', fint: '2026-07-15T10:00:00', ta: '24' }], '5051X');
   assert.equal(winter.observedAt, '2026-01-15T09:00:00.000Z');
   assert.equal(summer.observedAt, '2026-07-15T08:00:00.000Z');
+  assert.equal(winter.dateRule, 'madrid_assumed');
   assert.equal(normalizeAemetObservation([], '5051X'), null);
   const now = new Date('2026-10-07T12:00:00Z');
   assert.equal(normalizeAemetObservation([
     { idema: '5051X', fint: '2026-10-07T12:06:00Z', ta: '30' },
   ], '5051X', { now }), null);
+});
+
+// El formato real de `fint` de AEMET lleva el sufijo literal "UTC". Antes se
+// interpretaba como hora de Madrid y la observación se desplazaba 1-2 horas.
+test('the literal UTC suffix in fint is read as UTC, with rule and original value kept', () => {
+  const parsed = parseAemetInstantDetailed('2026-10-09T14:00:00UTC');
+  assert.equal(parsed.date.toISOString(), '2026-10-09T14:00:00.000Z');
+  assert.equal(parsed.rule, 'utc_suffix');
+  assert.equal(parseAemetInstantDetailed('2026-10-09T14:00:00+02:00').rule, 'offset');
+  assert.equal(parseAemetInstantDetailed('2026-10-09T14:00:00Z').rule, 'z_suffix');
+  assert.equal(parseAemetInstantDetailed('').rule, 'empty');
+  assert.equal(parseAemetInstantDetailed('no-es-fecha').rule, 'unparsed');
+
+  const observation = normalizeAemetObservation([
+    { idema: '5051X', fint: '2026-10-09T14:00:00UTC', ta: '20.4' },
+  ], '5051X');
+  assert.equal(observation.observedAt, '2026-10-09T14:00:00.000Z');
+  assert.equal(observation.dateRule, 'utc_suffix');
+  assert.equal(observation.rawFint, '2026-10-09T14:00:00UTC');
+  assert.equal(observation.adapterVersion, 'aemet-observation-v1');
 });
 
 test('temperature comparison pairs nearest timestamps only inside the ten-minute window and keeps signed results', () => {
@@ -198,6 +219,34 @@ test('temperature comparison pairs nearest timestamps only inside the ten-minute
   assert.equal(old.local.observedAt, local.observedAt);
   assert.equal(old.aemet.observedAt, '2026-10-07T11:54:00Z');
   assert.equal(compareTemperatures(local, null).state, 'missing');
+});
+
+// Caso de aceptación observado en la app el 9 de octubre: la pareja de las 14:00
+// coincide a la precisión visible; la lectura local posterior (14:39) queda fuera
+// de la ventana y no permite atribuir 1,4 °C al emplazamiento.
+test('the 9 October reference case pairs the 14:00 samples and leaves 14:39 unpaired', () => {
+  const observations = {
+    observations: [
+      { stationId: '5051X', temperatureC: 20.4, observedAt: '2026-10-09T14:00:00Z' },
+    ],
+  };
+  const paired = compareTemperatures(
+    { temperatureC: 20.4, observedAt: '2026-10-09T14:00:37Z', location: 'Punto urbano' },
+    observations,
+  );
+  assert.equal(paired.state, 'matched');
+  assert.equal(paired.differenceC, 0);
+  assert.equal(paired.timeOffsetSeconds, 37);
+  assert.equal(paired.aemet.observedAt, '2026-10-09T14:00:00Z');
+
+  const later = compareTemperatures(
+    { temperatureC: 21.8, observedAt: '2026-10-09T14:39:20Z', location: 'Punto urbano' },
+    observations,
+  );
+  assert.equal(later.state, 'no_pair');
+  assert.equal(later.differenceC, null);
+  assert.equal(later.local.temperatureC, 21.8);
+  assert.equal(later.aemet.observedAt, '2026-10-09T14:00:00Z');
 });
 
 test('provider failure retains last usable AEMET values and marks each component stale', () => {
