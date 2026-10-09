@@ -99,6 +99,7 @@ router.get('/stations', async (_req, res) => {
         forecastStatus: weather.aemet?.forecastStatus || 'unavailable',
         forecastAgeSeconds: weather.aemet?.forecastAgeSeconds ?? null,
         warnings: weather.aemet?.warnings ?? [],
+        upcomingWarnings: weather.aemet?.upcomingWarnings ?? [],
         warningStatus: weather.aemet?.warningsStatus || (!weather.configured || weather.aemetMissing?.includes('API key AEMET_API_KEY') || weather.aemetMissing?.includes('área de avisos') ? 'unconfigured' : 'unavailable'),
         warningsFetchedAt: weather.aemet?.warningsFetchedAt ?? null,
         warningsAgeSeconds: weather.aemet?.warningsAgeSeconds ?? null,

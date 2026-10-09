@@ -154,10 +154,22 @@ function xmlValueAll(xml, tag) {
   return xmlBlocks(xml, tag).map((value) => decodeXml(value.replace(/<[^>]+>/g, ' ').trim()));
 }
 
+// Preferencia de idioma: AEMET publica varios <info> por idioma en el mismo
+// <alert>; se elige español y, si no existe, el primero disponible.
+const infoIsSpanish = (info) => /^es\b|^es-/i.test(String(xmlValue(info, 'language') || '').trim());
+
+function pickInfoForArea(infos, area) {
+  const candidates = infos.filter((info) => xmlBlocks(info, 'area').includes(area));
+  if (!candidates.length) return null;
+  return candidates.find(infoIsSpanish) || candidates[0];
+}
+
 function capMessage(xml, areaCode, latitude, longitude) {
   const infos = xmlBlocks(xml, 'info');
-  const areas = infos.flatMap((info) => xmlBlocks(info, 'area').map((area) => ({ info, area })));
-  const records = areas.length ? areas : (infos.length ? infos.map((info) => ({ info, area: '' })) : [{ info: '', area: '' }]);
+  const areas = xmlBlocks(xml, 'area');
+  const records = areas.length
+    ? areas.map((area) => ({ area, info: pickInfoForArea(infos, area) })).filter((record) => record.info)
+    : (infos.length ? [{ area: '', info: infos[0] }] : [{ info: '', area: '' }]);
   const references = xmlValue(xml, 'references');
   return records.map(({ info, area }) => {
     const codeValues = xmlBlocks(area, 'value').map((value) => decodeXml(value.replace(/<[^>]+>/g, '').trim()));
@@ -189,7 +201,19 @@ function capMessage(xml, areaCode, latitude, longitude) {
     || String(warning.messageType).toLowerCase() === 'cancel');
 }
 
-export function resolveAemetWarnings(messages, { now = new Date(), areaCode = null, latitude = null, longitude = null } = {}) {
+// El nivel verde (CAP severity=Minor, o eventos «nivel verde»/«sin aviso») no
+// es un aviso: es la ausencia declarada de fenómeno adverso. No debe contar
+// como riesgo ni aparecer en las listas de avisos vigentes.
+export function isNoWarning(warning = {}) {
+  if (String(warning.severity || '').trim().toLowerCase() === 'minor') return true;
+  return /nivel verde|sin aviso/i.test(`${warning.event || ''} ${warning.headline || ''}`);
+}
+
+// Resuelve el conjunto de mensajes CAP y los separa en activos y próximos.
+// Orden garantizado: primero referencias de update/cancel (retiran el mensaje
+// anterior), después exclusión de «sin aviso» (Minor/verde) y por último el
+// filtrado temporal.
+export function resolveAemetWarningsDetailed(messages, { now = new Date(), areaCode = null, latitude = null, longitude = null } = {}) {
   const all = (Array.isArray(messages) ? messages : []).flatMap((xml) => {
     const unpack = (document, depth = 0) => {
       const alerts = xmlBlocks(document, 'alert');
@@ -223,16 +247,26 @@ export function resolveAemetWarnings(messages, { now = new Date(), areaCode = nu
     latest.set(`${id}\u0000${message.area || ''}`, message);
   }
   const instant = (value) => value ? parseAemetInstant(value)?.getTime() ?? null : null;
-  return [...latest.values()].filter((warning) => {
-    if (warning.geographicallyRelevant === false) return false;
-    if (cancelled.has(warning.identifier)) return false;
+  const active = [];
+  const upcoming = [];
+  for (const warning of [...latest.values()]) {
+    if (warning.geographicallyRelevant === false) continue;
+    if (cancelled.has(warning.identifier)) continue;
+    if (isNoWarning(warning)) continue;
     const effective = instant(warning.effective || warning.onset || warning.sent);
     const onset = instant(warning.onset);
     const expires = instant(warning.expires);
-    return (effective == null || effective <= now.getTime())
-      && (onset == null || onset <= now.getTime())
-      && (expires == null || expires > now.getTime());
-  });
+    if (expires != null && expires <= now.getTime()) continue;
+    const started = (effective == null || effective <= now.getTime())
+      && (onset == null || onset <= now.getTime());
+    if (started) active.push(warning);
+    else if (onset != null || effective != null) upcoming.push(warning);
+  }
+  return { active, upcoming };
+}
+
+export function resolveAemetWarnings(messages, options = {}) {
+  return resolveAemetWarningsDetailed(messages, options).active;
 }
 
 export function parseAemetWarnings(xml, options = {}) {
@@ -466,9 +500,10 @@ async function fetchAemet({ municipalityCode, stationId, warningZone, downloadAr
   const warningPayloadUsable = warningsQueried && warningsResult.status === 'fulfilled' && isAemetCapPayload(warningPayload);
   const warningDocuments = warningPayload == null ? [] : Array.isArray(warningPayload) ? warningPayload
     : [typeof warningPayload === 'string' ? warningPayload : JSON.stringify(warningPayload)];
-  const warnings = warningPayloadUsable
-    ? resolveAemetWarnings(warningDocuments, { areaCode: warningZone, latitude: Number(device.latitude), longitude: Number(device.longitude) })
+  const resolved = warningPayloadUsable
+    ? resolveAemetWarningsDetailed(warningDocuments, { areaCode: warningZone, latitude: Number(device.latitude), longitude: Number(device.longitude) })
     : null;
+  const warnings = resolved?.active ?? null;
   const forecastValue = forecastResult.status === 'fulfilled' && forecastResult.value;
   const errors = [];
   if (forecastResult.status === 'rejected') errors.push(describeAemetError('previsión municipal', forecastResult.reason));
@@ -510,6 +545,9 @@ async function fetchAemet({ municipalityCode, stationId, warningZone, downloadAr
     warningsFetchedAt: warningPayloadUsable ? fetchedAt : null,
     warningsAreaCode: warningZone || null,
     warningsDownloadArea: downloadArea || null,
+    // Avisos próximos (onset futuro, sin verde): utilidad preventiva separada
+    // de los vigentes; nunca cuentan como avisos activos.
+    upcomingWarnings: resolved?.upcoming ?? null,
     errors,
   };
 }
@@ -546,6 +584,11 @@ export function mergeAemetSnapshot(previous, fresh) {
   }
   merged.warningsAreaCode = fresh.warningsAreaCode || previous?.warningsAreaCode || null;
   merged.warningsDownloadArea = fresh.warningsDownloadArea || previous?.warningsDownloadArea || null;
+  // Los próximos viajan con la misma frescura que los avisos: si la consulta
+  // fue válida se sustituyen; si no, se conservan los anteriores.
+  if (fresh.warningsAvailable !== false && !fresh.warningsNoData) {
+    merged.upcomingWarnings = fresh.upcomingWarnings ?? [];
+  }
   return merged;
 }
 
@@ -689,6 +732,13 @@ export async function weatherForDevice(device) {
       const onset = parseAemetInstant(warning.onset)?.getTime();
       const expires = parseAemetInstant(warning.expires)?.getTime();
       return (onset == null || onset <= now.getTime()) && (expires == null || expires > now.getTime());
+    });
+    // Próximos: solo los que aún no han empezado y no han caducado. Nunca se
+    // mezclan con los vigentes.
+    aemetResponse.upcomingWarnings = (aemetResponse.upcomingWarnings || []).filter((warning) => {
+      const onset = parseAemetInstant(warning.onset)?.getTime();
+      const expires = parseAemetInstant(warning.expires)?.getTime();
+      return onset != null && onset > now.getTime() && (expires == null || expires > now.getTime());
     });
     if (!aemetConfig.stationId) aemetResponse.observationStatus = 'unconfigured';
     if (!aemetConfig.municipalityCode) aemetResponse.forecastStatus = 'unconfigured';

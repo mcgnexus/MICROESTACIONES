@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
   normalizeOpenMeteo, forecastAdvisories, normalizeAemetObservation, parseAemetWarnings,
   aemetConfigForDevice, describeAemetError, mergeWeatherErrors, aemetProximityForDevice, aemetSky,
-  compareTemperatures, mergeAemetSnapshot, resolveAemetWarnings, isAemetCapPayload, aemetPairWindowMs,
-  downloadAreaForZone,
+  compareTemperatures, mergeAemetSnapshot, resolveAemetWarnings, resolveAemetWarningsDetailed,
+  isAemetCapPayload, aemetPairWindowMs, downloadAreaForZone,
 } from './weather.js';
 
 test('AEMET sky returns a single representative description', () => {
@@ -116,6 +116,49 @@ test('AEMET station observations convert wind from m/s and CAP warnings retain o
   const warnings = parseAemetWarnings('<alert><info><event>Viento</event><headline>Rachas fuertes</headline><severity>Moderate</severity><area><areaDesc>Zona norte</areaDesc></area></info></alert>');
   assert.equal(warnings[0].event, 'Viento');
   assert.equal(warnings[0].area, 'Zona norte');
+});
+
+test('Minor or green CAP messages are no-warning and never count as active risk', () => {
+  const now = new Date('2026-10-08T12:00:00Z');
+  const build = (severity, event, onset = '2026-10-08T10:00:00Z', expires = '2026-10-09T10:00:00Z') =>
+    `<alert><identifier>x-1</identifier><status>Actual</status><msgType>Alert</msgType><info><language>es-ES</language><event>${event}</event><severity>${severity}</severity><onset>${onset}</onset><expires>${expires}</expires><area><areaDesc>Huéscar</areaDesc><geocode><value>611802</value></geocode></area></info></alert>`;
+  for (const [severity, event] of [
+    ['Minor', 'Aviso de tormentas de nivel verde'],
+    ['Minor', 'Minor thunderstorm warning'],
+    ['Moderate', 'Aviso de tormentas de nivel verde (sin severidad clara)'],
+    ['Unknown', 'Sin aviso'],
+  ]) {
+    assert.equal(resolveAemetWarnings([build(severity, event)], { now, areaCode: '611802' }).length, 0,
+      `${severity} / ${event}`);
+  }
+  // Amarillo/naranja/rojo (Moderate/Severe/Extreme) se conservan.
+  assert.equal(resolveAemetWarnings([build('Moderate', 'Aviso de tormentas de nivel amarillo')], { now, areaCode: '611802' }).length, 1);
+  assert.equal(resolveAemetWarnings([build('Severe', 'Naranja')], { now, areaCode: '611802' }).length, 1);
+  assert.equal(resolveAemetWarnings([build('Extreme', 'Rojo')], { now, areaCode: '611802' }).length, 1);
+});
+
+test('CAP messages prefer Spanish info over other languages', () => {
+  const now = new Date('2026-10-08T12:00:00Z');
+  const bilingual = '<alert><identifier>bi-1</identifier><status>Actual</status><msgType>Alert</msgType>'
+    + '<info><language>en-GB</language><event>Moderate rain warning</event><severity>Moderate</severity><onset>2026-10-08T10:00:00Z</onset><expires>2026-10-09T10:00:00Z</expires><area><areaDesc>Levante almeriense</areaDesc><geocode><value>610404</value></geocode></area></info>'
+    + '<info><language>es-ES</language><event>Aviso de lluvias de nivel amarillo</event><severity>Moderate</severity><onset>2026-10-08T10:00:00Z</onset><expires>2026-10-09T10:00:00Z</expires><area><areaDesc>Levante almeriense</areaDesc><geocode><value>610404</value></geocode></area></info>'
+    + '</alert>';
+  const warnings = resolveAemetWarnings([bilingual], { now, areaCode: '610404' });
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].event, 'Aviso de lluvias de nivel amarillo');
+});
+
+test('upcoming warnings (future onset) are separated from active ones', () => {
+  const now = new Date('2026-10-08T12:00:00Z');
+  const future = '<alert><identifier>f-1</identifier><status>Actual</status><msgType>Alert</msgType><info><language>es-ES</language><event>Heladas de nivel amarillo</event><severity>Moderate</severity><onset>2026-10-09T22:00:00Z</onset><expires>2026-10-10T10:00:00Z</expires><area><areaDesc>Huéscar</areaDesc><geocode><value>611802</value></geocode></area></info></alert>';
+  const active = resolveAemetWarnings([future], { now, areaCode: '611802' });
+  assert.equal(active.length, 0, 'onset futuro no es vigente');
+  const detailed = resolveAemetWarningsDetailed([future], { now, areaCode: '611802' });
+  assert.equal(detailed.active.length, 0);
+  assert.equal(detailed.upcoming.length, 1);
+  assert.match(detailed.upcoming[0].event, /Heladas/);
+  // Sin coordenadas el geocódigo de zona decide; con zona ajena, fuera.
+  assert.equal(resolveAemetWarningsDetailed([future], { now, areaCode: '610404' }).upcoming.length, 0);
 });
 
 test('AEMET observation timestamps use Madrid time when the provider omits an offset', () => {

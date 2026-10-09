@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import { unpackTar, decodeAemetCapBundle } from './aemet-cap.js';
-import { resolveAemetWarnings } from './weather.js';
+import { resolveAemetWarnings, resolveAemetWarningsDetailed } from './weather.js';
 
 // Construye un tar USTAR mínimo a partir de entradas { name, data: Buffer }.
 function buildTar(entries) {
@@ -74,17 +74,17 @@ test('a real Andalucía CAP bundle parses and filters by warning zone', async ()
   // Ventana del amarillo (válido hasta 2026-10-09T03:59Z): la zona 610404 lo
   // recupera y la zona de Huéscar (611802) no. Sin coordenadas, el geocódigo
   // de zona declara la pertenencia. El CAP trae <info> por idioma (es/en):
-  // el evento puede llegar en cualquiera de las dos lenguas.
+  // se prefiere el texto en español.
   const duringAmarillo = new Date('2026-10-08T22:30:00Z');
   const amarillo = resolveAemetWarnings(docs, { now: duringAmarillo, areaCode: '610404' });
   assert.ok(amarillo.length >= 1, 'el aviso amarillo sale dentro de su ventana');
-  assert.ok(amarillo.every((warning) => /lluvias|rain/i.test(warning.event || '')));
+  assert.ok(amarillo.every((warning) => /lluvias/i.test(warning.event || '')), 'texto en español preferido');
   assert.equal(resolveAemetWarnings(docs, { now: duringAmarillo, areaCode: '611802' }).length, 0, 'la zona de Huéscar no recibe el aviso de otra provincia');
-  // Ventana del boletín verde (desde 2026-10-10T22:00Z): la zona 611802 sí
-  // recibe el boletín que la incluye, pese a que otro archivo del tar era de
-  // una zona ajena.
+  // Ventana del boletín verde (desde 2026-10-10T22:00Z): Minor/verde es la
+  // AUSENCIA declarada de aviso → se descarta por completo (ni vigente ni
+  // próximo); la zona queda sin avisos y sin falsos positivos.
   const duringVerde = new Date('2026-10-11T08:00:00Z');
-  const verde = resolveAemetWarnings(docs, { now: duringVerde, areaCode: '611802' });
-  assert.ok(verde.length >= 1, 'el boletín de la zona de Huéscar se mantiene');
-  assert.ok(verde.every((warning) => /mínimas|low-temperature/i.test(warning.event || '')));
+  const detailed = resolveAemetWarningsDetailed(docs, { now: duringVerde, areaCode: '611802' });
+  assert.equal(detailed.active.length, 0, 'Minor/verde no cuenta como aviso vigente');
+  assert.equal(detailed.upcoming.length, 0, 'Minor/verde tampoco se conserva como próximo');
 });
