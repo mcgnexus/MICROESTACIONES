@@ -28,6 +28,11 @@ cd api
 npm run migrate
 ```
 
+> `migrate` y `retention` llevan un guardián: si detectan producción (por
+> `NODE_ENV`/`VERCEL_ENV` o por `PRODUCTION_DB_HOSTS`), se detienen. Para
+> ejecutarlos sobre producción de forma intencionada, añade `--force` o
+> `ALLOW_PRODUCTION_WRITES=true`, siempre después de la copia.
+
 Verificación posterior a la migración:
 
 ```sql

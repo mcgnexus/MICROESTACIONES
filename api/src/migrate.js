@@ -1,5 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { sql } from './db.js';
+import { evaluateWriteTarget, reportWriteTarget } from './env-guard.js';
+
+// La migración escribe esquema: no debe ejecutarse por accidente sobre producción.
+if (reportWriteTarget('migración', evaluateWriteTarget())) process.exit(1);
 
 // Mejoras incrementales: cada sentencia es idempotente para bases existentes.
 // En instalación limpia schema.sql ya trae las columnas y los ALTER se saltan.
@@ -15,6 +19,8 @@ const upgrades = [
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS sensors jsonb NOT NULL DEFAULT '{"temperature":true,"humidity":true,"pressure":true,"battery":true,"lux":false}'::jsonb`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS firmware_version text`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS publish_permission boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE devices ADD COLUMN IF NOT EXISTS site_info jsonb NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE devices ADD COLUMN IF NOT EXISTS verification jsonb NOT NULL DEFAULT '{}'::jsonb`,
 
   // Reglas de aviso primero: alerts hace referencia a ellas.
   `DO $$ BEGIN
