@@ -42,6 +42,8 @@ Principio: tres adaptadores **independientes**. Un fallo de previsión no marca 
 - Conservar: valor original, regla aplicada y **versión del adaptador**.
 - El posible error horario detectado en el código auditado **no prueba** que afecte a todos los registros: revisar el histórico normalizado antes de corregirlo.
 
+**Estado (Entrega B):** corregido. `parseAemetInstant` reconoce el sufijo literal `UTC` (y `Z`) y lo lee como UTC; la cadena sin sufijo se mantiene como Madrid. Se añadió trazabilidad (`rawFint`, `dateRule`, `adapterVersion: aemet-observation-v1`). Queda pendiente revisar las observaciones AEMET **ya almacenadas** en `aemet_observations`, que pueden tener la hora desplazada; no se reescriben por intuición.
+
 ### Muestra sanitizada (observación)
 
 ```json
