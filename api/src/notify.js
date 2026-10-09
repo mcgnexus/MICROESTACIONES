@@ -250,7 +250,12 @@ export async function claimOutboxMessages({
       SELECT id FROM notification_outbox
       WHERE (status = 'pending' AND next_attempt_at <= ${now})
         AND (expires_at IS NULL OR expires_at > ${now})
-      ORDER BY next_attempt_at
+      ORDER BY CASE kind
+          WHEN 'alert' THEN 0
+          WHEN 'contact_verification' THEN 1
+          WHEN 'commercial' THEN 3
+          ELSE 2 END,
+        next_attempt_at
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )

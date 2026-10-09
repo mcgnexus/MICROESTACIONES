@@ -20,3 +20,10 @@ export function otpDebugEnabled(env = process.env) {
 export function alertEngineVerified(env = process.env) {
   return String(env.ALERT_ENGINE_VERIFIED ?? 'true').toLowerCase() !== 'false';
 }
+
+// Fase de evaluación (fase 1): con `ALERT_SEND_ENABLED=false`, el motor abre y
+// registra episodios visibles en la app pero NO encola envíos externos. Por
+// defecto se permite el envío, así que no cambia el comportamiento habitual.
+export function alertSendEnabled(env = process.env) {
+  return String(env.ALERT_SEND_ENABLED ?? 'true').toLowerCase() !== 'false';
+}

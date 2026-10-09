@@ -9,6 +9,7 @@
 import { sql } from './db.js';
 import { enqueueAlertNotifications } from './notify.js';
 import { dataFreshnessFor, offlineThresholdSeconds } from './station-status.js';
+import { alertSendEnabled } from './env.js';
 
 export const METRIC_KEYS = {
   temperature: 'temp_c',
@@ -112,6 +113,12 @@ export const severityFor = (value, config) => {
   const critical = Number(config?.battery_critical_mv ?? 3200);
   return Number(value) <= critical ? 1 : 2;
 };
+
+// Canal efectivo de un aviso: en fase de evaluación (ALERT_SEND_ENABLED=false)
+// se fuerza a in_app para que el episodio quede visible sin envío externo.
+export function alertChannelFor(ruleChannel, env = process.env) {
+  return alertSendEnabled(env) ? ruleChannel : 'in_app';
+}
 
 // Antigüedad de la medida que originó el aviso y retraso de la entrega.
 export function alertAge(row, now = new Date()) {
@@ -224,23 +231,28 @@ async function openAlert(tx, { deviceId, measurementId, rule, value, at, config,
     value, margin: rule.recoveryMargin, min_duration_s: rule.minDurationS,
     category, urgent: !!rule.urgent, condition_since: new Date(conditionSince ?? at).toISOString(),
   };
-  const isInstant = rule.channel === 'in_app';
+  // Fase de evaluación: si el envío externo está desactivado, el canal se
+  // fuerza a in_app (visible en la app, sin encolar nada fuera).
+  const channel = alertChannelFor(rule.channel);
+  const isInstant = channel === 'in_app';
   const [alert] = await tx`INSERT INTO alerts
     (device_id, measurement_id, dedupe_key, level, message, value, source, category, observed_at,
      rule_id, rule_snapshot, recipient, channel, delivery_status, delivered_at, auto_resolved)
     VALUES (${deviceId}, ${measurementId}, ${dedupeKey}, ${level}, ${message}, ${tx.json({ value })},
       'station_measurement', ${category}, ${at}, ${rule.id}, ${tx.json(snapshot)}, ${rule.recipient ?? null},
-      ${rule.channel}, ${isInstant ? 'delivered' : 'pending'}, ${isInstant ? new Date() : null}, false)
+      ${channel}, ${isInstant ? 'delivered' : 'pending'}, ${isInstant ? new Date() : null}, false)
     ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`;
   if (alert) {
-    // Se encola para los destinatarios verificados. Sin ninguno, un aviso de un
-    // canal externo queda como fallido en vez de simular una entrega.
-    const recipients = await enqueueAlertNotifications(tx, {
-      alertId: alert.id, deviceId, metric: rule.metric, value, message, level,
-      category, observedAt: at, ruleId: rule.id, source: 'station_measurement',
-    });
-    if (!isInstant && recipients === 0) {
-      await tx`UPDATE alerts SET delivery_status = 'failed' WHERE id = ${alert.id}`;
+    // En fase de evaluación (ALERT_SEND_ENABLED=false) el canal se fuerza a
+    // in_app: el episodio queda visible pero no se encola ningún envío externo.
+    if (!isInstant) {
+      const recipients = await enqueueAlertNotifications(tx, {
+        alertId: alert.id, deviceId, metric: rule.metric, value, message, level,
+        category, observedAt: at, ruleId: rule.id, source: 'station_measurement',
+      });
+      if (recipients === 0) {
+        await tx`UPDATE alerts SET delivery_status = 'failed' WHERE id = ${alert.id}`;
+      }
     }
     return alert;
   }

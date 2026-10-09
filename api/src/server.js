@@ -8,7 +8,7 @@ import { randomToken, sha256, verifyPassword } from './security.js';
 import { clearLoginAttempts, consumeLoginAttempt, loginRateLimitKeys } from './login-rate-limit.js';
 import { measurementSchema, hasAnyValue } from './contracts.js';
 import { requireDevice, requireSubscriber, requireRole, csrfGuard, cookies, accessibleDeviceIds, alertableDeviceIds } from './auth.js';
-import { alertEngineVerified } from './env.js';
+import { alertEngineVerified, alertSendEnabled } from './env.js';
 import { evaluateMeasurement, VFLAG } from './validation.js';
 import { evaluateMeasurementRules, releaseDirectives, pendingDirectiveIds, alertAge } from './alert-engine.js';
 import { audit } from './audit.js';
@@ -802,6 +802,7 @@ app.get('/api/v1/dashboard', requireSubscriber, async (req, res) => {
     devices: response,
     alerts: alerts.map((alert) => ({ ...alert, ...alertAge(alert) })),
     engine_verified: alertEngineVerified(),
+    send_enabled: alertSendEnabled(),
   });
 });
 

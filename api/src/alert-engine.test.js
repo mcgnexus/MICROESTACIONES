@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { evaluateRule, hits, recoveryHit, alertAge, batteryImpact, severityFor, ruleFromRow } from './alert-engine.js';
+import { evaluateRule, hits, recoveryHit, alertAge, batteryImpact, severityFor, ruleFromRow, alertChannelFor } from './alert-engine.js';
 import { describeSeries, trendOf, coverageReport } from './statistics.js';
 
 const baseRule = {
@@ -10,6 +10,14 @@ const baseRule = {
   conditionActive: false, conditionSince: null, activeAlertOpen: false, activeAlertId: null,
 };
 const at = (iso) => new Date(iso);
+
+test('el canal efectivo fuerza in_app en fase de evaluación sin envíos externos', () => {
+  assert.equal(alertChannelFor('email', {}), 'email');
+  assert.equal(alertChannelFor('whatsapp', { ALERT_SEND_ENABLED: 'true' }), 'whatsapp');
+  assert.equal(alertChannelFor('email', { ALERT_SEND_ENABLED: 'false' }), 'in_app');
+  assert.equal(alertChannelFor('whatsapp', { ALERT_SEND_ENABLED: 'false' }), 'in_app');
+  assert.equal(alertChannelFor('in_app', { ALERT_SEND_ENABLED: 'false' }), 'in_app');
+});
 
 test('un umbral simple dispara en la primera muestra que lo supera', () => {
   assert.equal(evaluateRule(baseRule, { value: 31, at: at('2026-01-01T10:00:00Z') }).action, 'open');
