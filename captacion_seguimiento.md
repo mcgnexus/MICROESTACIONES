@@ -43,17 +43,18 @@ La confirmación significa **«solicitud guardada»**. No significa:
 
 ## 4. Bandeja de administración
 
-Etapas propuestas:
+Etapas implementadas (`farm_leads.status`):
 
 | Etapa | Descripción |
 | --- | --- |
-| Nueva | Sin contactar |
-| Contactada | Primer contacto hecho |
-| Cualificada | Necesidad y encaje confirmados |
-| Propuesta enviada | Oferta remitida |
-| Piloto | Piloto en marcha |
-| Cliente | Servicio activo |
-| Cerrada | Con motivo de cierre |
+| `nuevo` | Sin contactar |
+| `contactado` | Primer contacto hecho |
+| `interesado` | Necesidad y encaje confirmados |
+| `piloto_activo` | Piloto en marcha |
+| `cliente` | Servicio activo |
+| `descartado` | Cerrada con motivo |
+
+El seguimiento fino (próxima acción, fecha, notas) vive en `prospect_tracking`, sin cambiar la etapa del lead.
 
 Cada solicitud incluye:
 - Origen.

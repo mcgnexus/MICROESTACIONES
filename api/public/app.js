@@ -13,6 +13,9 @@ const sessionChip = $('#session-chip');
 const installButton = $('#install-app');
 const iosInstallHint = $('#ios-install-hint');
 let deferredInstallPrompt = null;
+// Enlace de acceso pendiente de confirmación explícita. Vive solo en memoria:
+// no se guarda en la URL ni en almacenamiento del navegador.
+let pendingMagicToken = null;
 let viewTeardown = () => {};
 
 const connectionNotice = document.createElement('p');
@@ -95,6 +98,7 @@ function showLogin() {
   mobileNav.classList.add('hidden');
   logoutButton.classList.add('hidden');
   sessionChip.classList.add('hidden');
+  renderMagicView();
 }
 
 function showApp() {
@@ -201,10 +205,22 @@ const acquisition = (() => {
 // se ofrece atención manual en su lugar. Nunca se promete un envío que no
 // pueda salir. `emailAvailable` llega de public-config; `undefined` (respuesta
 // antigua) no desactiva nada.
-function applyMagicAvailability() {
+//
+// Si hay un enlace pendiente de confirmar, se muestra el paso de confirmación y
+// se ocultan el formulario y el aviso: la sesión no se inicia hasta que la
+// persona pulsa el botón.
+function renderMagicView() {
   const form = $('#magic-form');
   const notice = $('#magic-unavailable');
+  const confirm = $('#magic-confirm');
   if (!form || !notice) return;
+  if (pendingMagicToken) {
+    form.classList.add('hidden');
+    notice.classList.add('hidden');
+    confirm?.classList.remove('hidden');
+    return;
+  }
+  confirm?.classList.add('hidden');
   const unavailable = session.support?.emailAvailable === false;
   form.classList.toggle('hidden', unavailable);
   notice.classList.toggle('hidden', !unavailable);
@@ -241,7 +257,7 @@ $('#magic-form').addEventListener('submit', async (event) => {
     if (error.message === 'email_delivery_unavailable') {
       // Fallo global del canal: se comunica como indisponibilidad y se ofrece
       // la vía manual, sin dejar de responder con datos genéricos.
-      applyMagicAvailability();
+      renderMagicView();
       errorEl.textContent = 'El acceso por correo no está disponible ahora mismo. Usa la solicitud de acceso y te contactaremos.';
     } else {
       errorEl.textContent = 'No se pudo solicitar el acceso. Inténtalo de nuevo en unos minutos.';
@@ -291,39 +307,49 @@ const PATH_ROUTES = {
 const pathRoute = PATH_ROUTES[location.pathname.replace(/\/+$/, '') || '/'];
 if (pathRoute && !location.hash) history.replaceState(null, '', `/${pathRoute}`);
 
-// Verifica un enlace de acceso si llega en la URL. El token se quita de la barra
-// de direcciones antes de enviarlo y nunca se guarda en el cliente.
+// Un enlace de acceso llega en la URL. El token se quita de la barra de
+// direcciones y NO se consume en la carga: se exige una confirmación explícita
+// para que la visita automática de un analizador de correo no inicie sesión.
 async function handleMagicReturn() {
   const params = new URLSearchParams(location.search);
   const token = params.get('token');
   if (!token) return false;
   history.replaceState(null, '', '/entrar');
+  pendingMagicToken = token;
+  if (location.hash !== '#/entrar') location.hash = '#/entrar';
+  showLogin();
+  return true;
+}
+
+$('#magic-confirm-button')?.addEventListener('click', async () => {
+  if (!pendingMagicToken) return;
+  const button = $('#magic-confirm-button');
+  if (button.disabled) return;
+  button.disabled = true;
+  $('#magic-error').textContent = '';
   try {
-    const result = await api('/api/auth/magic/verify', { method: 'POST', body: JSON.stringify({ token }) });
+    const result = await api('/api/auth/magic/verify', { method: 'POST', body: JSON.stringify({ token: pendingMagicToken }) });
+    pendingMagicToken = null;
     await loadMe();
     const destination = typeof result?.next === 'string' && result.next.startsWith('#/') ? result.next : '#/panel';
     location.hash = destination;
-    return true;
   } catch (error) {
-    showLogin();
+    button.disabled = false;
     const el = $('#magic-error');
-    if (el) {
-      el.textContent = error.message === 'link_invalid_or_expired'
-        ? 'El enlace no es válido, ya se usó o ha caducado. Pide uno nuevo.'
-        : error.message === 'password_login_required'
-          ? 'Esta cuenta se gestiona con contraseña. Entra con ella.'
-          : 'No se pudo completar el acceso con el enlace.';
-    }
-    return false;
+    el.textContent = error.message === 'link_invalid_or_expired'
+      ? 'El enlace no es válido, ya se usó o ha caducado. Pide uno nuevo.'
+      : error.message === 'password_login_required'
+        ? 'Esta cuenta se gestiona con contraseña. Entra con ella.'
+        : 'No se pudo completar el acceso con el enlace.';
   }
-}
+});
 
 // El soporte público no depende de la sesión: vuela en paralelo con el resto
 // del arranque en lugar de bloquearlo con un await en serie.
 api('/api/v1/public-config')
   .then((support) => { session.support = support; })
   .catch(() => { session.support = null; })
-  .finally(() => { renderSupport(); applyMagicAvailability(); });
+  .finally(() => { renderSupport(); renderMagicView(); });
 initLanding();
 try { await loadMe(); } catch { session.me = null; }
 await handleMagicReturn();
