@@ -17,3 +17,22 @@ test('preference columns keep explicit values, including nulls, and drop undefin
   assert.equal(columns.zone, 'Huéscar');
   assert.equal('receive_heat' in columns, false);
 });
+
+test('custom thresholds travel alone and never join the operational columns', () => {
+  // La interfaz los envía desde un formulario propio (data-thresholds-form):
+  // un cuerpo con solo umbrales no debe tocar las preferencias que sí aplican.
+  const patch = preferenceSchema.parse({ custom_thresholds: { frost_c: 0 } });
+  assert.deepEqual(patch.custom_thresholds, { frost_c: 0 });
+  assert.deepEqual(preferenceColumns(patch), {});
+
+  // Distinguir un 0 explícito de un campo en blanco: es un umbral válido.
+  const zero = preferenceSchema.parse({ custom_thresholds: { frost_c: 0, heat_c: -4 } });
+  assert.deepEqual(zero.custom_thresholds, { frost_c: 0, heat_c: -4 });
+});
+
+test('a non-finite custom threshold is rejected instead of stored', () => {
+  const parsed = preferenceSchema.safeParse({ custom_thresholds: { frost_c: Number.NaN } });
+  assert.equal(parsed.success, false);
+  const infinite = preferenceSchema.safeParse({ custom_thresholds: { heat_c: Infinity } });
+  assert.equal(infinite.success, false);
+});

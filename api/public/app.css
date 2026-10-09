@@ -168,7 +168,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
 /* Tarjetas de evolución con encabezado de lectura, tendencia y área suave. */
 .chart-title{display:flex;align-items:center;gap:8px;min-width:0}.chart-title h3{font-size:15px}.chart-title small{display:block;color:#5f6f64;font-size:9px;font-weight:750;letter-spacing:.06em}
 .chart-current{display:flex;align-items:baseline;gap:4px;white-space:nowrap}.chart-current strong{font-size:20px;font-weight:850;font-variant-numeric:tabular-nums}.chart-current small{font-size:10px;color:#5f6f64}
-.chart-trend-strip{min-height:22px;margin-bottom:4px}.chart-trend-strip .chart-trend-wrap{display:flex;align-items:center;gap:6px;max-width:none;text-align:left}.chart-trend-strip .chart-trend-note{margin:0}
+.chart-trend-strip{min-height:22px;margin-bottom:4px}.chart-trend-strip .chart-trend-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;max-width:none;text-align:left}.chart-trend-strip .chart-trend-note{margin:0}
+.chart-trend-item{display:flex;align-items:center;gap:5px;min-width:0}.chart-trend-label{color:#5f6f64;font-size:10px;font-weight:750;white-space:nowrap}.chart-trend-daily{opacity:.72}
 .chart-area{pointer-events:none}.chart-dates{display:flex;justify-content:space-between;gap:8px;margin-top:4px;color:#5f6f64;font-size:9px}.chart-dates span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dashboard-station-card>.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:17px;margin-bottom:9px}
 .tecrural-chart-card{min-width:0;padding:15px 15px 12px;border:1px solid #dfeae4;border-radius:18px;background:linear-gradient(155deg,#fff 0%,#fbfdfc 100%);box-shadow:0 5px 16px #123e2e09}
@@ -181,7 +182,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .tecrural-chart-card .chart-current strong{color:#153f30;font-size:21px;font-weight:850;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
 .tecrural-chart-card .chart-current small{color:#5f6f64;font-size:10px;font-weight:700}
 .tecrural-chart-card .chart-trend-strip{min-height:22px}
-.tecrural-chart-card .chart-trend-wrap{display:flex;align-items:center;gap:6px;max-width:none;text-align:left}
+.tecrural-chart-card .chart-trend-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:5px 9px;max-width:none;text-align:left}
+.tecrural-chart-card .chart-trend-label{font-size:9px}
 .tecrural-chart-card .chart-trend{padding:3px 8px;border:1px solid #e4ece6;background:#f4f8f5;font-size:9px}
 .tecrural-chart-card .chart-trend strong{font-size:14px}
 .tecrural-chart-card .chart-trend-note{margin:0;font-size:9px}

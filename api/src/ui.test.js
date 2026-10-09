@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText, trendWindowRows, validationBadge, verificationBadge } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText, trendWindows, trendWindowRows, trendPeriodLabel, validationBadge, verificationBadge } from '../public/js/ui.js';
 import { renderStationCard } from '../public/js/panel.js';
 
 test('an accepted reading is labelled as automatic-control accepted, not certified', () => {
@@ -98,6 +98,108 @@ test('chart trends describe rising, falling, stable, and insufficient series', (
   assert.equal(chartTrend(series([1, 2]), 'temperatureC').direction, 'insuficiente');
 });
 
+test('trend magnitude is the observed difference, not the fitted line', () => {
+  // Serie reportada: cae desde la tarde pero el día empezó más frío. Una
+  // regresión sobre el día completo daba aquí un "calentamiento" de +12,3 °C.
+  const rows = [
+    ['2026-05-20T15:00:00', 14.5],
+    ['2026-05-20T18:00:00', 14.2],
+    ['2026-05-20T21:00:00', 14.0],
+    ['2026-05-20T22:30:00', 14.1],
+    ['2026-05-20T23:14:00', 13.7],
+  ].map(([iso, temperatureC]) => ({ observedAt: new Date(iso).toISOString(), temperatureC }));
+  const trend = chartTrend(rows, 'temperatureC');
+  assert.equal(trend.direction, 'baja');
+  assert.ok(Math.abs(trend.change - (13.7 - 14.5)) < 1e-9, `change ${trend.change}`);
+  assert.equal(trend.from, 14.5);
+  assert.equal(trend.to, 13.7);
+  assert.equal(trend.samples, 5);
+  assert.ok(trend.spanMs > 0);
+
+  // Una serie en V no debe dar un salto ascendente ficticio.
+  const valley = [20, 14, 13, 16, 15].map((temperatureC, i) => ({
+    observedAt: new Date(i * 20 * 60 * 1000).toISOString(), temperatureC,
+  }));
+  const v = chartTrend(valley, 'temperatureC');
+  assert.ok(Math.abs(v.change - (15 - 20)) < 1e-9, `change ${v.change}`);
+});
+
+test('trend windows separate the recent hour from the day and relabel each fallback', () => {
+  const now = new Date('2026-05-20T18:00:00');
+  const row = (iso, value) => ({ observedAt: iso, temperatureC: value });
+  const today = [
+    row('2026-05-20T12:00:00', 12),
+    row('2026-05-20T16:45:00', 15),
+    row('2026-05-20T17:15:00', 15.4),
+    row('2026-05-20T17:30:00', 14.6),
+  ];
+  const withDay = trendWindows(today, now);
+  assert.equal(withDay.daily.label, 'Hoy');
+  assert.equal(withDay.daily.fallback, false);
+  assert.equal(withDay.recent.label, 'Última hora');
+  assert.equal(withDay.recent.fallback, false);
+  assert.equal(withDay.recent.rows.length, 3);
+  assert.equal(withDay.daily.rows.length, 4);
+
+  // Sin datos del día: cambia la etiqueta, no se mantiene la de "Hoy".
+  const yesterday = [
+    row('2026-05-19T10:00:00', 10),
+    row('2026-05-19T11:00:00', 12),
+    row('2026-05-19T12:00:00', 11),
+    row('2026-05-19T13:00:00', 14),
+  ];
+  const stale = trendWindows(yesterday, now);
+  assert.equal(stale.daily.label, 'Últimas 3 h');
+  assert.equal(stale.daily.fallback, true);
+  assert.equal(stale.daily.rows.length, 4);
+
+  const older = [
+    row('2026-05-18T10:00:00', 10),
+    row('2026-05-18T13:00:00', 12),
+    row('2026-05-18T17:00:00', 11),
+    row('2026-05-18T20:00:00', 14),
+    row('2026-05-18T22:00:00', 13),
+  ];
+  const oldest = trendWindows(older, now);
+  assert.equal(oldest.daily.label, 'Últimas 5 lecturas');
+  assert.equal(oldest.daily.fallback, true);
+  assert.equal(oldest.daily.rows.length, 5);
+});
+
+test('the recent window is anchored on the last reading, not on the clock', () => {
+  const now = new Date('2026-05-20T18:00:00');
+  // Última lectura de hace 5 h: con una ventana de reloj no habría nada que evaluar.
+  const lagged = [
+    { observedAt: '2026-05-20T09:00:00', temperatureC: 15.0 },
+    { observedAt: '2026-05-20T11:00:00', temperatureC: 15.5 },
+    { observedAt: '2026-05-20T12:00:00', temperatureC: 15.4 },
+    { observedAt: '2026-05-20T12:20:00', temperatureC: 15.2 },
+    { observedAt: '2026-05-20T12:40:00', temperatureC: 14.9 },
+    { observedAt: '2026-05-20T13:00:00', temperatureC: 14.4 },
+  ];
+  const { recent } = trendWindows(lagged, now);
+  assert.equal(recent.label, 'Última hora');
+  assert.equal(recent.rows.length, 4);
+  assert.equal(chartTrend(recent.rows, 'temperatureC').direction, 'baja');
+
+  // Solo dos lecturas dentro de la hora: degrada y lo declara.
+  // Última lectura 13:00: solo caen dos lecturas dentro de la hora (12:30 y 13:00).
+  const sparse = [
+    { observedAt: '2026-05-20T11:00:00', temperatureC: 15.3 },
+    { observedAt: '2026-05-20T12:30:00', temperatureC: 14.9 },
+    { observedAt: '2026-05-20T13:00:00', temperatureC: 14.4 },
+  ];
+  const degraded = trendWindows(sparse, now);
+  assert.equal(degraded.recent.label, 'Últimas 3 lecturas');
+  assert.equal(degraded.recent.fallback, true);
+  assert.equal(degraded.recent.rows.length, 3);
+});
+
+test('trendPeriodLabel falls back to a stated default when there is no period', () => {
+  assert.equal(trendPeriodLabel(null), 'sin periodo');
+  assert.equal(trendPeriodLabel({ label: 'Hoy' }), 'Hoy');
+});
+
 test('metrics include an icon and graphs explain temperature trend with an arrow', () => {
   assert.match(metric('Temperatura', '19,2', '°C'), /🌡️/);
   const rows = [1, 2, 3].map((temperatureC, i) => ({
@@ -112,6 +214,45 @@ test('metrics include an icon and graphs explain temperature trend with an arrow
   assert.match(chart, /tecrural-chart-card/);
   assert.match(chart, /chart-current/);
   assert.match(chart, /<strong>3<\/strong>/);
+});
+
+test('chart shows a falling recent hour instead of a day-long rise', () => {
+  // Caso reportado: 23:14 con 13,7 °C, flecha ascendente y «12,3 °C en el día».
+  const now = new Date('2026-05-20T23:14:00');
+  const rows = [
+    ['2026-05-20T12:00:00', 12.0],
+    ['2026-05-20T15:00:00', 14.5],
+    ['2026-05-20T19:00:00', 14.4],
+    ['2026-05-20T22:00:00', 14.2],
+    ['2026-05-20T22:20:00', 14.3],
+    ['2026-05-20T22:40:00', 14.0],
+    ['2026-05-20T23:14:00', 13.7],
+  ].map(([time, temperatureC]) => ({ observedAt: new Date(time).toISOString(), temperatureC }));
+  const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1, null, null, rows, now);
+  assert.match(chart, /chart-trend trend-baja/);
+  assert.match(chart, /↓/);
+  assert.match(chart, /Última hora/);
+  assert.match(chart, /Hoy/);
+  // 13,7 tras 14,3 en la última hora: la cifra visible es la diferencia observada.
+  assert.match(chart, /0,6 °C/);
+  assert.doesNotMatch(chart, /12,3 °C/);
+  assert.doesNotMatch(chart, /en el día/);
+  // Cada bloque declara su periodo y su método.
+  assert.match(chart, /Diferencia entre la primera y la última lectura del periodo/);
+});
+
+test('trend block collapses to one when the recent hour is also the whole day', () => {
+  const now = new Date('2026-05-20T13:00:00');
+  const rows = [
+    ['2026-05-20T12:00:00', 12.0],
+    ['2026-05-20T12:20:00', 12.4],
+    ['2026-05-20T12:40:00', 12.2],
+    ['2026-05-20T13:00:00', 12.6],
+  ].map(([time, temperatureC]) => ({ observedAt: new Date(time).toISOString(), temperatureC }));
+  const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1, null, null, rows, now);
+  assert.equal((chart.match(/chart-trend-item/g) || []).length, 1);
+  assert.match(chart, /Última hora/);
+  assert.doesNotMatch(chart, /chart-trend-daily/);
 });
 
 test('pressure chart uses a broader reference scale than its measured range', () => {

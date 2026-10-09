@@ -171,7 +171,9 @@ Las tormentas locales necesitan pluviómetro, anemómetro y, opcionalmente, dato
 
 `GET`/`PUT /api/v1/alert-preferences` guarda qué categorías recibe cada suscriptor, por qué canal, su horario silencioso, zona, cultivo y umbrales propios. La selección de destinatarios (`recipientsForDevice`) aplica esas preferencias: categoría activada, canal activado y respeto del horario silencioso (salvo prioridad 1). Sin fila de preferencias, se recibe todo por los canales verificados.
 
-Los **umbrales propios** (`custom_thresholds`) se guardan y se muestran, pero todavía **no disparan reglas por sí solos**: hoy las reglas son por estación y las gestiona administración. Aplicarlos de forma individual exige evaluar las reglas por suscriptor, que es el siguiente paso.
+Los **umbrales propios** (`custom_thresholds`) son una **referencia para el equipo**, no un ajuste operativo: se piden en su propia sección de Cuenta, con la advertencia de que no alteran los avisos **antes** del campo, y se envían en un `PUT` aparte que solo lleva `custom_thresholds`. No participan en la decisión de aviso.
+
+No son por suscriptor porque el motor evalúa reglas **por estación** (`evaluateMeasurementRules` carga por `device_id`) y encola las notificaciones **una sola vez**, en el instante en que se abre el aviso (`openAlert` → `recipientsForDevice`). Filtrar por umbral en la entrega no serviría: si el umbral propio es más estricto que el de la regla de estación, el destinatario se descarta al abrirse el aviso y, cuando la medida llega a su umbral, el aviso ya está abierto y no vuelve a encolarse. El usuario se quedaría sin notificación y sin señal de error. Aplicarlos bien exige reglas por suscriptor, con su propio estado de condición, recuperación y clave de deduplicación.
 
 ## Panel orientado a la finca
 

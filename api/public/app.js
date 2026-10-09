@@ -147,6 +147,13 @@ function currentRoute() {
   return { section: parts[0] || 'landing', id: parts[1] ? decodeURIComponent(parts[1]) : null, tab: parts[2] || null };
 }
 
+// Una ruta siempre empieza por `#/`. Cualquier otro fragmento (`#main-content`)
+// es un ancla dentro de la página, no una sección: enrutarla llevaría a renderizar
+// el Panel por el simple hecho de que la sección no coincide con ningún caso.
+function isRouteFragment(hash = location.hash) {
+  return !hash || hash === '#' || hash.startsWith('#/');
+}
+
 function highlightNav(section) {
   const key = section === 'estaciones' ? 'stations' : section === 'avisos' ? 'alerts' : section;
   mainNav.querySelectorAll('[data-nav]').forEach((link) => link.classList.toggle('active', link.dataset.nav === key));
@@ -163,6 +170,9 @@ function highlightNav(section) {
 let pendingReturn = 'panel';
 
 async function route() {
+  // Un fragmento que no es ruta no desmonta la vista actual: se deja que el
+  // navegador haga su trabajo normal con el ancla.
+  if (!isRouteFragment()) return;
   const { section, id, tab } = currentRoute();
   homeMetric(!session.me && section === 'landing');
   lockedMetric(!session.me && ['panel', 'estaciones', 'avisos'].includes(section));
@@ -319,6 +329,27 @@ logoutButton.addEventListener('click', async () => {
   clearPrivateState();
   if (location.hash && location.hash !== '#/') location.hash = '#/';
   else showLanding();
+});
+
+// El enlace de accesibilidad apunta a `#main-content`, el mismo tipo de fragmento
+// que usa el enrutador. Si se deja su comportamiento nativo, el `hashchange`
+// dispara `route()` con una sección desconocida y se acaba viendo el Panel.
+// Se cancela la navegación: se mueve el foco a <main> y se desplaza la vista,
+// conservando la URL, la pantalla, sus filtros y la sección activa del menú.
+function focusMainContent() {
+  const main = $('#main-content');
+  if (!main) return;
+  // tabindex="-1" hace que main pueda recibir el foco; preventScroll deja que el
+  // desplazamiento sea explícito y no dependa del navegador.
+  main.focus({ preventScroll: true });
+  main.scrollIntoView({ block: 'start', behavior: 'auto' });
+}
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('.skip-link');
+  if (!link) return;
+  event.preventDefault();
+  focusMainContent();
 });
 
 window.addEventListener('hashchange', () => route());

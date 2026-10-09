@@ -169,47 +169,100 @@ const TREND_METRICS = {
   pressureMbar: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
 };
 
+// La magnitud es el cambio observado entre la primera y la última lectura de la
+// serie, no el recorrido de una recta ajustada: el usuario compara los mismos
+// valores que ve en la gráfica. La regresión lineal se eliminó por completo.
 export function chartTrend(rows, key) {
   const points = (rows || []).map((row) => ({
     time: new Date(row.observedAt).getTime(), value: Number(row[key]),
   })).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
     .sort((a, b) => a.time - b.time);
-  if (points.length < 3) return { direction: 'insuficiente', change: null };
-  const origin = points[0].time;
-  const xs = points.map((point) => (point.time - origin) / 3600000);
-  const ys = points.map((point) => point.value);
-  const meanX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
-  const meanY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
-  let numerator = 0, denominator = 0;
-  for (let i = 0; i < points.length; i++) {
-    numerator += (xs[i] - meanX) * (ys[i] - meanY);
-    denominator += (xs[i] - meanX) ** 2;
-  }
-  if (!denominator) return { direction: 'insuficiente', change: null };
-  const change = (numerator / denominator) * (xs.at(-1) - xs[0]);
-  const range = Math.max(...ys) - Math.min(...ys);
+  if (points.length < 3) return { direction: 'insuficiente', change: null, samples: points.length };
+  const first = points[0];
+  const last = points.at(-1);
+  const change = last.value - first.value;
+  const values = points.map((point) => point.value);
+  const range = Math.max(...values) - Math.min(...values);
   const direction = range === 0 || Math.abs(change) <= range * 0.1
     ? 'estable' : change > 0 ? 'sube' : 'baja';
-  return { direction, change };
+  return {
+    direction,
+    change,
+    from: first.value,
+    to: last.value,
+    startAt: new Date(first.time).toISOString(),
+    endAt: new Date(last.time).toISOString(),
+    spanMs: last.time - first.time,
+    samples: points.length,
+  };
 }
 
-// Serie corta para las tendencias: el día local en curso; si aún no hay muestras
-// suficientes, cae a las últimas 3 horas y, en último caso, a las últimas 5 lecturas.
-export function trendWindowRows(rows, now = new Date()) {
+const RECENT_WINDOW_MS = 60 * 60 * 1000;
+const MIN_TREND_SAMPLES = 3;
+
+function trendTimes(rows) {
+  return (rows || []).map((row) => new Date(row?.observedAt).getTime())
+    .filter(Number.isFinite).sort((a, b) => a - b);
+}
+
+function trendPeriod(rows, label, fallback) {
+  const times = trendTimes(rows);
+  return {
+    rows,
+    label,
+    fallback,
+    startAt: times.length ? new Date(times[0]).toISOString() : null,
+    endAt: times.length ? new Date(times.at(-1)).toISOString() : null,
+    spanMs: times.length > 1 ? times.at(-1) - times[0] : 0,
+  };
+}
+
+// Dos periodos con método y etiqueta explícitos, para que ninguna cifra se
+// presente como si describiera otro intervalo:
+//   recent — hora reciente, anclada en la última lectura observada (no en el
+//            reloj, que dejaría el bloque vacío si el equipo va retrasado).
+//   daily  — resumen del día local; si faltan muestras degrada a 3 h y luego a
+//            las 5 últimas lecturas, cambiando de etiqueta en cada salto.
+export function trendWindows(rows, now = new Date()) {
   const points = (rows || []).filter((row) => row && row.observedAt);
-  if (points.length < 3) return points;
+  if (!points.length) return { recent: null, daily: null };
+
+  const times = trendTimes(points);
+  const lastTime = times.at(-1);
+
+  let recentPoints = points.filter((row) => new Date(row.observedAt).getTime() >= lastTime - RECENT_WINDOW_MS);
+  const recentLabel = recentPoints.length >= MIN_TREND_SAMPLES ? 'Última hora' : 'Últimas 3 lecturas';
+  if (recentPoints.length < MIN_TREND_SAMPLES) recentPoints = points.slice(-MIN_TREND_SAMPLES);
+  const recent = trendPeriod(recentPoints, recentLabel, recentLabel !== 'Última hora');
+
   const startOfDay = new Date(now);
   startOfDay.setHours(0, 0, 0, 0);
   const dayStart = startOfDay.getTime();
   const today = points.filter((row) => new Date(row.observedAt).getTime() >= dayStart);
-  if (today.length >= 3) return today;
-  const recentStart = now.getTime() - 3 * 3600000;
-  const recent = points.filter((row) => new Date(row.observedAt).getTime() >= recentStart);
-  return recent.length >= 3 ? recent : points.slice(-5);
+  let dailyPoints = today;
+  let dailyLabel = 'Hoy';
+  let dailyFallback = false;
+  if (today.length < MIN_TREND_SAMPLES) {
+    const last3h = points.filter((row) => new Date(row.observedAt).getTime() >= lastTime - 3 * RECENT_WINDOW_MS);
+    if (last3h.length >= MIN_TREND_SAMPLES) {
+      dailyPoints = last3h;
+      dailyLabel = 'Últimas 3 h';
+    } else {
+      dailyPoints = points.slice(-5);
+      dailyLabel = 'Últimas 5 lecturas';
+    }
+    dailyFallback = true;
+  }
+  return { recent, daily: trendPeriod(dailyPoints, dailyLabel, dailyFallback) };
 }
 
-// Ventana corta del día local, normalizada a la hora de `now` (para gráficos).
-export const TREND_WINDOW_LABEL = 'tendencia del día en curso';
+// Envoltorio conservado para los llamadores que solo necesitan el resumen diario.
+// Para texto o etiquetas usar `trendWindows`, que distingue día, 3 h y 5 lecturas.
+export function trendWindowRows(rows, now = new Date()) {
+  return trendWindows(rows, now).daily?.rows || [];
+}
+
+export const trendPeriodLabel = (period) => period?.label || 'sin periodo';
 
 const CHART_SCALE = {
   temperatureC: { minimumSpan: 10, step: 5 },
@@ -242,21 +295,51 @@ export function chartGapThreshold(rows) {
   return typicalInterval * 2.5;
 }
 
-function chartTrendBadge(rows, key, digits) {
-  const metric = TREND_METRICS[key];
-  if (!metric) return '';
-  const { direction, change } = chartTrend(trendWindowRows(rows), key);
-  const icon = direction === 'sube' ? '↑' : direction === 'baja' ? '↓' : direction === 'estable' ? '→' : '·';
-  const explanation = direction === 'sube' ? metric.up
-    : direction === 'baja' ? metric.down
-      : direction === 'estable' ? 'variación pequeña durante el día'
-        : 'se necesitan al menos 3 muestras del día en curso';
-  const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit} en el día`;
-  const accessible = `${direction}: ${explanation}${amount}`;
-  return `<div class="chart-trend-wrap"><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="Tendencia ${escapeText(accessible)}"><strong aria-hidden="true">${icon}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${amount ? escapeText(amount) : ''}</small></div>`;
+const clockText = (value) => (value
+  ? new Date(value).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+  : '—');
+
+const trendIcon = (direction) => (direction === 'sube' ? '↑' : direction === 'baja' ? '↓' : direction === 'estable' ? '→' : '·');
+
+function trendExplanation(direction, metric, period) {
+  const scope = period.label.toLowerCase();
+  if (direction === 'sube') return metric.up;
+  if (direction === 'baja') return metric.down;
+  if (direction === 'estable') return `variación pequeña · ${scope}`;
+  return `se necesitan 3 lecturas en ${scope}`;
 }
 
-export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null, detail = null, trendRows = null) {
+function trendBadgeBlock(period, key, digits, variant) {
+  const metric = TREND_METRICS[key];
+  const trend = chartTrend(period.rows, key);
+  const { direction, change } = trend;
+  const explanation = trendExplanation(direction, metric, period);
+  const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit}`;
+  const window = `${clockText(period.startAt)}–${clockText(period.endAt)}`;
+  const method = 'Diferencia entre la primera y la última lectura del periodo';
+  const accessible = trend.samples < 3
+    ? `${period.label}: ${explanation}`
+    : `${period.label}: ${explanation}${amount}. De ${window}, ${trend.samples} lecturas. `
+      + `${numberText(trend.from, digits)} → ${numberText(trend.to, digits)} ${metric.unit}. ${method}.`;
+  return `<div class="chart-trend-item chart-trend-${variant}"><span class="chart-trend-label">${escapeText(period.label)}</span><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="${escapeText(accessible)}"><strong aria-hidden="true">${trendIcon(direction)}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${escapeText(amount)}</small></div>`;
+}
+
+// Un bloque por periodo, con su etiqueta y su cifra. Si el resumen diario y la
+// hora reciente coinciden en lecturas se muestra uno solo, para no repetir dos
+// veces la misma afirmación.
+function chartTrendBadge(rows, key, digits, now) {
+  const metric = TREND_METRICS[key];
+  if (!metric) return '';
+  const { recent, daily } = trendWindows(rows, now);
+  if (!recent) return '';
+  const sameSeries = daily && daily.rows.length === recent.rows.length
+    && daily.startAt === recent.startAt && daily.endAt === recent.endAt;
+  const blocks = [trendBadgeBlock(recent, key, digits, 'recent')];
+  if (daily && !sameSeries) blocks.push(trendBadgeBlock(daily, key, digits, 'daily'));
+  return `<div class="chart-trend-wrap">${blocks.join('')}</div>`;
+}
+
+export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null, detail = null, trendRows = null, now = new Date()) {
   const allPoints = rows.filter((row) => row[key] != null);
   const points = sampleChartRows(rows, key);
   const icon = TREND_METRICS[key]?.icon || '📈';
@@ -324,7 +407,7 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.4" fill="${color}" pointer-events="none"/>`;
   }).join('');
   const latestValue = numberText(orderedPoints.at(-1)[key], digits);
-  return `<div class="chart-box tecrural-chart-card"${detailAttrs}><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".42"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient><filter id="${glowId}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>${ticks}${areaPaths}${paths}${pulse}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
+  return `<div class="chart-box tecrural-chart-card"${detailAttrs}><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits, now)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".42"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient><filter id="${glowId}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>${ticks}${areaPaths}${paths}${pulse}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {
@@ -370,7 +453,7 @@ export const chartSection = (history, summary = {}, options = {}) => {
   const lux = options.sensors?.lux === true && history.some((row) => row.lux != null)
     ? card('Iluminancia', history, 'lux', '#d99a1f', 'lux', 0)
     : '';
-  return `<div class="chart-grid">${card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}${lux}</div><p class="chart-trend-help">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Las flechas resumen el día en curso. Toca un gráfico o una tarjeta para ampliar.</p>`;
+  return `<div class="chart-grid">${card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}${lux}</div><p class="chart-trend-help">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Cada tarjeta separa la última hora del resumen del día: las cifras son diferencias entre la primera y la última lectura de cada periodo, no pendientes ajustadas. Toca un gráfico o una tarjeta para ampliar.</p>`;
 };
 
 // ---- Diálogo de detalle ----------------------------------------------------

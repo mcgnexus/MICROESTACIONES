@@ -33,6 +33,33 @@ test('la medición opcional contrasta dentro del pie oscuro', async () => {
   assert.match(css, /\.analytics-choice a \{ color: #1f6241/);
 });
 
+test('los umbrales propios no se presentan como si activaran avisos', async () => {
+  const account = await read('js/account.js');
+  // El formulario operativo de preferencias ya no ofrece campos de umbral.
+  const prefsForm = account.slice(
+    account.indexOf('<form data-prefs-form'),
+    account.indexOf('</form>', account.indexOf('<form data-prefs-form')),
+  );
+  assert.doesNotMatch(prefsForm, /name="frost_c"/);
+  assert.doesNotMatch(prefsForm, /name="heat_c"/);
+  assert.doesNotMatch(prefsForm, /umbrales propios/i);
+
+  // Los umbrales viven en su propia sección, con el efecto declarado ANTES del
+  // campo: el usuario sabe que no dispara avisos sin tener que leer una nota.
+  const thresholds = account.slice(
+    account.indexOf('<form data-thresholds-form'),
+    account.indexOf('</form>', account.indexOf('<form data-thresholds-form')),
+  );
+  assert.match(thresholds, /name="frost_c"/);
+  assert.match(thresholds, /name="heat_c"/);
+  const declared = account.indexOf('no cambian los avisos que recibes');
+  assert.ok(declared > -1, 'falta la declaración de que no cambian los avisos');
+  assert.ok(declared < account.indexOf('name="frost_c"'), 'la declaración va después del campo');
+  // Y no se ofrece un "Guardar" que sugiera un ajuste activo.
+  assert.match(thresholds, /Enviar para el equipo/);
+  assert.doesNotMatch(thresholds, /Guardar/);
+});
+
 test('los contenedores públicos dejan de ser fila de carga al recibir contenido', async () => {
   const landing = await read('js/landing.js');
   // El contenedor nace con public-loading (display:flex); al cargar se retira la

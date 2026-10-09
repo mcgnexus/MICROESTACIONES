@@ -1,6 +1,6 @@
 import {
   $, api, escapeText, dateText, dayText, numberText, pressureMbar, pressureText, chartTrend,
-  chartSection, connectivityBadge, openDialog, makeChart, trendWindowRows, session, renderSupport,
+  chartSection, connectivityBadge, openDialog, makeChart, trendWindows, trendPeriodLabel, session, renderSupport,
   isAdmin, canEdit,
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
@@ -283,11 +283,15 @@ if (typeof document !== 'undefined') {
   });
 }
 
+// La flecha acompaña al valor actual, así que describe la hora reciente y no el
+// resumen del día; la etiqueta cambia si la ventana reciente se ha degradado.
 function trendArrow(history, key) {
-  const direction = chartTrend(trendWindowRows(history), key).direction;
+  const { recent } = trendWindows(history);
+  const direction = chartTrend(recent?.rows || [], key).direction;
   const icon = direction === 'sube' ? '↑' : direction === 'baja' ? '↓' : direction === 'estable' ? '→' : '·';
-  const description = { sube: 'Tendencia ascendente del día', baja: 'Tendencia descendente del día', estable: 'Tendencia estable', insuficiente: 'Tendencia sin suficientes datos' }[direction];
-  return `<span class="reading-trend trend-${direction}" role="img" aria-label="${description}" title="${description}">${icon}</span>`;
+  const scope = trendPeriodLabel(recent).toLowerCase();
+  const description = { sube: `Ascendente · ${scope}`, baja: `Descendente · ${scope}`, estable: `Estable · ${scope}`, insuficiente: `Sin suficientes lecturas en ${scope}` }[direction];
+  return `<span class="reading-trend trend-${direction}" role="img" aria-label="${escapeText(description)}" title="${escapeText(description)}">${icon}</span>`;
 }
 
 function detailAttrs(key, metric, source = 'local') {

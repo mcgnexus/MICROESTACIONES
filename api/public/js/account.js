@@ -1,5 +1,6 @@
 import { $, api, escapeText, dateText, roleLabel, planLabel, session } from './ui.js';
 import { WHATSAPP_MANUAL_NOTE } from './notice-taxonomy.js';
+import { FROST_C, HEAT_C } from './farm-cards.js';
 
 const CHANNELS = [
   { key: 'whatsapp', label: 'WhatsApp', placeholder: '+34 600 000 000', addressLabel: 'Teléfono de WhatsApp' },
@@ -152,11 +153,21 @@ export async function renderAccount(root) {
         <label>Silencio hasta<input type="time" name="quiet_end" value="${escapeText((prefs.quietEnd || '').slice(0, 5))}"></label>
         <label>Zona<input name="zone" maxlength="160" value="${escapeText(prefs.zone || '')}"></label>
         <label>Cultivo o ganado<input name="crop" maxlength="160" value="${escapeText(prefs.crop || '')}"></label>
-        <label>Umbral propio de helada (°C)<input type="number" step="0.5" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
-        <label>Umbral propio de calor (°C)<input type="number" step="0.5" name="heat_c" value="${prefs.customThresholds?.heat_c ?? ''}"></label>
-        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias. Los umbrales propios son orientativos: <strong>todavía no cambian las reglas que disparan los avisos</strong>; se guardan como referencia para afinarlos más adelante.</p>
+        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias.</p>
         <button type="submit" class="span-all">Guardar preferencias</button>
       </form>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">REFERENCIA PARA EL EQUIPO</p><h2>Umbrales que te servirían</h2></div></div>
+      <p class="hint">Estos valores <strong>no cambian los avisos que recibes</strong>. Los umbrales que disparan las alertas los fija el equipo por estación y no se editan desde aquí.</p>
+      <p class="hint">Déjanos los que tú usarías: los revisamos contigo al ajustar el piloto. Rellenarlo es opcional.</p>
+      <form data-thresholds-form class="rule-form">
+        <label>A partir de qué °C te preocuparía la helada (°C)<input type="number" step="0.5" placeholder="${FROST_C}" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
+        <label>A partir de qué °C te preocuparía el calor (°C)<input type="number" step="0.5" placeholder="${HEAT_C}" name="heat_c" value="${prefs.customThresholds?.heat_c ?? ''}"></label>
+        <p class="hint span-all">En blanco = se queda el actual del equipo (${FROST_C} °C helada, ${HEAT_C} °C calor).</p>
+        <button type="submit" class="span-all">Enviar para el equipo</button>
+      </form>
+      <p class="hint" data-thresholds-ok role="status"></p>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">MIS FINCAS</p><h2>Fincas y estaciones</h2></div></div>
@@ -224,15 +235,31 @@ export async function renderAccount(root) {
       quiet_start: data.get('quiet_start') || null, quiet_end: data.get('quiet_end') || null,
       zone: data.get('zone') || null, crop: data.get('crop') || null,
     };
-    const custom = {};
-    if (data.get('frost_c')) custom.frost_c = Number(data.get('frost_c'));
-    if (data.get('heat_c')) custom.heat_c = Number(data.get('heat_c'));
-    body.custom_thresholds = custom;
     try {
       await api('/api/v1/alert-preferences', { method: 'PUT', body: JSON.stringify(body) });
       await renderAccount(root);
     } catch (err) {
       error(`No se pudieron guardar las preferencias: ${err.message}`);
+    }
+  });
+
+  // Los umbrales propios se piden por separado y se envían solos: no forman parte
+  // de las preferencias operativas porque no alteran qué avisos se reciben.
+  $('[data-thresholds-form]', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    error('');
+    const custom = {};
+    if (data.get('frost_c')) custom.frost_c = Number(data.get('frost_c'));
+    if (data.get('heat_c')) custom.heat_c = Number(data.get('heat_c'));
+    try {
+      await api('/api/v1/alert-preferences', {
+        method: 'PUT', body: JSON.stringify({ custom_thresholds: custom }),
+      });
+      await renderAccount(root);
+      $('[data-thresholds-ok]', root).textContent = 'Recibido. Lo revisamos contigo al ajustar el piloto; no cambia tus avisos.';
+    } catch (err) {
+      error(`No se pudieron enviar los umbrales: ${err.message}`);
     }
   });
 
