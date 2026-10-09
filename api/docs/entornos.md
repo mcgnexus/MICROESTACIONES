@@ -16,6 +16,7 @@ Poder probar sin afectar a producción. La migración y la retención escriben e
 | `npm run create-user` / `provision-device` | Sí (crea) | Medio |
 | `npm run acceptance` / `acceptance:phase13` | Sí (crea y borra `acp-*` / `ph13-*`) | Alto si apunta a producción |
 | `npm run env:check` | **No** | Ninguno |
+| `npm run launch:check` | **No** (solo lectura) | Ninguno |
 | `npm run aemet:check` | **No** (solo lectura) | Ninguno |
 
 ## Comprobar el entorno antes de tocar nada
@@ -81,6 +82,15 @@ ALLOW_PRODUCTION_WRITES=true npm run migrate
 
 Hazlo solo tras una copia restaurable. Añade el host real a `PRODUCTION_DB_HOSTS`
 en tu `.env` local (no se versiona), por ejemplo la variante pooled y directa de Neon.
+
+## Verificación de lanzamiento
+
+```sh
+cd api
+npm run launch:check
+```
+
+Solo lectura. Comprueba configuración de entorno (dominio, canales, planificador, avisos) y estado de la base (estaciones, mediciones, cola, instalaciones, duplicados). Sale con código 1 si hay algún FALLO. Los puntos manuales (identidad legal, precios, pruebas en móvil) no los cubre.
 
 ## Reglas de separación
 
