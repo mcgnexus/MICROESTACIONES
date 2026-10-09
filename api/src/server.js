@@ -15,6 +15,7 @@ import { audit } from './audit.js';
 import { csvCell } from './csv.js';
 import stationsRouter, { statusPayload } from './stations.js';
 import configsRouter from './configs.js';
+import installationsRouter from './installations-router.js';
 import alertsRouter from './alerts.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 import { weatherForDevice } from './weather.js';
@@ -952,6 +953,7 @@ app.delete('/api/v1/measurements/:id', requireSubscriber, requireRole('operator'
 // ---------------------------------------------------------------------------
 app.use('/api/v1/stations', stationsRouter);
 app.use('/api/v1/stations', configsRouter);
+app.use('/api/v1/stations', installationsRouter);
 app.use('/api/v1/alerts', alertsRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/contacts', contactsRouter);

@@ -10,6 +10,7 @@ import { dispatchOutbox, sendWhatsApp, sendEmail } from './notify.js';
 import { runScheduledPasses, schedulerConfig, schedulerState, SCHEDULER_MIN_INTERVAL_MS } from './scheduler.js';
 import { httpLimits } from './http-limits.js';
 import { LEAD_STATUSES } from './leads.js';
+import { SERVICE_STATUSES, servicePayload } from './services.js';
 import { runRetention } from './retention.js';
 import { MESSAGE_TTL_MINUTES } from './message-ttl.js';
 import {
@@ -494,6 +495,87 @@ router.get('/audit', async (req, res) => {
     FROM audit_logs l LEFT JOIN subscribers s ON s.id = l.actor_id
     ${where} ORDER BY l.created_at DESC LIMIT ${limit}`;
   res.json({ entries: rows });
+});
+
+// ---- Servicios contratados -------------------------------------------------
+// El plan comercial no sustituye a la asignación de estación. Un registro
+// gratuito no activa una estación y una solicitud no supone aceptación.
+
+const serviceCreateSchema = z.object({
+  subscriber_id: z.number().int().positive(),
+  device_id: z.string().min(1).max(80),
+  status: z.enum(SERVICE_STATUSES).optional(),
+  offer: z.record(z.string(), z.unknown()).optional(),
+  monthly_fee_cents: z.number().int().min(0).nullable().optional(),
+  taxes: z.record(z.string(), z.unknown()).optional(),
+  conditions: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+router.get('/services', async (_req, res) => {
+  const rows = await sql`SELECT s.*, sub.email AS subscriber_email, d.name AS device_name
+    FROM services s
+    JOIN subscribers sub ON sub.id = s.subscriber_id
+    JOIN devices d ON d.id = s.device_id
+    ORDER BY s.created_at DESC`;
+  res.json({ services: rows.map(servicePayload) });
+});
+
+router.post('/services', csrfGuard, async (req, res) => {
+  const parsed = serviceCreateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_service', details: parsed.error.issues });
+  const data = parsed.data;
+  const [subscriber] = await sql`SELECT id FROM subscribers WHERE id = ${data.subscriber_id}`;
+  if (!subscriber) return res.status(404).json({ error: 'subscriber_not_found' });
+  const [device] = await sql`SELECT id FROM devices WHERE id = ${data.device_id}`;
+  if (!device) return res.status(404).json({ error: 'station_not_found' });
+  const created = await sql.begin(async (tx) => {
+    const active = data.status && data.status !== 'solicitado';
+    const [row] = await tx`INSERT INTO services
+        (subscriber_id, device_id, status, offer, monthly_fee_cents, taxes, conditions, started_at)
+      VALUES (${data.subscriber_id}, ${data.device_id}, ${data.status ?? 'solicitado'},
+        ${tx.json(data.offer ?? {})}, ${data.monthly_fee_cents ?? null},
+        ${tx.json(data.taxes ?? {})}, ${tx.json(data.conditions ?? {})},
+        ${active ? new Date() : null})
+      RETURNING *`;
+    await audit(tx, req, 'service.create', 'service', String(row.id), null, servicePayload(row));
+    return row;
+  });
+  res.status(201).json({ service: servicePayload(created) });
+});
+
+const servicePatchSchema = z.object({
+  status: z.enum(SERVICE_STATUSES).optional(),
+  offer: z.record(z.string(), z.unknown()).optional(),
+  monthly_fee_cents: z.number().int().min(0).nullable().optional(),
+  taxes: z.record(z.string(), z.unknown()).optional(),
+  conditions: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+router.patch('/services/:id', csrfGuard, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'invalid_id' });
+  const parsed = servicePatchSchema.safeParse(req.body);
+  if (!parsed.success || !Object.keys(parsed.data).length) return res.status(400).json({ error: 'invalid_body' });
+  const [before] = await sql`SELECT * FROM services WHERE id = ${id}`;
+  if (!before) return res.status(404).json({ error: 'service_not_found' });
+  const data = parsed.data;
+  const patch = {};
+  if (data.status !== undefined) {
+    patch.status = data.status;
+    if (['suspendido', 'finalizado'].includes(data.status)) patch.ended_at = new Date();
+    else if (before.endedAt && ['piloto_activo', 'activo'].includes(data.status)) patch.ended_at = null;
+    if (['piloto_activo', 'activo'].includes(data.status) && !before.startedAt) patch.started_at = new Date();
+  }
+  if (data.offer !== undefined) patch.offer = data.offer;
+  if (data.monthly_fee_cents !== undefined) patch.monthly_fee_cents = data.monthly_fee_cents;
+  if (data.taxes !== undefined) patch.taxes = data.taxes;
+  if (data.conditions !== undefined) patch.conditions = data.conditions;
+  const updated = await sql.begin(async (tx) => {
+    const [row] = await tx`UPDATE services SET ${tx(patch)}, updated_at = now() WHERE id = ${id} RETURNING *`;
+    await audit(tx, req, 'service.update', 'service', String(id), servicePayload(before), servicePayload(row));
+    return row;
+  });
+  res.json({ service: servicePayload(updated) });
 });
 
 export default router;

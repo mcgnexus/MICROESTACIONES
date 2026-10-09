@@ -447,6 +447,54 @@ const upgrades = [
   `ALTER TABLE aemet_observations ADD COLUMN IF NOT EXISTS raw_fint text`,
   `ALTER TABLE aemet_observations ADD COLUMN IF NOT EXISTS date_rule text`,
 
+  // Instalaciones: la estación puede trasladarse; cada muestra se asocia a su
+  // instalación por rango temporal (no se toca `measurements`).
+  `DO $$ BEGIN
+     CREATE TABLE installations (
+       id bigserial PRIMARY KEY,
+       device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       site_name text,
+       location_type text CHECK (location_type IS NULL OR location_type IN ('urbano','finca','otro')),
+       zone text,
+       latitude double precision,
+       longitude double precision,
+       altitude integer,
+       height_m numeric,
+       shelter text,
+       maintenance jsonb NOT NULL DEFAULT '[]'::jsonb,
+       notes text,
+       started_at timestamptz NOT NULL DEFAULT now(),
+       ended_at timestamptz,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       CHECK (ended_at IS NULL OR ended_at >= started_at),
+       CHECK ((latitude IS NULL AND longitude IS NULL) OR
+              (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180))
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS installations_open_device_idx ON installations(device_id) WHERE ended_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS installations_device_idx ON installations(device_id, started_at DESC)`,
+
+  // Servicios contratados: estado del piloto, oferta acordada y condiciones.
+  `DO $$ BEGIN
+     CREATE TABLE services (
+       id bigserial PRIMARY KEY,
+       subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+       device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       status text NOT NULL DEFAULT 'solicitado'
+         CHECK (status IN ('solicitado','aprobado','pendiente_instalacion','piloto_activo','activo','suspendido','finalizado')),
+       offer jsonb NOT NULL DEFAULT '{}'::jsonb,
+       monthly_fee_cents integer CHECK (monthly_fee_cents IS NULL OR monthly_fee_cents >= 0),
+       taxes jsonb NOT NULL DEFAULT '{}'::jsonb,
+       conditions jsonb NOT NULL DEFAULT '{}'::jsonb,
+       started_at timestamptz,
+       ended_at timestamptz,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS services_vigente_device_idx ON services(device_id) WHERE status IN ('piloto_activo','activo')`,
+  `CREATE INDEX IF NOT EXISTS services_subscriber_idx ON services(subscriber_id, created_at DESC)`,
+
   // Estado operativo, historial de configuración y auditoría.
   `DO $$ BEGIN
      CREATE TABLE device_config_versions (
@@ -519,6 +567,13 @@ const upgrades = [
 
 // Semilla de datos derivados: estado operativo y versión 1 de configuración.
 const seeds = [
+  // Cada estación existente recibe su instalación inicial (vigente) desde sus
+  // datos actuales, para que el histórico tenga una instalación de referencia.
+  `INSERT INTO installations (device_id, site_name, location_type, zone, latitude, longitude, altitude, started_at)
+     SELECT d.id, d.name, d.location_type, d.public_zone, d.latitude, d.longitude, d.altitude,
+       coalesce(d.installation_date::timestamptz, d.created_at)
+     FROM devices d
+     WHERE NOT EXISTS (SELECT 1 FROM installations i WHERE i.device_id = d.id)`,
   `INSERT INTO device_status (device_id, last_contact, firmware_version)
      SELECT d.id, d.last_seen_at, d.firmware_version FROM devices d
      ON CONFLICT (device_id) DO NOTHING`,

@@ -11,6 +11,7 @@ import { listContacts } from './contacts.js';
 import { listFarms } from './farms.js';
 import { DEFAULT_PREFERENCES, preferenceSchema, preferenceColumns } from './alert-preferences.js';
 import { ACTIVITIES, INTERESTS } from './leads.js';
+import { servicePayload } from './services.js';
 import {
   CONSENT_CHANNELS, CONSENT_TEXT_VERSION, consentSummary, grantCommercialConsent,
   latestConsent, revokeCommercialConsent,
@@ -22,7 +23,7 @@ router.get('/me', requireSubscriber, async (req, res) => {
   const [me] = await sql`SELECT id, email, role, plan, communication_consent, consent_at,
       email_verified_at, acquisition, pilot_requests
     FROM subscribers WHERE id = ${req.subscriber.id}`;
-  const [[profile], [stations, contacts, farms, consents]] = await Promise.all([
+  const [[profile], [stations, contacts, farms, consents, services]] = await Promise.all([
     sql`SELECT municipality, activity, crop_or_livestock, interest
       FROM subscriber_profiles WHERE subscriber_id = ${req.subscriber.id}`,
     Promise.all([
@@ -30,6 +31,9 @@ router.get('/me', requireSubscriber, async (req, res) => {
       listContacts(req.subscriber.id),
       listFarms(req.subscriber.id),
       consentSummary(sql, { subscriberId: req.subscriber.id }),
+      sql`SELECT s.*, d.name AS device_name FROM services s
+        JOIN devices d ON d.id = s.device_id
+        WHERE s.subscriber_id = ${req.subscriber.id} ORDER BY s.created_at DESC`,
     ]),
   ]);
   res.json({
@@ -47,6 +51,7 @@ router.get('/me', requireSubscriber, async (req, res) => {
     consentTextVersion: CONSENT_TEXT_VERSION,
     contacts,
     farms,
+    services: services.map(servicePayload),
     stations: stations.map((station) => ({ id: station.id, name: station.name, active: station.active })),
   });
 });
