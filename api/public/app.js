@@ -13,6 +13,9 @@ const sessionChip = $('#session-chip');
 const installButton = $('#install-app');
 const iosInstallHint = $('#ios-install-hint');
 let deferredInstallPrompt = null;
+// La instalación se ofrece solo después de que el visitante haya consultado
+// datos o haya iniciado sesión, no en cuanto el navegador la permite.
+let installEligible = false;
 // Enlace de acceso pendiente de confirmación explícita. Vive solo en memoria:
 // no se guarda en la URL ni en almacenamiento del navegador.
 let pendingMagicToken = null;
@@ -56,11 +59,19 @@ const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 if (isIos && !isStandalone) iosInstallHint.classList.remove('hidden');
 
+// Solo se muestra el botón cuando hay una acción real que ejecutar y ya se ha
+// consultado algo. No se presenta la instalación como un permiso de comunicaciones.
+function offerInstallIfEligible() {
+  if (deferredInstallPrompt && installEligible && !isStandalone) installButton.classList.remove('hidden');
+}
+
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
   deferredInstallPrompt = event;
-  installButton.classList.remove('hidden');
+  offerInstallIfEligible();
 });
+
+window.addEventListener('tecrural:data-loaded', () => { installEligible = true; offerInstallIfEligible(); });
 
 installButton.addEventListener('click', async () => {
   if (!deferredInstallPrompt) return;
@@ -113,12 +124,23 @@ function showApp() {
   sessionChip.textContent = `${session.me.email} · ${roleLabel(session.me.role)}`;
   document.body.dataset.role = session.me.role;
   $('.admin-only', mainNav).classList.toggle('hidden', session.me.role !== 'admin');
+  installEligible = true;
+  offerInstallIfEligible();
+}
+
+// Al cerrar sesión se vacía el estado privado en memoria y el DOM del panel, para
+// que no quede contenido del usuario anterior. La caché del service worker solo
+// conserva la shell pública: nunca cachea respuestas de /api/.
+function clearPrivateState() {
+  viewRoot.innerHTML = '';
+  session.me = null;
+  pendingMagicToken = null;
+  delete document.body.dataset.role;
 }
 
 async function loadMe() {
   session.me = await api('/api/v1/me');
 }
-
 function currentRoute() {
   const raw = location.hash.replace(/^#\/?/, '');
   const parts = raw.split('/').filter(Boolean);
@@ -288,6 +310,7 @@ $('#login-form').addEventListener('submit', async (event) => {
 
 logoutButton.addEventListener('click', async () => {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  clearPrivateState();
   if (location.hash && location.hash !== '#/') location.hash = '#/';
   else showLanding();
 });

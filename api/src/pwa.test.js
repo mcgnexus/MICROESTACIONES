@@ -56,3 +56,19 @@ test('las páginas legales y las API no se interceptan ni sobrescriben el shell'
     assert.equal(intercepted, false, path);
   }
 });
+
+test('la instalación se ofrece tras consultar datos o iniciar sesión, y el logout limpia el estado privado', async () => {
+  const [app, landing] = await Promise.all([
+    readFile(new URL('app.js', publicDir), 'utf8'),
+    readFile(new URL('js/landing.js', publicDir), 'utf8'),
+  ]);
+  // El botón no aparece solo con beforeinstallprompt: exige elegibilidad real.
+  assert.match(app, /function offerInstallIfEligible/);
+  assert.match(app, /installEligible/);
+  assert.match(landing, /tecrural:data-loaded/);
+  assert.match(app, /addEventListener\('tecrural:data-loaded'/);
+  // El cierre de sesión vacía el DOM del panel y el estado en memoria.
+  assert.match(app, /function clearPrivateState/);
+  assert.match(app, /clearPrivateState\(\)/);
+  assert.match(app, /viewRoot\.innerHTML = ''/);
+});

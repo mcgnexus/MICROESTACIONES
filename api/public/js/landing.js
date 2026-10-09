@@ -191,6 +191,8 @@ export async function loadPublicWeather(root = document, { focus = true } = {}) 
       ? renderPublicZones([station])
       : '<p class="public-state-card tone-muted">Aún no hay una estación urbana con permiso de publicación. La comparación con AEMET aparecerá cuando haya observaciones reales.</p>';
     settle(root.querySelector('#public-evolution')).innerHTML = renderDayHistory(station);
+    // Señal para que la app ofrezca instalar la PWA después de consultar datos.
+    if (typeof document !== 'undefined') document.dispatchEvent(new Event('tecrural:data-loaded'));
   } catch {
     setPublicFailure(root, 'No se han podido cargar las mediciones públicas. Inténtalo de nuevo más tarde.');
   } finally {
