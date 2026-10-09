@@ -634,14 +634,16 @@ async function saveAemetObservations(deviceId, observation) {
     if (!obs?.observedAt) continue;
     await sql`INSERT INTO aemet_observations
       (device_id, station_id, observed_at, temperature_c, humidity_pct, pressure_hpa,
-        precipitation_mm, wind_kmh, wind_gust_kmh, fetched_at)
+        precipitation_mm, wind_kmh, wind_gust_kmh, raw_fint, date_rule, fetched_at)
       VALUES (${deviceId}, ${obs.stationId || observation.stationId || 'unknown'}, ${new Date(obs.observedAt)},
         ${obs.temperatureC ?? null}, ${obs.humidityPct ?? null}, ${obs.pressureHpa ?? null},
-        ${obs.precipitationMm ?? null}, ${obs.windKmh ?? null}, ${obs.windGustKmh ?? null}, now())
+        ${obs.precipitationMm ?? null}, ${obs.windKmh ?? null}, ${obs.windGustKmh ?? null},
+        ${obs.rawFint ?? null}, ${obs.dateRule ?? null}, now())
       ON CONFLICT (device_id, station_id, observed_at) DO UPDATE SET
         temperature_c = EXCLUDED.temperature_c, humidity_pct = EXCLUDED.humidity_pct,
         pressure_hpa = EXCLUDED.pressure_hpa, precipitation_mm = EXCLUDED.precipitation_mm,
-        wind_kmh = EXCLUDED.wind_kmh, wind_gust_kmh = EXCLUDED.wind_gust_kmh, fetched_at = now()`;
+        wind_kmh = EXCLUDED.wind_kmh, wind_gust_kmh = EXCLUDED.wind_gust_kmh,
+        raw_fint = EXCLUDED.raw_fint, date_rule = EXCLUDED.date_rule, fetched_at = now()`;
   }
 }
 

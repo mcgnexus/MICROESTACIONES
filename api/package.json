@@ -11,6 +11,7 @@
     "create-user": "node src/create-user.js",
     "provision-device": "node src/provision-device.js",
     "env:check": "node scripts/env-check.mjs",
+    "aemet:check": "node scripts/aemet-history-check.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
     "test": "node --test",

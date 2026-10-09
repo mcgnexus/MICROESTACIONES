@@ -442,6 +442,10 @@ const upgrades = [
      );
    EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
   `CREATE INDEX IF NOT EXISTS aemet_observations_device_idx ON aemet_observations(device_id, observed_at DESC)`,
+  // Trazabilidad de la normalización AEMET: valor original de `fint` y regla
+  // aplicada. Sin ellos no puede corregirse una hora antigua con evidencia.
+  `ALTER TABLE aemet_observations ADD COLUMN IF NOT EXISTS raw_fint text`,
+  `ALTER TABLE aemet_observations ADD COLUMN IF NOT EXISTS date_rule text`,
 
   // Estado operativo, historial de configuración y auditoría.
   `DO $$ BEGIN
