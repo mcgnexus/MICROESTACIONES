@@ -457,9 +457,13 @@ export const chartSection = (history, summary = {}, options = {}) => {
 };
 
 // ---- Diálogo de detalle ----------------------------------------------------
+// El cierre usa un aspa decorativa (oculta al lector de pantalla, que ya lee
+// «Cerrar») y el botón conserva texto visible: el símbolo sola no basta si el
+// aspa no se ve o se pierde el contraste. Escape cierra por el comportamiento
+// nativo de <dialog>, sin depender de este botón.
 export function openDialog(title, bodyHtml, actionsHtml = '') {
   const dialog = $('#detail-dialog');
-  dialog.innerHTML = `<div class="dialog-head"><h3 id="detail-dialog-title">${escapeText(title)}</h3><button type="button" class="quiet" data-dialog-close>Cerrar</button></div>
+  dialog.innerHTML = `<div class="dialog-head"><h3 id="detail-dialog-title">${escapeText(title)}</h3><button type="button" class="quiet dialog-close" data-dialog-close><span class="dialog-close-mark" aria-hidden="true">✕</span>Cerrar</button></div>
     <div class="dialog-body">${bodyHtml}</div>${actionsHtml ? `<div class="dialog-actions">${actionsHtml}</div>` : ''}`;
   dialog.querySelector('[data-dialog-close]').addEventListener('click', () => dialog.close());
   dialog.showModal();

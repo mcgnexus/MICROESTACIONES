@@ -199,14 +199,19 @@ button:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:760px){.dashboard-station-card>.chart-grid{grid-template-columns:1fr!important;gap:10px}.tecrural-chart-card{padding:13px}.tecrural-chart-card .chart{height:158px}.tecrural-chart-card .chart-current strong{font-size:23px}.tecrural-chart-card .summary span{font-size:10px}}
 
 /* TecRural mobile-first dashboard, using the brand's forest green and sensor cyan. */
-:root{--tr-forest:#17633e;--tr-forest-deep:#123e2e;--tr-cyan:#16a6bf;--tr-cloud:#edf4f3}
+:root{--tr-forest:#17633e;--tr-forest-deep:#123e2e;--tr-cyan:#16a6bf;--tr-cloud:#edf4f3;--topbar-h:72px}
+/* Compensa la cabecera fija en TODO desplazamiento por anclas y scrollIntoView,
+   no solo en las secciones que declaran scroll-margin. El navegador usa este
+   valor al calcular el destino; la altura real la fija app.js en --topbar-h
+   porque la cabecera cambia de alto al plegarse la navegación. */
+html{scroll-padding-top:calc(var(--topbar-h) + 14px)}
 body{background:#edf3f1}
 .topbar{position:sticky;top:0;z-index:30;height:auto;min-height:68px;flex-wrap:wrap;gap:8px 14px;padding:8px max(16px,calc((100% - 1180px)/2));background:rgba(18,62,46,.97);backdrop-filter:blur(12px);box-shadow:0 5px 18px #123e2e18}
 .brand{display:flex;align-items:center;gap:10px;letter-spacing:0}
 .brand img{display:block;width:42px;height:42px;object-fit:contain;padding:2px;border-radius:12px;background:white}
 .brand-copy{font-size:15px;line-height:1.1;letter-spacing:.1em}
 .brand-copy span{font-size:8px;letter-spacing:.12em;color:#9bd7d9;margin-top:4px}
-.topnav{gap:3px;scrollbar-width:none}.topnav::-webkit-scrollbar{display:none}
+.topnav{gap:3px}
 main{max-width:1240px;margin:clamp(18px,3vw,36px) auto;padding:0 clamp(12px,2.2vw,22px)}
 .page-heading{align-items:center;margin-bottom:10px}.page-heading h1{margin-bottom:4px}
 .period-label{margin-bottom:0}
@@ -270,8 +275,8 @@ main{max-width:1240px;margin:clamp(18px,3vw,36px) auto;padding:0 clamp(12px,2.2v
 @media(max-width:760px){
   .topbar{padding:8px 12px;gap:7px 10px}
   .topbar-right{margin-left:auto;gap:6px}.topbar-right .chip{max-width:145px;overflow:hidden;text-overflow:ellipsis}
-  .topnav{order:3;display:flex;width:100%;margin:0;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}
-  .topnav a{flex:0 0 auto;padding:7px 10px;font-size:12px}
+  .topnav{order:3;display:flex;width:100%;margin:0;flex-wrap:wrap;row-gap:4px;justify-content:flex-start}
+  .topnav a{flex:0 0 auto;padding:7px 10px}
   main{margin:17px auto 24px;padding:0 11px 104px}
   .page-heading{align-items:flex-start;flex-direction:column;gap:10px}
   .period-label{max-width:none;width:100%}
@@ -415,7 +420,14 @@ td.row-actions button,td button{font-size:15px}
 .weather-hours>div{font-size:13px}
 .weather-hourly summary{font-size:14px}
 
-/* Fuente accesible: mantiene las cuadrículas dentro del ancho */
+/* Navegación en móvil: los enlaces bajan a 13px y la barra pasa a dos filas en
+   lugar de desplazarse en horizontal. Se declara DESPUÉS de la escala
+   tipográfica global porque, con la misma especificidad, esta gana por orden:
+   antes, los 16px globales anulaban los 12px del bloque móvil y la barra
+   quedaba más ancha que la pantalla, con «Entrar» fuera de vista. */
+@media(max-width:760px){
+  .topnav a{font-size:13px;padding:8px 9px}
+}
 @media(max-width:760px){
   .reading-label{font-size:12px}
   .reading-value strong{font-size:clamp(20px,6vw,24px)}
@@ -475,8 +487,19 @@ td.row-actions button,td button{font-size:15px}
 .detail-dialog::backdrop{background:#08201ab8}
 .dialog-head{background:linear-gradient(110deg,#123e2e,#174f48 58%,#07536b);color:white;border-bottom:0;padding:17px 22px}
 .dialog-head h3{color:white;font-size:20px;letter-spacing:-.02em}
-.dialog-head .quiet{color:#1f6241;background:transparent}
-.dialog-head .quiet:hover{background:#ffffff1f}
+/* Cerrar: texto claro sobre el degradado. Con #1f6241 el contraste era de
+   1,17–1,64:1 según la parada del degradado, muy por debajo del 4,5:1 que pide
+   WCAG AA para texto normal, y por eso costaba localizarlo. En blanco el
+   mínimo es de 8,54:1 (AAA) en la parada más clara; el borde al 75 % llega a
+   5,57:1, por encima del 3:1 que exige el contraste de componentes de interfaz.
+   El botón conserva el tamaño táctil de 44 px y lleva un aspa para que se
+   reconozca como cierre sin leer la etiqueta. El cierre con Escape es el
+   nativo de <dialog> y no depende de este botón. */
+.dialog-head .quiet{color:#fff;background:transparent;border:1px solid #ffffffbf;font-weight:700}
+.dialog-head .quiet:hover{background:#ffffff26;border-color:#fff}
+.dialog-head .quiet:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.dialog-head .dialog-close{display:inline-flex;align-items:center;gap:7px;padding:9px 15px 9px 13px;border-radius:9px}
+.dialog-close-mark{font-size:13px;line-height:1;opacity:.95}
 .dialog-body{padding:18px 20px;max-height:66vh;overflow:auto;background:#edf3f1}
 .detail-block{background:#fff;border:1px solid #dfeae4;border-radius:14px;padding:15px 16px;margin:0 0 14px;box-shadow:0 4px 14px #123e2e08}
 .detail-block:last-child{margin-bottom:0}
@@ -643,7 +666,10 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .tools-preview h3{margin-top:0}
 .access-link{display:inline-flex;align-items:center;justify-content:center;padding:13px 21px;border-radius:10px;background:#1f6241;color:white;font-weight:750;text-decoration:none}
 .access-link:hover{background:#174c32}
-.access-request{scroll-margin-top:18px}
+/* El desplazamiento de esta sección lo regula el scroll-padding-top global
+   (html), que ya descuenta la altura real de la cabecera. Antes declaraba
+   18px aquí, suficientes para nada: la cabecera mide bastante más. */
+.access-request{scroll-margin-top:0}
 .public-forecast{margin-top:16px;padding:15px;border:1px solid #e1e9e2;border-radius:14px;background:#f8faf7}
 .public-forecast h3{font-size:17px}
 .public-metadata{display:grid;gap:2px;margin:12px 0}

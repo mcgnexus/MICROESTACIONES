@@ -59,6 +59,24 @@ const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 if (isIos && !isStandalone) iosInstallHint.classList.remove('hidden');
 
+// La cabecera es fija y su alto cambia: en escritorio cabe en una fila, pero al
+// plegarse la navegación pasa a dos y el aviso de iOS añade otra línea. Se
+// mide en vez de fijar un valor, y se publica como --topbar-h para que el
+// scroll-padding-top global descuente siempre lo que ocupa de verdad.
+const topbarEl = document.querySelector('.topbar');
+function syncTopbarHeight() {
+  if (!topbarEl) return;
+  const height = Math.ceil(topbarEl.getBoundingClientRect().height);
+  if (height > 0) document.documentElement.style.setProperty('--topbar-h', `${height}px`);
+}
+syncTopbarHeight();
+window.addEventListener('resize', syncTopbarHeight);
+// El navegador ya no dispara resize al plegar la navegación, pero el estado de
+// instalación y el aviso de iOS sí cambian el alto: se observa la cabecera.
+if (typeof ResizeObserver === 'function' && topbarEl) {
+  new ResizeObserver(syncTopbarHeight).observe(topbarEl);
+}
+
 // Solo se muestra el botón cuando hay una acción real que ejecutar y ya se ha
 // consultado algo. No se presenta la instalación como un permiso de comunicaciones.
 function offerInstallIfEligible() {

@@ -318,16 +318,19 @@ async function renderResumen(content, stationId) {
         <p class="eyebrow">COBERTURA</p><h2>Integridad de la serie (7 días)</h2></div></div>
         <p class="coverage">Periodo solicitado ${dateText(gaps.requested?.from)} → ${dateText(gaps.requested?.to)} ·
           con datos ${gaps.available?.from ? `${dateText(gaps.available.from)} → ${dateText(gaps.available.to)}` : 'sin datos'} ·
-          denominador desde ${gaps.denominator?.basis === 'installation_date' ? 'la fecha de instalación' : 'la primera medición'} (${dateText(gaps.service?.from)})</p>
+          denominador desde ${gaps.denominator?.basis === 'installation_date' ? 'la fecha de instalación' : 'la primera medición'} (${dateText(gaps.service?.from)})${gaps.truncatedToNow
+            ? ` · <strong>cobertura evaluada hasta el ${dateText(gaps.evaluated?.to)}</strong>, no hasta el final del periodo pedido`
+            : ''}</p>
         <p class="coverage">Recibidas ${gaps.received} · aceptadas ${gaps.valid} · inválidas ${gaps.invalid} ·
           esperadas por tiempo ${gaps.expected ?? '—'} · faltan por tiempo ${gaps.timeMissing ?? '—'} ·
           cobertura de recibidas ${gaps.receivedPct ?? '—'} % · de aceptadas ${gaps.validPct ?? '—'} %</p>
         <p class="coverage">Huecos de secuencia: ${gaps.sequence?.gaps?.length ?? 0} (${gaps.sequence?.total ?? 0} muestras) ·
           reinicios de secuencia: ${gaps.sequence?.resets?.length ?? 0} ·
           ausencia al inicio: ${gaps.leadingMissing ?? 0} · al final: ${gaps.trailingMissing ?? 0}</p>
-        <p class="hint">El denominador son las muestras esperadas entre la puesta en servicio y el final del periodo,
-          con las cadencias que la estación tuvo activas. Los huecos de secuencia son saltos del contador del equipo:
-          no equivalen a las muestras ausentes por tiempo.</p>
+        <p class="hint">El denominador son las muestras esperadas entre la puesta en servicio y el final del periodo
+          evaluado, con las cadencias que la estación tuvo activas. Si el periodo pedido llega más allá de ahora,
+          el futuro no se cuenta: no puede restar fiabilidad a una estación. Los huecos de secuencia son saltos
+          del contador del equipo: no equivalen a las muestras ausentes por tiempo.</p>
         ${gaps.gaps.length ? `<div class="table-wrap"><table><thead><tr><th>Secuencia desde</th><th>Secuencia hasta</th><th>Muestras</th></tr></thead><tbody>${gaps.gaps
           .map((gap) => `<tr><td>${escapeText(gap.gapFrom)}</td><td>${escapeText(gap.gapTo)}</td><td>${escapeText(gap.missing)}</td></tr>`).join('')}</tbody></table></div>`
           : '<p class="empty">No se detectan huecos de secuencia en el periodo.</p>'}

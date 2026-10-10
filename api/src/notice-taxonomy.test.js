@@ -136,9 +136,32 @@ test('an empty list is never read as "no risk" while data or a provider is missi
   assert.match(offline.text, /sin conexión/);
   assert.match(offline.text, /sin mediciones recientes/);
 
+  // Un fallo genérico sin estado por recurso no permite decir cuál falló: se
+  // afirma «contexto externo incompleto», no que la previsión no esté (F06).
   const providerDown = coverageCaveat([fresh({ weather: { stale: true, errors: ['aemet_500'], advisories: [] } })]);
   assert.ok(providerDown, 'proveedor caído = advertencia');
-  assert.match(providerDown.text, /previsión externa no disponible/);
+  assert.match(providerDown.text, /contexto externo incompleto/);
+
+  // Con estados por recurso, cada fallo se nombra por separado: un 429 de la
+  // previsión no puede describirse como si los avisos oficiales tampoco fueran
+  // consultables.
+  const forecastOnlyDown = coverageCaveat([fresh({
+    weather: {
+      advisories: [],
+      aemet: { warnings: [], warningsStatus: 'current', forecastStatus: 'unavailable' },
+    },
+  })]);
+  assert.match(forecastOnlyDown.text, /previsión no disponible/);
+  assert.doesNotMatch(forecastOnlyDown.text, /avisos oficiales no disponibles/);
+
+  const warningsOnlyDown = coverageCaveat([fresh({
+    weather: {
+      advisories: [],
+      aemet: { warnings: [], warningsStatus: 'unavailable', forecastStatus: 'current' },
+    },
+  })]);
+  assert.match(warningsOnlyDown.text, /avisos oficiales no disponibles/);
+  assert.doesNotMatch(warningsOnlyDown.text, /previsión no disponible/);
 
   const noStations = coverageCaveat([]);
   assert.ok(noStations);

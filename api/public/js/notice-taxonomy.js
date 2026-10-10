@@ -282,18 +282,29 @@ export function coverageCaveat(devices = []) {
     return freshness === 'stale' || freshness === 'unknown';
   });
   const noTemperature = devices.filter((item) => (item.device?.sensors ?? item.sensors)?.temperature === false);
-  const weatherDown = devices.filter((item) => item.weather
-    && (item.weather.stale || (item.weather.errors || []).length > 0));
+  // Un fallo de un recurso no equivale a que la fuente entera esté caída: se
+  // cuentan por separado, porque «previsión no disponible» y «avisos oficiales
+  // no disponibles» son afirmaciones distintas sobre la misma pantalla.
+  const statusOf = (item, name) => item.weather?.aemet?.[`${name}Status`];
+  const downOf = (name) => devices.filter((item) => item.weather?.aemet
+    && ['stale', 'unavailable', 'unconfigured'].includes(statusOf(item, name))).length;
+  const forecastDown = downOf('forecast');
+  const warningsDown = downOf('warnings');
+  const noAemet = devices.filter((item) => item.weather
+    && (item.weather.stale || (item.weather.errors || []).length > 0)).length;
 
   if (offline.length) gaps.push(`${offline.length} estación(es) sin conexión`);
   if (withoutData.length) gaps.push(`${withoutData.length} estación(es) sin mediciones recientes`);
   if (noTemperature.length) gaps.push(`${noTemperature.length} estación(es) sin sensor de temperatura`);
-  if (weatherDown.length) gaps.push(`previsión externa no disponible en ${weatherDown.length} estación(es)`);
+  if (forecastDown) gaps.push(`previsión no disponible en ${forecastDown} estación(es)`);
+  if (warningsDown) gaps.push(`avisos oficiales no disponibles en ${warningsDown} estación(es)`);
+  if (!forecastDown && !warningsDown && noAemet) gaps.push(`contexto externo incompleto en ${noAemet} estación(es)`);
+  const anyWeatherGap = forecastDown || warningsDown || noAemet;
   if (!gaps.length) return null;
 
   const measured = `${devices.length - withoutData.length - offline.length} de ${devices.length}`;
   return {
-    tone: offline.length || withoutData.length || weatherDown.length ? 'warn' : 'muted',
+    tone: offline.length || withoutData.length || anyWeatherGap ? 'warn' : 'muted',
     gaps,
     text: `Un listado vacío de avisos no significa que no haya riesgo: hay datos incompletos (${gaps.join('; ')}). `
       + `Solo ${measured} estación(es) están aportando lecturas actuales.`,

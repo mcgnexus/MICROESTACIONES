@@ -21,9 +21,20 @@ const PUBLIC_SECTION_ALIASES = {
 };
 
 // Desplaza la vista a una sección pública de la portada.
+//
+// El encabezado de la sección recibe el foco: al seguir el enlace, el destino
+// solo se anunciaba con el scroll y quien navega con lector de pantalla perdía
+// el contexto de dónde estaba. Se usa preventScroll para que el foco no anule
+// el desplazamiento suave que se pide después.
 export function scrollToPublicSection(section) {
   const target = document.getElementById(PUBLIC_SECTION_ALIASES[section] || section);
-  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!target) return;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  // Se prefiere el encabezado; si la sección no tiene ninguno, se enfoca ella.
+  const heading = target.querySelector('h1, h2') || target;
+  if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+  heading.focus({ preventScroll: true });
+  target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
 }
 
 export function selectUrbanStation(stations = []) {

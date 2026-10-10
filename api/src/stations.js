@@ -195,16 +195,47 @@ router.get('/:id', requireSubscriber, requireStationAccess, async (req, res) => 
   });
 });
 
+// Recorta el rango pedido al servicio ya transcurrido. Un filtro de mes abre
+// todo el mes natural, así que a día 9 el denominador incluía tres semanas que
+// no han pasado y la estación salía como poco fiable por el futuro. El rango
+// pedido sigue siendo el filtro de REGISTROS; este es el que se evalúa.
+export function evaluatedRange(requestedFrom, requestedTo, now = new Date()) {
+  const from = new Date(requestedFrom);
+  const to = new Date(requestedTo);
+  const reference = new Date(now);
+  const evaluatedToMs = Math.min(to.getTime(), reference.getTime());
+  const evaluatedFromMs = Math.min(from.getTime(), evaluatedToMs);
+  const truncatedToNow = evaluatedToMs < to.getTime();
+  return {
+    requested: { from: from.toISOString(), to: to.toISOString() },
+    evaluated: { from: new Date(evaluatedFromMs).toISOString(), to: new Date(evaluatedToMs).toISOString() },
+    truncatedToNow,
+    // Sin tiempo transcurrido no hay nada que evaluar (rango enteramente futuro).
+    hasElapsed: evaluatedToMs > from.getTime(),
+  };
+}
+
 // Integridad de la serie: separa lo que falta por tiempo (esperadas menos
 // recibidas) de los huecos de secuencia del equipo. El denominador usa la vida
 // útil de la estación y las cadencias efectivas, no solo el intervalo actual.
+//
+// El rango solicitado se conserva como filtro de REGISTROS, pero la cobertura se
+// evalúa solo hasta el momento actual (F07). Ambos periodos se devuelven por
+// separado para que la interfaz diga cuál está mostrando.
 router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, async (req, res) => {
-  const to = req.query.to ? new Date(String(req.query.to)) : new Date();
+  const now = new Date();
+  const to = req.query.to ? new Date(String(req.query.to)) : now;
   const from = req.query.from
     ? new Date(String(req.query.from))
     : new Date(to.getTime() - 7 * 24 * 3600 * 1000);
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ error: 'invalid_range' });
   if (from >= to) return res.status(400).json({ error: 'invalid_range' });
+  const range = evaluatedRange(from, to, now);
+  const evaluatedTo = new Date(range.evaluated.to);
+  const evaluatedFromIso = range.evaluated.from;
+  const evaluatedToIso = range.evaluated.to;
+  const hasElapsed = range.hasElapsed;
+  const isPartialMonth = range.truncatedToNow;
 
   const [configRow] = await sql`SELECT config FROM device_configs WHERE device_id = ${req.stationId}`;
   const [station] = await sql`SELECT to_char(installation_date, 'YYYY-MM-DD') AS installation_date
@@ -214,11 +245,11 @@ router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, as
       count(*) FILTER (WHERE NOT is_validated)::integer AS invalid,
       min(observed_at) AS first, max(observed_at) AS last
     FROM measurements
-    WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${to}
+    WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${evaluatedTo}
       AND deleted_at IS NULL`;
   // La secuencia se lee en orden temporal para no confundir un reinicio con un hueco.
   const points = await sql`SELECT sequence, observed_at FROM measurements
-    WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${to}
+    WHERE device_id = ${req.stationId} AND observed_at >= ${from} AND observed_at < ${evaluatedTo}
       AND deleted_at IS NULL
     ORDER BY observed_at ASC, sequence ASC`;
   const versions = await sql`SELECT config, coalesce(applied_at, created_at) AS effective_at
@@ -231,37 +262,55 @@ router.get('/:id/measurements/gaps', requireSubscriber, requireStationAccess, as
   const lastMs = counts.last ? new Date(counts.last).getTime() : null;
   const basis = installationMs != null ? 'installation_date' : 'first_measurement';
   const serviceStartMs = installationMs ?? firstMs;
-  const serviceFromMs = serviceStartMs != null ? Math.max(from.getTime(), serviceStartMs) : from.getTime();
+  // El servicio empieza como muy tarde en el inicio del periodo evaluado, no en
+  // el del rango pedido: si el filtro empieza antes que la estación, ese tramo
+  // anterior no es responsabilidad de este equipo.
+  const serviceFromMs = Math.min(evaluatedTo.getTime(), serviceStartMs != null
+    ? Math.max(new Date(evaluatedFromIso).getTime(), serviceStartMs)
+    : new Date(evaluatedFromIso).getTime());
   const serviceFromIso = new Date(serviceFromMs).toISOString();
-  const segments = intervalSegments({
+  const segments = hasElapsed ? intervalSegments({
     versions: versions.map((version) => ({
       at: version.effectiveAt, intervalSeconds: version.config?.interval_normal_s,
     })),
     currentIntervalSeconds: currentInterval,
     from: serviceFromIso,
-    to: to.toISOString(),
+    to: evaluatedToIso,
     defaultIntervalSeconds: CONFIG_DEFAULTS.interval_normal_s,
-  });
-  const report = coverageReport({
+  }) : [];
+  const report = hasElapsed ? coverageReport({
     received: counts.received, valid: counts.valid, invalid: counts.invalid,
-    intervalSeconds: currentInterval, from: from.toISOString(), to: to.toISOString(),
+    intervalSeconds: currentInterval, from: evaluatedFromIso, to: evaluatedToIso,
     serviceFrom: serviceFromIso, segments,
+  }) : coverageReport({
+    received: counts.received, valid: counts.valid, invalid: counts.invalid,
+    intervalSeconds: currentInterval, from: evaluatedFromIso, to: evaluatedFromIso, segments: [],
   });
   const sequence = sequenceIntegrity(points.map((point) => ({ at: point.observedAt, sequence: point.sequence })));
   const leadingMissing = firstMs != null && firstMs > serviceFromMs
     ? expectedBetween(segments, serviceFromIso, new Date(firstMs).toISOString()) : 0;
-  const trailingMissing = lastMs != null && lastMs < to.getTime()
-    ? expectedBetween(segments, new Date(lastMs).toISOString(), to.toISOString()) : 0;
+  // El arrastre se mide contra el fin del periodo EVALUADO: hacia delante solo
+  // puede haber huecos dentro del servicio ya transcurrido, nunca días futuros.
+  const trailingMissing = lastMs != null && lastMs < evaluatedTo.getTime()
+    ? expectedBetween(segments, new Date(lastMs).toISOString(), evaluatedToIso) : 0;
 
   res.json({
+    // Rango pedido: qué registros se han filtrado.
     requested: { from: from.toISOString(), to: to.toISOString() },
+    // Rango evaluado: sobre el que se calcula la cobertura. Coincide con el
+    // pedido cuando este ya está en pasado; si no, se corta en «ahora».
+    evaluated: { from: evaluatedFromIso, to: evaluatedToIso },
+    truncatedToNow: isPartialMonth,
     available: { from: counts.first ?? null, to: counts.last ?? null },
-    service: { from: serviceFromIso, to: to.toISOString() },
+    service: { from: serviceFromIso, to: evaluatedToIso },
     denominator: { basis, intervalSeconds: currentInterval, segments },
-    // Campos heredados: from/to, intervalSeconds, missing y coveragePct siguen
-    // disponibles para no romper consumidores antiguos.
+    // Campos heredados: missing y coveragePct ya no cuentan tiempo futuro, así que
+    // son seguros para consumidores antiguos. `from`/`to` conservan el rango
+    // PEDIDO (el filtro), para no cambiar lo que devuelve la tabla de registros.
     from: from.toISOString(),
     to: to.toISOString(),
+    evaluatedFrom: evaluatedFromIso,
+    evaluatedTo: evaluatedToIso,
     intervalSeconds: currentInterval,
     received: counts.received,
     valid: counts.valid,

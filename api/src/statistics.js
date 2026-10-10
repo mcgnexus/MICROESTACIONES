@@ -213,6 +213,9 @@ export function expectedSamples({ from, to, intervalSeconds }) {
   const interval = Number(intervalSeconds) || 0;
   if (!interval) return null;
   const spanSeconds = Math.max(0, (new Date(to).getTime() - new Date(from).getTime()) / 1000);
+  // Un tramo sin duración no tiene ninguna muestra esperada: forzar una
+  // produciría «falta 1» y 0 % de cobertura para un periodo vacío (F07).
+  if (spanSeconds <= 0) return null;
   return Math.max(1, Math.floor(spanSeconds / interval));
 }
 

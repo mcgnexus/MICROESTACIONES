@@ -5,7 +5,7 @@ import {
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
 import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
-import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison } from './farm-cards.js';
+import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison, resourceNote } from './farm-cards.js';
 import { coverageCaveat, caveatBlock } from './alert-copy.js';
 import { classifyNotice } from './notice-taxonomy.js';
 import {
@@ -500,12 +500,19 @@ function weatherBlock(weather, detailKey) {
   });
   const advisoriesBlock = advisories.length ? `<div class="weather-alert-group"><h4>Riesgos orientativos · ${aemetHasForecast ? 'AEMET' : 'Open-Meteo'}</h4>${advisories.map((notice) => `<article class="weather-alert advisory"><strong>${escapeText(notice.text)}</strong><span>${dayText(`${notice.date}T12:00:00`)}</span></article>`).join('')}<p class="hint">Indicadores preventivos con umbrales generales; no son avisos oficiales ni sustituyen umbrales específicos del cultivo o ganado.</p></div>` : '';
   const missing = weather.aemetMissing || [];
-  const errors = [...new Set(weather.errors || [])];
+  // El error crudo («AEMET previsión municipal: 429») no dice qué se conserva ni
+  // qué recurso sigue válido: se traduce al estado de cada recurso, separando
+  // «no se pudo actualizar» de «no hay nada» (F06).
+  const sourceNotes = [
+    resourceNote(weather, 'forecast', 'la previsión'),
+    resourceNote(weather, 'warnings', 'los avisos oficiales'),
+    resourceNote(weather, 'observation', 'la observación de la estación'),
+  ].filter(Boolean);
   const notices = [
     missing.length ? `AEMET incompleto: falta ${missing.map(escapeText).join(', ')}. Completa esos datos en la ficha de estación; la API key se configura de forma privada en el servidor.` : null,
-    ...errors,
+    ...sourceNotes,
   ].filter(Boolean);
-  const noticeBlock = notices.length ? `<p class="hint">${notices.join(' ')}</p>` : '';
+  const noticeBlock = notices.length ? `<p class="hint">${notices.map(escapeText).join(' ')}</p>` : '';
   if (!currentBlock && !openForecast && !aemetForecast && !officialAlerts && !advisoriesBlock && !noticeBlock) return '';
   return `<section class="weather-panel"><div class="weather-heading"><div><p class="eyebrow">CONTEXTO EXTERNO · ${escapeText(weather.location)}</p><h3>Tiempo en la localidad</h3></div><span class="badge badge-muted">Fuentes externas, separadas de las mediciones</span></div>
     ${currentBlock}${aemetHasForecast ? aemetForecast : openForecast}${officialAlerts}${advisoriesBlock}${noticeBlock}

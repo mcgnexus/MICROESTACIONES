@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessFrost, assessHeat, assessStorm, assessConnectivity, assessStation,
-  renderStateCards, nextRisk, zoneComparison, renderZoneComparison, sinceText,
+  renderStateCards, nextRisk, zoneComparison, renderZoneComparison, sinceText, resourceNote,
 } from '../public/js/farm-cards.js';
 
 const item = (over = {}) => ({
@@ -34,6 +34,123 @@ test('storm risk reports official warnings and estimated risk, never local detec
   assert.equal(assessStorm(warning).tone, 'alert');
   const estimate = item({ weather: { advisories: [{ kind: 'lluvia', text: 'Posible lluvia intensa', date: '2026-01-02' }], aemet: { warnings: [] } } });
   assert.equal(assessStorm(estimate).tone, 'warn');
+});
+
+test('a forecast failure does not claim the official warnings are unavailable too', () => {
+  // El caso reportado: un 429 al pedir la previsión municipal mientras los
+  // avisos oficiales sí se consultaron. Antes la tarjeta decía que «la previsión
+  // externa y los avisos oficiales no se pueden consultar», contradiciendo el
+  // «Sin avisos vigentes» con fecha que se mostraba debajo.
+  const forecast429 = item({
+    weather: {
+      advisories: [],
+      errors: ['AEMET previsión municipal: 429'],
+      aemet: {
+        warnings: [],
+        warningsStatus: 'current',
+        warningsFetchedAt: '2026-01-01T22:29:00Z',
+        forecastStatus: 'unavailable',
+      },
+    },
+  });
+  const storm = assessStorm(forecast429);
+  assert.notEqual(storm.meaning, 'sin avisos');
+  // La previsión es lo que falla, y eso es lo único que se afirma.
+  assert.match(storm.meaning, /previsión/i);
+  // No se arrastra al otro recurso.
+  assert.doesNotMatch(storm.meaning, /los avisos oficiales no se pueden consultar/);
+  // Y se dice que los avisos sí se consultaron: eso ya es un dato.
+  assert.match(storm.meaning, /Los avisos oficiales sí se consultaron/);
+  assert.match(storm.meaning, /no consta ninguno vigente/);
+});
+
+test('a warnings failure is reported as such, without blaming the forecast', () => {
+  const warningsDown = item({
+    weather: {
+      advisories: [],
+      aemet: { warnings: [], warningsStatus: 'unavailable', forecastStatus: 'current' },
+    },
+  });
+  const storm = assessStorm(warningsDown);
+  assert.match(storm.meaning, /avisos oficiales/);
+  assert.match(storm.meaning, /La previsión sí se consultó/);
+});
+
+test('stored data is shown as such instead of a bare unavailability', () => {
+  // Mensaje pedido en F06: distinguir «no se pudo actualizar» de «no hay nada».
+  const stale = item({
+    weather: {
+      advisories: [],
+      aemet: {
+        warnings: [],
+        warningsStatus: 'current',
+        forecastStatus: 'stale',
+        forecastFetchedAt: '2026-01-01T22:29:00Z',
+      },
+    },
+  });
+  const storm = assessStorm(stale);
+  assert.match(storm.meaning, /No se pudo actualizar la previsión/);
+  assert.match(storm.meaning, /Mostramos la última consulta/);
+  // Conserva la hora de la última consulta utilizable.
+  assert.match(storm.meaning, /\d{1,2}:\d{2}/);
+  assert.equal(storm.value, 'consulta parcial');
+});
+
+test('when no source is consultable the card says so and does not claim all-clear', () => {
+  const nothing = item({
+    weather: {
+      advisories: [],
+      aemet: { warnings: [], warningsStatus: 'unavailable', forecastStatus: 'unavailable' },
+    },
+  });
+  const storm = assessStorm(nothing);
+  assert.equal(storm.value, 'fuente no disponible');
+  assert.match(storm.meaning, /no se afirma que no haya tormenta/i);
+});
+
+test('an empty but current warnings response is a result, not a failure', () => {
+  // Sin errores y con la consulta al día: AEMET respondió que no hay avisos.
+  const current = item({
+    weather: {
+      advisories: [],
+      aemet: { warnings: [], warningsStatus: 'current', forecastStatus: 'current' },
+    },
+  });
+  const storm = assessStorm(current);
+  assert.equal(storm.value, 'sin avisos');
+  assert.match(storm.meaning, /Sin avisos oficiales/);
+});
+
+test('resource notes name the resource and keep the hour of the stored query', () => {
+  // Es lo que consume el bloque de contexto del panel en lugar del error crudo.
+  const staleForecast = item({
+    weather: {
+      advisories: [],
+      aemet: {
+        warnings: [],
+        warningsStatus: 'current',
+        forecastStatus: 'stale',
+        forecastFetchedAt: '2026-01-01T22:29:00Z',
+      },
+    },
+  });
+  const note = resourceNote(staleForecast, 'forecast', 'la previsión');
+  assert.match(note, /No se pudo actualizar la previsión/);
+  assert.match(note, /Mostramos la última consulta/);
+  assert.match(note, /\d{1,2}:\d{2}/);
+
+  // Sin previsión ni estado, el recurso no está: eso sí se dice, con nombre.
+  assert.equal(resourceNote(item(), 'forecast', 'la previsión'), 'No se pudo consultar la previsión.');
+  // Consultados y vacíos no generan nota: no hay nada que avisar.
+  const currentEmpty = item({ weather: { advisories: [], aemet: { warnings: [], warningsStatus: 'current' } } });
+  assert.equal(resourceNote(currentEmpty, 'warnings', 'los avisos oficiales'), '');
+  // Vacíos pero SIN estado sí es «no consultado»: no se presume que estén vacíos.
+  assert.equal(resourceNote(item(), 'warnings', 'los avisos oficiales'), 'No se pudo consultar los avisos oficiales.');
+
+  // Acepta el bloque weather suelto (como lo pasa el detalle del panel).
+  const loose = resourceNote(staleForecast.weather, 'forecast', 'la previsión');
+  assert.equal(loose, note);
 });
 
 test('connectivity and station state map to advice', () => {

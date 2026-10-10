@@ -6,6 +6,27 @@ import {
 // Tabla de mediciones reutilizable: filtros por rango, estación y validación,
 // con trazo completo (hora observada vs. recepción), insignias de estado y
 // acciones de revisión manual sin perder la fila original.
+// La cobertura se mide sobre el servicio transcurrido, no sobre el rango
+// pedido: un mes a día 9 no puede contar como fallo las semanas que aún no
+// han ocurrido. Cuando el filtro abarca el futuro se dicen las dos cosas:
+// qué registros se han pedido y sobre qué periodo se ha evaluado (F07).
+function coverageScopeNote(gaps) {
+  if (!gaps?.evaluated || !gaps.truncatedToNow) return '';
+  const evaluated = new Date(gaps.evaluated.to);
+  const requested = new Date(gaps.requested?.to || gaps.to);
+  return ` · cobertura hasta ahora (hasta el ${evaluated.toLocaleDateString('es-ES')})`
+    + ` · el rango pedido llega al ${requested.toLocaleDateString('es-ES')}; ese futuro no resta fiabilidad`;
+}
+
+function gapsSummary(gaps) {
+  if (!gaps) return '';
+  return ` · faltan por tiempo: ${gaps.timeMissing ?? '—'}`
+    + ` · huecos de secuencia: ${gaps.sequence?.gaps?.length ?? 0} (${gaps.sequence?.total ?? 0} muestras)`
+    + ` · reinicios de secuencia: ${gaps.sequence?.resets?.length ?? 0}`
+    + ` · cobertura de recibidas ${gaps.receivedPct ?? '—'} %`
+    + coverageScopeNote(gaps);
+}
+
 export function mountMeasurements(root, { stations = [], fixedStation = null } = {}) {
   const editable = canEdit();
   const deviceOptions = stations.length
@@ -140,9 +161,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
       $('[data-rows]', root).innerHTML = state.rows.map(renderRow).join('')
         || '<tr><td colspan="12">No hay mediciones en este periodo.</td></tr>';
       if (resetPage || state.gaps === null) await loadGaps(from, to);
-      const gapsInfo = state.gaps
-        ? ` · faltan por tiempo: ${state.gaps.timeMissing ?? '—'} · huecos de secuencia: ${state.gaps.sequence?.gaps?.length ?? 0} (${state.gaps.sequence?.total ?? 0} muestras) · reinicios de secuencia: ${state.gaps.sequence?.resets?.length ?? 0} · cobertura de recibidas ${state.gaps.receivedPct ?? '—'} %`
-        : '';
+      const gapsInfo = gapsSummary(state.gaps);
       const first = state.total ? state.page * state.pageSize + 1 : 0;
       const last = Math.min((state.page + 1) * state.pageSize, state.total);
       $('[data-summary]', root).textContent =

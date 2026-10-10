@@ -81,3 +81,29 @@ test('las secciones públicas se apilan en una columna en móvil', async () => {
     assert.ok(block, `${selector} debe pasar a una columna en móvil`);
   }
 });
+
+test('el menú móvil no depende de descubrir un desplazamiento horizontal', async () => {
+  const css = await read('app.css');
+  const mobileNav = css.split('@media(max-width:760px){')
+    .find((part) => part.includes('.topnav{order:3'));
+  assert.ok(mobileNav, 'no se encuentra el bloque móvil de la navegación');
+  // El acceso tiene que estar en la pantalla sin que haya que arrastrar la
+  // barra hacia un lado para descubrirlo.
+  assert.match(mobileNav, /\.topnav\{[^}]*flex-wrap:wrap/);
+  assert.doesNotMatch(mobileNav, /overflow-x:auto/);
+  assert.doesNotMatch(mobileNav, /flex-wrap:nowrap/);
+  // Y tampoco se oculta la barra de scroll: ya no hay nada que desplazarse, y
+  // el gesto deja de ser la única forma de llegar a «Entrar».
+  assert.doesNotMatch(css, /\.topnav\{[^}]*scrollbar-width:none/);
+});
+
+test('el tamaño móvil de los enlaces no lo anula la escala tipográfica global', async () => {
+  const css = await read('app.css');
+  const globalScale = css.indexOf('.topnav a{font-size:16px}');
+  const mobile = [...css.matchAll(/@media\(max-width:760px\)\{\s*\.topnav a\{font-size:(\d+)px/g)]
+    .find((match) => match.index > globalScale);
+  // Con la misma especificidad gana el último que aparece: si la regla móvil
+  // quedara antes, los 16px globales la borrarían y la barra se saldría.
+  assert.ok(mobile, 'falta una regla móvil de .topnav a posterior a la escala global');
+  assert.equal(mobile[1], '13');
+});

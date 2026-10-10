@@ -25,13 +25,76 @@ function forecastProvider(item) {
   return null;
 }
 
-// ¿La fuente externa está consultable? Si no, "sin avisos" no cubre nada.
+// ---- Disponibilidad por recurso --------------------------------------------
+// Observación, previsión y avisos oficiales se consultan por separado y el
+// servidor publica un estado propio para cada uno (observationStatus,
+// forecastStatus, warningsStatus). Una sola bandera «fuente no disponible» los
+// confundía: un 429 al pedir la previsión municipal hacía que la tarjeta de
+// tormenta afirmara que tampoco podían consultarse los avisos oficiales, que en
+// esa misma pantalla se mostraban con su fecha. Un fallo de una fuente no dice
+// nada de las otras.
+
+const STATUS_UNAVAILABLE = ['stale', 'unavailable', 'unconfigured'];
+
+// Estado de un recurso: 'ok' | 'stale' (datos guardados de una consulta previa)
+// Acepta el elemento del panel (con .weather) o el bloque weather suelto, para
+// que el detalle de la estación use el mismo criterio sin duplicarlo.
+const aemetOf = (source) => (source?.aemet ? source.aemet : source?.weather?.aemet);
+
+// | 'unavailable' (no hay nada) | 'unconfigured' (nunca se configuró) | null.
+function resourceStatus(item, name) {
+  const status = aemetOf(item)?.[`${name}Status`];
+  if (status && STATUS_UNAVAILABLE.includes(status)) return status;
+  if (status === 'current' || status === 'empty') return 'ok';
+  // Sin estado explícito se cae a lo que hay: si hay datos, están guardados.
+  const hasData = name === 'warnings'
+    ? Boolean(aemetOf(item)?.warnings?.length || aemetOf(item)?.warningsFetchedAt)
+    : Boolean(aemetOf(item)?.[name]);
+  return hasData ? 'stale' : 'unavailable';
+}
+
+// ¿Se pudo consultar este recurso? 'stale' sí: hay datos, solo que viejos.
+export const isConsultable = (status) => status === 'ok' || status === 'stale';
+
+// Fecha de la última consulta correcta del recurso, para decir «última consulta
+// de las 22:29» en vez de un «no disponible» sin contexto.
+function resourceFetchedAt(item, name) {
+  return aemetOf(item)?.[`${name}FetchedAt`] || null;
+}
+
+// Resume el estado de un recurso para la interfaz, separando «no hay nada» de
+// «no se pudo actualizar pero se conserva lo anterior».
+export function resourceNote(item, name, label) {
+  const status = resourceStatus(item, name);
+  const fetchedAt = resourceFetchedAt(item, name);
+  if (status === 'stale') {
+    const when = fetchedAt ? ` de las ${new Date(fetchedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` : '';
+    return `No se pudo actualizar ${label}. Mostramos la última consulta${when}.`;
+  }
+  if (status === 'unconfigured') return `${label} no está configurado para esta zona.`;
+  if (status === 'unavailable') return `No se pudo consultar ${label}.`;
+  return '';
+}
+
+// Estado de previsión y avisos, que es lo que necesita la tarjeta de tormenta.
+export function stormSourceState(item) {
+  const forecast = resourceStatus(item, 'forecast');
+  const warnings = resourceStatus(item, 'warnings');
+  return {
+    forecast,
+    warnings,
+    // Solo si AMBOS recursos son inconsultables se afirma que no hay fuente.
+    anyConsultable: isConsultable(forecast) || isConsultable(warnings),
+    forecastNote: resourceNote(item, 'forecast', 'la previsión'),
+    warningsNote: resourceNote(item, 'warnings', 'los avisos oficiales'),
+  };
+}
+
+// ¿Se pudo consultar AEMET para avisos oficiales? No afirma que no haya avisos:
+// si la consulta se completó sin resultados, es que no los hay.
 function forecastUnavailable(item) {
-  const weather = item.weather;
-  if (!weather) return false;
-  return Boolean(weather.stale)
-    || (weather.errors || []).length > 0
-    || ['stale', 'unavailable', 'unconfigured'].includes(weather.aemet?.warningsStatus);
+  const { anyConsultable } = stormSourceState(item);
+  return Boolean(item.weather) && !anyConsultable;
 }
 
 // "hace X" a partir de una marca de tiempo.
@@ -162,11 +225,24 @@ export function assessStorm(item) {
     return { tone: 'warn', value: 'riesgo estimado', since: advisoryNotice.date, nature: 'calculado',
       meaning: advisoryNotice.text, action: 'Revisa la previsión antes de planificar el trabajo.' };
   }
-  // Sin fuente consultable no se afirma que no haya tormenta.
-  if (forecastUnavailable(item)) {
-    return { tone: 'muted', value: 'fuente no disponible', since: item.weather?.aemet?.warningsFetchedAt || null,
-      meaning: 'La previsión externa y los avisos oficiales no se pueden consultar ahora mismo: no se afirma que no haya tormenta.',
-      action: 'Vuelve a comprobarlo cuando la fuente vuelva, o consulta la previsión oficial directamente.' };
+  // Sin fuente consultable no se afirma que no haya tormenta, pero se precisa
+  // cuál de los dos recursos falla: si los avisos oficiales sí se consultaron y
+  // volvieron vacíos, eso ya es un dato, no una duda.
+  const { forecast, warnings, forecastNote, warningsNote } = stormSourceState(item);
+  const down = [forecastNote, warningsNote].filter(Boolean);
+  if (down.length) {
+    const other = isConsultable(warnings)
+      ? 'Los avisos oficiales sí se consultaron: no consta ninguno vigente.'
+      : isConsultable(forecast)
+        ? 'La previsión sí se consultó: no consta riesgo estimado de tormenta.'
+        : 'No se afirma que no haya tormenta.';
+    return {
+      tone: 'muted',
+      value: forecastUnavailable(item) ? 'fuente no disponible' : 'consulta parcial',
+      since: resourceFetchedAt(item, 'warnings') || resourceFetchedAt(item, 'forecast'),
+      meaning: `${down.join(' ')} ${other}`,
+      action: 'Vuelve a comprobarlo cuando la fuente vuelva, o consulta la previsión oficial directamente.',
+    };
   }
   return { tone: 'muted', value: 'sin avisos', since: null,
     meaning: 'Sin avisos oficiales ni riesgo estimado de tormenta en las fuentes consultadas.',
