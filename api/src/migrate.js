@@ -414,6 +414,9 @@ const upgrades = [
    EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
 
   `CREATE INDEX IF NOT EXISTS measurements_validated_idx ON measurements(device_id, observed_at DESC) WHERE is_validated = true`,
+  // Cubre la lectura más reciente y la ventana de 24 h de la web pública y la
+  // comparación AEMET: mismas condiciones (validada y no borrada) y orden.
+  `CREATE INDEX IF NOT EXISTS measurements_latest_idx ON measurements(device_id, observed_at DESC) WHERE is_validated = true AND deleted_at IS NULL`,
   `CREATE INDEX IF NOT EXISTS measurements_deleted_idx ON measurements(deleted_at) WHERE deleted_at IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS subscribers_role_idx ON subscribers(role)`,
   `CREATE INDEX IF NOT EXISTS alerts_delivery_idx ON alerts(delivery_status) WHERE delivery_status <> 'delivered'`,

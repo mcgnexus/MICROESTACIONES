@@ -1,13 +1,11 @@
-// Build del frontal: minifica el shell y firma los assets con hash de
-// contenido, para poder servirlos con caché inmutable sin riesgo de
-// versiones mezcladas. Genera public/dist/:
+// Build del frontal: minifica el shell y firma el JS con hash de contenido,
+// para poder servirlo con caché inmutable sin riesgo de versiones mezcladas.
+// Genera public/dist/:
 //   dist/assets/app-<hash>.js  (+ chunks de los import() dinámicos)
-//   dist/assets/app-<hash>.css
-//   dist/index.html            (referencias reescritas; conserva los
-//                               marcadores __SITE_URL__ para el servidor)
+//   dist/index.html            (JS referenciado con hash, CSS incrustado;
+//                               conserva los marcadores __SITE_URL__)
 // Sin dist (desarrollo), el servidor sirve public/ tal cual.
 import { build } from 'esbuild';
-import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -52,7 +50,10 @@ const preloadLinks = [...new Set(preloaded)]
   .map((href) => `<link rel="modulepreload" href="${href}">`)
   .join('\n  ');
 
-// CSS: minificado y firmado con el hash de su contenido minificado.
+// CSS: minificado e incrustado en el HTML en lugar de servirse como hoja aparte.
+// Quita la hoja que bloqueaba el render y garantiza que la tarjeta SSR —dibujada
+// con estas mismas reglas— aparezca ya maquetada en el primer pintado. Las
+// páginas estáticas (privacidad, cookies, 404…) siguen usando /app.css fuente.
 const cssSource = await readFile(join(publicDir, 'app.css'), 'utf8');
 const cssBuild = await build({
   stdin: { contents: cssSource, loader: 'css', resolveDir: publicDir },
@@ -60,16 +61,15 @@ const cssBuild = await build({
   write: false,
 });
 const cssMin = cssBuild.outputFiles[0].text;
-const cssHash = createHash('sha1').update(cssMin).digest('hex').slice(0, 12);
-const cssUrl = `/dist/assets/app-${cssHash}.css`;
-await writeFile(join(assetsDir, cssUrl.split('/').pop()), cssMin);
 
-// HTML: reescribe las referencias del shell a los assets firmados. El fuente
-// vive en views/; el resultado va a public/dist para que el servidor (y el
-// estático de Vercel, si lo alcanza) sirvan las URLs con hash.
+// HTML: reescribe el shell, incrusta el CSS y anuncia los assets del entry. El
+// fuente vive en views/; el resultado va a public/dist para que el servidor
+// sirva el HTML con el JS firmado y el JS con sus chunks anunciados.
 const html = await readFile(join(rootDir, 'views', 'index.html'), 'utf8');
+const CSS_LINK = '<link rel="stylesheet" href="/app.css">';
+if (!html.includes(CSS_LINK)) throw new Error('No se encontró la hoja de estilos en index.html');
 const rewritten = html
-  .replace('href="/app.css"', `href="${cssUrl}"`)
+  .replace(CSS_LINK, `<style>${cssMin}</style>`)
   .replace('src="/app.js"', `src="${jsUrl}"`)
   .replace('</head>', `  ${preloadLinks}\n</head>`);
 if (rewritten === html) throw new Error('No se han reescrito las referencias de index.html');
@@ -77,4 +77,4 @@ await writeFile(join(distDir, 'index.html'), rewritten);
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 const totalJs = Object.values(js.metafile.outputs).reduce((sum, meta) => sum + meta.bytes, 0);
-console.log(`build: ${jsUrl} + ${Object.keys(js.metafile.outputs).length - 1} chunk(s) · JS ${kb(totalJs)} · CSS ${kb(cssMin.length)} → ${cssUrl}`);
+console.log(`build: ${jsUrl} + ${Object.keys(js.metafile.outputs).length - 1} chunk(s) · JS ${kb(totalJs)} · CSS inline ${kb(cssMin.length)}`);
