@@ -12,7 +12,9 @@ const round = (value, digits) => (value == null ? null : Number(Number(value).to
 // Solo estaciones activas que han autorizado compartir sus datos.
 const PUBLIC_WHERE = sql`d.active = true AND d.publish_permission = true`;
 
-router.get('/stations', async (_req, res) => {
+// Estaciones públicas con su última lectura y su contexto externo. Lo usan la
+// ruta /stations y el render en servidor de la portada, para no duplicar consulta.
+export async function loadPublicStations() {
   const rows = await sql`SELECT d.id, d.name, d.location_type, d.public_zone, d.altitude, d.latitude, d.longitude,
       d.aemet_municipality_code, d.aemet_station_id, d.aemet_warning_area, c.config,
       ds.connectivity, ds.last_contact, ds.last_valid_data,
@@ -108,6 +110,11 @@ router.get('/stations', async (_req, res) => {
       weatherErrors: weather?.errors ?? [],
     };
   }));
+  return stations;
+}
+
+router.get('/stations', async (_req, res) => {
+  const stations = await loadPublicStations();
   // Datos públicos, no personalizados: la ventana de refresco real es de ~30 min,
   // así que 60 s de caché en el CDN y en el navegador ahorran recalcular en cada
   // visita sin falsear la antigüedad (que se deriva de la hora del propio dato).

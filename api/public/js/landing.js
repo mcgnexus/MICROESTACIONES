@@ -212,6 +212,22 @@ const settle = (el) => {
   return el;
 };
 
+// HTML de las tres piezas públicas a partir de las estaciones autorizadas. Lo
+// comparten el cliente (al cargar, tras la API) y el servidor (primer pintado
+// sin JS): una sola definición evita que el HTML servido y el del cliente
+// diverjan. Si no hay estación urbana, devuelve los estados vacíos.
+export function renderPublicWeather(stations = []) {
+  const station = selectUrbanStation(stations);
+  return {
+    card: renderLocalWeatherCard(station),
+    comparison: station
+      ? renderPublicZones([station])
+      : '<p class="public-state-card tone-muted">Aún no hay una estación urbana con permiso de publicación. La comparación con AEMET aparecerá cuando haya observaciones reales.</p>',
+    evolution: renderDayHistory(station),
+    observedAt: station ? (station.temperatureObservedAt || station.humidityObservedAt || null) : null,
+  };
+}
+
 // Carga únicamente observaciones autorizadas y publica estados claros si no
 // llegan datos. Los refrescos periódicos pasan `focus: false` para no mover
 // el scroll ni el foco de quien está leyendo.
@@ -222,18 +238,16 @@ export async function loadPublicWeather(root = document, { focus = true } = {}) 
   publicWeatherInFlight = true;
   try {
     const { stations } = await api('/api/v1/public/stations');
-    const station = selectUrbanStation(stations);
+    const parts = renderPublicWeather(stations);
     settle(root.querySelector('#local-weather-state')).innerHTML = '';
-    root.querySelector('#local-weather-card').innerHTML = renderLocalWeatherCard(station);
+    root.querySelector('#local-weather-card').innerHTML = parts.card;
     // Solo en la carga inicial y solo si se abre en la portada: en otras
     // secciones públicas el scroll lo manda la ruta y no se le disputa.
     if (focus && (!location.hash || location.hash === '#' || location.hash === '#/')) {
       focusWeatherCard(root.querySelector('#local-weather-card'));
     }
-    settle(root.querySelector('#public-comparison')).innerHTML = station
-      ? renderPublicZones([station])
-      : '<p class="public-state-card tone-muted">Aún no hay una estación urbana con permiso de publicación. La comparación con AEMET aparecerá cuando haya observaciones reales.</p>';
-    settle(root.querySelector('#public-evolution')).innerHTML = renderDayHistory(station);
+    settle(root.querySelector('#public-comparison')).innerHTML = parts.comparison;
+    settle(root.querySelector('#public-evolution')).innerHTML = parts.evolution;
     // Señal para que la app ofrezca instalar la PWA después de consultar datos.
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('tecrural:data-loaded'));
   } catch {
@@ -256,7 +270,9 @@ export function initLanding() {
     mountFarmSimulation(simMount);
   }
   mountLeadForms();
-  loadPublicWeather();
+  // Si el servidor ya pintó la lectura (SSR), no se vuelve a pedir de inmediato:
+  // el refresco periódico se encarga. Sin SSR, se carga como antes.
+  if (!document.querySelector('#local-weather-card[data-public-ready]')) loadPublicWeather();
   initLandingRefresh();
 }
 

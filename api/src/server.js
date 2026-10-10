@@ -25,6 +25,7 @@ import accountRouter from './account.js';
 import contactsRouter from './contacts.js';
 import farmsRouter from './farms.js';
 import publicRouter from './public.js';
+import { injectLandingWeather } from './landing-ssr.js';
 import analyticsRouter, { countMetric, markMetric, metricFailure } from './analytics.js';
 import { PUBLIC_PAGES, publicMetadata, siteOrigin, sitemapXml } from './seo.js';
 import { completedAgriculturalProfile } from './analytics-policy.js';
@@ -1083,7 +1084,7 @@ app.get('/sitemap.xml', (_req, res) => {
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
 app.get('/index.html', async (_req, res) => {
   res.set('Cache-Control', 'no-cache');
-  res.type('html').send(publicMetadata(await renderPage('index.html'), '/', siteUrl));
+  res.type('html').send(await injectLandingWeather(publicMetadata(await renderPage('index.html'), '/', siteUrl)));
 });
 app.get(['/privacidad.html', '/cookies.html', '/aviso-legal.html', '/contacto.html'], (req, res) => res.redirect(301, req.path.replace(/\.html$/, '')));
 // Caché conservadora: solo los assets firmados con hash (dist/assets) son
@@ -1120,7 +1121,16 @@ app.get('*path', async (req, res, next) => {
     if (SPA_ROUTES.has(path)) {
       let html = publicMetadata(await renderPage('index.html'), path, siteUrl);
       if (!PUBLIC_PAGES[path] || req.query.token) html = html.replace('content="index, follow"', 'content="noindex, nofollow"');
-      res.set('Cache-Control', 'no-cache');
+      if (PUBLIC_PAGES[path] && !req.query.token) {
+        // La portada pública se sirve con la lectura ya pintada (SSR) y se
+        // cachea 60 s en el borde. El HTML no depende de la sesión: el JS
+        // decide la vista, así que cachearlo es seguro.
+        html = await injectLandingWeather(html);
+        res.set('Cache-Control', 'public, max-age=0, s-maxage=60, stale-while-revalidate=300');
+        res.set('CDN-Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+      } else {
+        res.set('Cache-Control', 'no-cache');
+      }
       res.type('html').send(html);
       return;
     }
