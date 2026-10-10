@@ -18,6 +18,8 @@
     "test": "node --test",
     "acceptance": "node acceptance.mjs",
     "acceptance:phase13": "node acceptance-phase13.mjs",
+    "css:check": "node scripts/css-consolidate.mjs --check",
+    "css:consolidate": "node scripts/css-consolidate.mjs",
     "build": "node build.mjs"
   },
   "engines": {

@@ -121,6 +121,19 @@ test('la tarjeta de estación se reduce a sus gráficas en la sección de evoluc
   assert.match(renderStationCard(item), /hero-temperature/);
 });
 
+test('la cabecera sitúa la estación, su tipo y el permiso antes del resumen', () => {
+  for (const fn of ['renderSimplePanel', 'renderPanel', 'renderDemoPanel']) {
+    const html = skeleton(fn);
+    assert.match(html, /data-panel-context/, `${fn} no declara el contexto de estación y permiso`);
+  }
+  // El texto se rellena con el nombre, el tipo de emplazamiento y el rol.
+  assert.match(source, /function setPanelContext\(/);
+  assert.match(source, /locationLabel\(item\.device\.locationType\)/);
+  assert.match(source, /roleLabel\(session\.me\.role\)/);
+  assert.match(source, /setPanelContext\(root, data\.devices\)/);
+  assert.match(source, /setPanelContext\(root, lastDevices\)/);
+});
+
 test('el análisis del periodo se parte entre el resumen y el detalle', () => {
   assert.match(source, /export function renderDemoOverview\(data\)/);
   assert.match(source, /export function renderDemoDetails\(data\)/);

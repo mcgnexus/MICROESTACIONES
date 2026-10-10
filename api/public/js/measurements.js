@@ -1,5 +1,5 @@
 import {
-  $, api, escapeText, dateText, numberText, pressureText, validationBadge, canEdit, openDialog,
+  $, api, escapeText, dateText, dayText, numberText, pressureText, validationBadge, canEdit, openDialog,
   localIsoDate, periodRange,
 } from './ui.js';
 
@@ -14,8 +14,8 @@ function coverageScopeNote(gaps) {
   if (!gaps?.evaluated || !gaps.truncatedToNow) return '';
   const evaluated = new Date(gaps.evaluated.to);
   const requested = new Date(gaps.requested?.to || gaps.to);
-  return ` · cobertura hasta ahora (hasta el ${evaluated.toLocaleDateString('es-ES')})`
-    + ` · el rango pedido llega al ${requested.toLocaleDateString('es-ES')}; ese futuro no resta fiabilidad`;
+  return ` · cobertura hasta ahora (hasta el ${dayText(evaluated)})`
+    + ` · el rango pedido llega al ${dayText(requested)}; ese futuro no resta fiabilidad`;
 }
 
 function gapsSummary(gaps) {
@@ -37,8 +37,8 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
     <div class="section-heading"><div><p class="eyebrow">REGISTROS</p><h2>Tabla de mediciones</h2></div></div>
     <div class="table-filters">
       <label>Ver por<select data-filter="period">
-        <option value="day">Día</option><option value="week">Semana</option>
-        <option value="month" selected>Mes</option><option value="year">Año</option>
+        <option value="day" selected>Día</option><option value="week">Semana</option>
+        <option value="month">Mes</option><option value="year">Año</option>
         <option value="custom">Rango libre</option></select></label>
       <label data-date-label>Fecha de referencia<input data-filter="date" type="date"></label>
       <label class="custom-range hidden" data-from-label>Desde<input data-filter="from" type="date"></label>
@@ -47,6 +47,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
       <label>Controles automáticos<select data-filter="validated">
         <option value="">Todas</option><option value="valid">Solo aceptadas</option><option value="invalid">Solo inválidas</option>
       </select></label>
+      <label class="check"><input type="checkbox" data-filter="pressure"> Mostrar presión</label>
       <button type="button" data-action="apply">Aplicar</button>
     </div>
     <div class="measurements-toolbar">
@@ -57,8 +58,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
     <div class="table-wrap">
       <table class="measurements-table">
         <thead><tr>
-          <th>Observado</th><th>Recibido</th><th>Sec.</th><th>Temp.</th><th>Humedad</th><th>Presión</th>
-          <th>Batería</th><th>Lux</th><th>Origen</th><th>Estado</th><th>Alerta</th><th></th>
+          <th>Hora</th><th>Temp.</th><th>Humedad</th><th>Presión</th><th>Estado</th><th></th>
         </tr></thead>
         <tbody data-rows></tbody>
       </table>
@@ -67,7 +67,10 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
       <button type="button" class="quiet" data-action="previous">Anterior</button>
       <span data-page-status></span>
       <button type="button" class="quiet" data-action="next">Siguiente</button>
-    </div>`;
+    </div>
+    <p class="hint">Ordenadas de más reciente a más antiguo. El detalle de cada fila
+      (recepción, secuencia, batería, lux, origen) se abre con «Detalle». La exportación
+      CSV mantiene todas las columnas técnicas.</p>`;
 
   const state = { rows: [], total: 0, valid: 0, invalid: 0, page: 0, pageSize: 10, gaps: null };
 
@@ -108,7 +111,6 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
   }
 
   function renderRow(row) {
-    const alert = row.alertLevel === 1 ? 'Prioritaria' : row.alertLevel === 2 ? 'Aviso' : '—';
     const actions = [
       `<button type="button" class="quiet" data-detail="${escapeText(row.id)}">Detalle</button>`,
       editable && !row.deletedAt && !row.isValidated
@@ -120,16 +122,10 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
     ].join(' ');
     return `<tr class="${row.deletedAt ? 'row-deleted' : row.isValidated ? '' : 'row-invalid'}">
       <td>${dateText(row.observedAt)}</td>
-      <td>${dateText(row.receivedAt)}</td>
-      <td>${escapeText(row.sequence)}</td>
       <td>${cell(row.temperatureC, '°C')}</td>
       <td>${cell(row.humidityPct, '%')}</td>
-       <td>${row.pressurePa == null ? '—' : `${pressureText(row.pressurePa)} mbar`}</td>
-      <td>${cell(row.batteryMv, 'mV', 0)}</td>
-      <td>${cell(row.lux, '', 0)}</td>
-      <td>${escapeText(row.source || '—')}</td>
+      <td class="pressure-cell">${row.pressurePa == null ? '—' : `${pressureText(row.pressurePa)} mbar`}</td>
       <td>${validationBadge(row)}</td>
-      <td>${alert}</td>
       <td class="row-actions">${actions}</td>
     </tr>`;
   }
@@ -159,14 +155,14 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
         return load();
       }
       $('[data-rows]', root).innerHTML = state.rows.map(renderRow).join('')
-        || '<tr><td colspan="12">No hay mediciones en este periodo.</td></tr>';
+        || '<tr><td colspan="6">No hay mediciones en este periodo.</td></tr>';
       if (resetPage || state.gaps === null) await loadGaps(from, to);
       const gapsInfo = gapsSummary(state.gaps);
       const first = state.total ? state.page * state.pageSize + 1 : 0;
       const last = Math.min((state.page + 1) * state.pageSize, state.total);
       $('[data-summary]', root).textContent =
         `Mostrando ${first}–${last} de ${state.total} mediciones · ${state.valid} válidas · ${state.invalid} inválidas`
-        + ` · ${from.toLocaleDateString('es-ES')} → ${new Date(to.getTime() - 1).toLocaleDateString('es-ES')}${gapsInfo}`;
+        + ` · ${dayText(from)} → ${dayText(new Date(to.getTime() - 1))}${gapsInfo}`;
       const pageCount = Math.ceil(state.total / state.pageSize);
       $('[data-pagination]', root).classList.toggle('hidden', pageCount <= 1);
       $('[data-page-status]', root).textContent = `Página ${state.page + 1} de ${pageCount}`;
@@ -271,6 +267,10 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
 
   root.querySelectorAll('[data-filter="period"]').forEach((el) =>
     el.addEventListener('change', () => { syncFilterVisibility(); load({ resetPage: true }); }));
+
+  $('[data-filter="pressure"]', root).addEventListener('change', (event) => {
+    root.querySelector('.measurements-table').classList.toggle('show-pressure', event.target.checked);
+  });
 
   syncFilterVisibility();
   load();

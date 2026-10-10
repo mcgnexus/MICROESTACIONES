@@ -7,7 +7,15 @@ import { renderStateCards } from '../public/js/farm-cards.js';
 
 const read = async (name) => readFile(new URL(`../public/js/${name}`, import.meta.url), 'utf8');
 const view = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
-const css = await readFile(new URL('../public/app.css', import.meta.url), 'utf8');
+// La consolidación guarda los valores repetidos en tokens de :root; resolver
+// `var(--x)` deja estas comprobaciones sobre el valor real de la tarjeta.
+const resolveVars = (source) => {
+  const tokens = Object.fromEntries([...source.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)]
+    .map(([, name, value]) => [name, value.trim()]));
+  return source.replace(/var\((--[\w-]+)(?:,([^)]*))?\)/g,
+    (match, name, fallback) => tokens[name] ?? fallback ?? match);
+};
+const css = resolveVars(await readFile(new URL('../public/app.css', import.meta.url), 'utf8'));
 
 // F12 · F13. Dos hallazgos sobre el mismo problema de fondo: un lenguaje visual
 // y tipográfico que se construía por partes, sin una escala común.

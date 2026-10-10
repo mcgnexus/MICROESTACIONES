@@ -24,9 +24,11 @@ test('the three scenarios are simulated and clearly labelled as such', () => {
   assert.match(shell, /data-origin="simulated"/);
   assert.match(shell, />Simulación</);
   // Y la etiqueta va antes que la explicación: se ve sin desplegar nada.
-  assert.ok(shell.indexOf('data-origin="simulated"') < shell.indexOf('Qué es exactamente esta demostración'));
+  assert.ok(shell.indexOf('data-origin="simulated"') < shell.indexOf('Qué es exactamente esta simulación'));
   // El detalle plegado sigue declarando que no hay avisos reales ni envíos.
   assert.match(shell, /no crean avisos reales, no envían mensajes/);
+  // El control del umbral se anuncia como simulación y como acción a explorar.
+  assert.match(shell, /Simulación: ajusta el umbral y observa cuándo aparecería un aviso/);
 });
 
 test('interpolating control points stays inside the declared range', () => {
@@ -159,7 +161,7 @@ test('the interaction stays local: no API, no alerts, no messages', async () => 
   assert.doesNotMatch(source, /\/api\//);
   assert.doesNotMatch(source, /INSERT INTO|alert_rules|notification_outbox/);
   assert.match(source, /los avisos que ves aquí son simulados/i);
-  assert.match(source, /solo existen en esta demostración/);
+  assert.match(source, /solo existen en esta simulación/);
   // Lo simulado se declara como tal en la taxonomía y no se usa fuera de aquí.
   const { classifyNotice, NOTICE_CATEGORIES } = await import('../public/js/notice-taxonomy.js');
   const meta = classifyNotice({ simulated: true });

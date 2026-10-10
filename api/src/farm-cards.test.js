@@ -176,6 +176,26 @@ test('no measurements or no sensor never shows a reassuring state', () => {
   assert.doesNotMatch(html, /Sin riesgo de helada/);
 });
 
+test('un estado normal no se presenta como garantía ni como un no actuar', () => {
+  // Un tono "ok" describe el momento medido; no puede prometer que no haya
+  // riesgo en todo el día ni recomendar no hacer nada.
+  const frost = assessFrost(item());
+  assert.equal(frost.tone, 'ok');
+  assert.doesNotMatch(frost.meaning, /Sin riesgo de helada/);
+  assert.match(frost.meaning, /por encima del umbral de helada/);
+  assert.doesNotMatch(frost.action, /No hace falta hacer nada/);
+
+  const heat = assessHeat(item());
+  assert.equal(heat.tone, 'ok');
+  assert.match(heat.meaning, /por debajo del umbral de calor/);
+  assert.doesNotMatch(heat.action, /No hace falta hacer nada/);
+
+  const none = nextRisk([item()], []);
+  assert.equal(none.tone, 'ok');
+  assert.doesNotMatch(none.action, /Puedes seguir con tu rutina/);
+  assert.match(none.action, /no una garantía/);
+});
+
 test('stale local temperature is never described as a current risk or an all-clear', () => {
   const stale = item({
     latest: { temperatureC: -5, observedAt: '2026-01-01T08:00:00Z' },

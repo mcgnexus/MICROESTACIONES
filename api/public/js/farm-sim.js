@@ -372,8 +372,8 @@ export function initialSimulationState() {
 export function renderSimulationShell() {
   return `
     <div class="sim-shell" data-sim-root>
-      <p class="sim-origin">${originBadge('simulated')}<span class="hint">Todo lo que hay en esta demostración se calcula aquí y no sale de la página.</span></p>
-      <div class="sim-tabs" role="tablist" aria-label="Escenarios de la demostración">
+      <p class="sim-origin">${originBadge('simulated')}<span class="hint">Todo lo que hay en esta simulación se calcula aquí y no sale de la página.</span></p>
+      <div class="sim-tabs" role="tablist" aria-label="Escenarios de la simulación">
         ${SIM_SCENARIOS.map((scenario, index) => `
           <button type="button" role="tab" class="sim-tab${index === 0 ? ' is-active' : ''}"
             aria-selected="${index === 0 ? 'true' : 'false'}" data-sim-scenario="${scenario.id}">${escapeText(scenario.title)}</button>`).join('')}
@@ -385,14 +385,14 @@ export function renderSimulationShell() {
           <label class="sim-threshold-label" for="sim-threshold">Umbral del aviso
             <output id="sim-threshold-value" for="sim-threshold"></output></label>
           <input type="range" id="sim-threshold" data-sim-threshold min="0" max="1" step="0.5" value="0">
-          <p class="sim-threshold-hint">Ajusta el umbral para ver cuándo se generaría el aviso.</p>
+          <p class="sim-threshold-hint">Simulación: ajusta el umbral y observa cuándo aparecería un aviso.</p>
         </div>
         <div class="sim-chart" data-sim-chart></div>
         <div class="sim-result" data-sim-result aria-live="polite"></div>
       </div>
       <details class="sim-safety">
-        <summary>Qué es exactamente esta demostración</summary>
-        <p><strong>Los avisos que ves aquí son simulados y solo existen en esta demostración</strong>: no salen de esta página, no crean avisos reales, no envían mensajes y no modifican ninguna configuración.</p>
+        <summary>Qué es exactamente esta simulación</summary>
+        <p><strong>Los avisos que ves aquí son simulados y solo existen en esta simulación</strong>: no salen de esta página, no crean avisos reales, no envían mensajes y no modifican ninguna configuración.</p>
         <p>Los valores son ilustrativos y no sustituyen criterios agronómicos ni veterinarios.</p>
       </details>
       ${originLegend([

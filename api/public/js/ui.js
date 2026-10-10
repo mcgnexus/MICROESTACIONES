@@ -5,8 +5,53 @@ export const $$ = (selector, root = document) => [...root.querySelectorAll(selec
 
 export const escapeText = (value) => String(value ?? '—').replace(/[&<>"']/g, (char) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-export const dateText = (value) => (value ? new Date(value).toLocaleString('es-ES') : '—');
-export const dayText = (value) => (value ? new Date(value).toLocaleDateString('es-ES') : '—');
+// Fecha exacta para el detalle. Sin segundos: el dato llega en lotes y el
+// segundo no añade información, pero repetido en cada tarjeta compite con la
+// lectura. La frescura («hace 5 min») se muestra con freshText.
+//
+// Se compone a mano y con ceros, igual que shortDate y stampText: los tres
+// formatos de fecha del producto son este (detalle), el corto (ejes y tarjetas
+// compactas) y dayText (solo día). «9 oct», «9/10/2026, 22:00:05» y «2026-10-09»
+// dejaron de convivir en pantalla.
+const two = (n) => String(n).padStart(2, '0');
+export const dateText = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)}/${date.getFullYear()} ${two(date.getHours())}:${two(date.getMinutes())}`;
+};
+export const dayText = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)}/${date.getFullYear()}`;
+};
+
+/**
+ * Frescura en palabras para los resúmenes: «hace 5 min».
+ *
+ * La fecha exacta no desaparece: queda en el atributo title del elemento que
+ * llame a esto, y en el detalle ampliable. Pasadas 24 h la antigüedad deja de
+ * ser el dato útil y se muestra la fecha corta.
+ */
+export function freshText(value, now = new Date()) {
+  if (!value) return '—';
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) return '—';
+  const minutes = Math.round((now.getTime() - then.getTime()) / 60000);
+  if (minutes < 2) return 'hace un momento';
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  return shortDate(value);
+}
+
+// Marca de tiempo con frescura y fecha exacta en el title: la resumen se lee
+// rápido, la precisa sigue a un hover de distancia.
+export function freshness(value, now = new Date()) {
+  const exact = dateText(value);
+  return `<span title="Actualizado ${escapeText(exact)}">${escapeText(freshText(value, now))}</span>`;
+}
 export const numberText = (value, digits = 1) =>
   value == null ? '—' : Number(value).toLocaleString('es-ES', { maximumFractionDigits: digits });
 export const pressureMbar = (value) => (value == null ? null : Number(value) / 100);
@@ -381,13 +426,21 @@ function trendBadgeBlock(period, key, digits, variant) {
   const { direction, change } = trend;
   const explanation = trendExplanation(direction, metric, period);
   const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit}`;
+  // El bloque diario añade los extremos del día: junto a la tendencia reciente,
+  // es lo que responde a «¿qué mínimo y qué máximo ha habido hoy?».
+  const dayValues = variant === 'daily'
+    ? period.rows.map((row) => Number(row[key])).filter(Number.isFinite)
+    : [];
+  const dayRange = dayValues.length
+    ? ` · mín ${numberText(Math.min(...dayValues), digits)} / máx ${numberText(Math.max(...dayValues), digits)} ${metric.unit}`
+    : '';
   const window = `${clockText(period.startAt)}–${clockText(period.endAt)}`;
   const method = 'Diferencia entre la primera y la última lectura del periodo';
   const accessible = trend.samples < 3
-    ? `${period.label}: ${explanation}`
-    : `${period.label}: ${explanation}${amount}. De ${window}, ${trend.samples} lecturas. `
+    ? `${period.label}: ${explanation}${dayRange}`
+    : `${period.label}: ${explanation}${amount}${dayRange}. De ${window}, ${trend.samples} lecturas. `
       + `${numberText(trend.from, digits)} → ${numberText(trend.to, digits)} ${metric.unit}. ${method}.`;
-  return `<div class="chart-trend-item chart-trend-${variant}"><span class="chart-trend-label">${escapeText(period.label)}</span><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="${escapeText(accessible)}"><strong aria-hidden="true">${trendIcon(direction)}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${escapeText(amount)}</small></div>`;
+  return `<div class="chart-trend-item chart-trend-${variant}"><span class="chart-trend-label">${escapeText(period.label)}</span><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="${escapeText(accessible)}"><strong aria-hidden="true">${trendIcon(direction)}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${escapeText(amount)}${escapeText(dayRange)}</small></div>`;
 }
 
 // Un bloque por periodo, con su etiqueta y su cifra. Si el resumen diario y la

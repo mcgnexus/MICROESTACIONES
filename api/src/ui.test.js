@@ -246,6 +246,22 @@ test('chart shows a falling recent hour instead of a day-long rise', () => {
   assert.match(chart, /Diferencia entre la primera y la última lectura del periodo/);
 });
 
+test('el resumen diario añade los extremos del día a la tendencia', () => {
+  const now = new Date('2026-05-20T23:14:00');
+  const rows = [
+    ['2026-05-20T12:00:00', 12.0],
+    ['2026-05-20T15:00:00', 14.5],
+    ['2026-05-20T19:00:00', 14.4],
+    ['2026-05-20T22:00:00', 14.2],
+    ['2026-05-20T22:20:00', 14.3],
+    ['2026-05-20T22:40:00', 14.0],
+    ['2026-05-20T23:14:00', 13.7],
+  ].map(([time, temperatureC]) => ({ observedAt: new Date(time).toISOString(), temperatureC }));
+  const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1, null, null, rows, now);
+  // El bloque "Hoy" declara el mínimo y el máximo del día, no solo la diferencia.
+  assert.match(chart, /mín 12 \/ máx 14,5 °C/);
+});
+
 test('trend block collapses to one when the recent hour is also the whole day', () => {
   const now = new Date('2026-05-20T13:00:00');
   const rows = [

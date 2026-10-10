@@ -63,43 +63,74 @@ export function renderLocalWeatherCard(station) {
     <div class="public-now-heading"><div><p class="eyebrow">PUNTO DE MEDIDA · CASCO URBANO</p><h3>${escapeText(point)}</h3><p>${escapeText(station.name || '')} · un emplazamiento concreto, no toda la ciudad</p></div>
       <span class="badge ${station.connectivity === 'offline' ? 'badge-invalid' : stale ? 'badge-warn' : 'badge-valid'}">${station.connectivity === 'offline' ? 'Sin conexión' : stale ? 'Lectura no reciente' : 'Datos recientes'}</span></div>
     <div class="public-now-readings">
-      <div><span>Temperatura</span><strong>${station.temperatureC != null ? `${numberText(station.temperatureC, 1)} °C` : 'Sin lectura registrada'}</strong><small>${tempFresh ? `Medida ${dateText(station.temperatureObservedAt)}` : `Última medición ${dateText(station.temperatureObservedAt)}`}</small></div>
-      <div><span>Humedad</span><strong>${station.humidityPct != null ? `${numberText(station.humidityPct, 0)} %` : 'Sin lectura registrada'}</strong><small>${humidityFresh ? `Medida ${dateText(station.humidityObservedAt)}` : `Última medición ${dateText(station.humidityObservedAt)}`}</small></div>
+      <div><span>Temperatura</span><strong>${station.temperatureC != null ? `${numberText(station.temperatureC, 1)} °C` : 'Sin lectura registrada'}</strong><small>${tempFresh ? `Medido ${sinceText(station.temperatureObservedAt) || dateText(station.temperatureObservedAt)}` : `Última medición ${dateText(station.temperatureObservedAt)}`}</small></div>
+      <div><span>Humedad</span><strong>${station.humidityPct != null ? `${numberText(station.humidityPct, 0)} %` : 'Sin lectura registrada'}</strong><small>${humidityFresh ? `Medido ${sinceText(station.humidityObservedAt) || dateText(station.humidityObservedAt)}` : `Última medición ${dateText(station.humidityObservedAt)}`}</small></div>
     </div>
     <p class="public-update">Última actualización de los sensores: <time datetime="${escapeText(lastUpdate || '')}">${escapeText(dateText(lastUpdate))}</time>. La lectura describe este punto del casco urbano.</p>
   </article>`;
 }
 
-// Tabla comparativa con datos públicos reales (sin coordenadas).
+// Comparación pública: dos valores enfrentados con su hora propia, la
+// diferencia debajo y los metadatos (distancia, altitud) en un desplegable. Así
+// se comparan en móvil sin barra horizontal y se mantienen las dos ubicaciones
+// y sus tiempos por separado. La diferencia solo se calcula con una pareja
+// dentro de la ventana; si no la hay, se dice y no se infiere.
 export function renderPublicZones(stations) {
-  const table = `<div class="table-wrap"><table class="comparison-table">
-    <thead><tr><th>Ubicación urbana</th><th>Temperatura medida</th><th>Hora local</th><th>Observación AEMET</th><th>Hora AEMET</th><th>Diferencia emparejada</th></tr></thead>
-    <tbody>${stations.map((station) => {
-      const comparison = station.comparison;
-      const aemetObservation = comparison?.aemet || station.aemet?.observation;
-      const localValue = comparison?.local?.temperatureC ?? station.temperatureC;
-      const localAt = comparison?.local?.observedAt || station.observedAt;
-      const diff = comparison?.state === 'matched' && comparison.differenceC != null
-        ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
-        : 'No calculada';
-      const locationKind = station.locationType === 'urbano' ? 'zona urbana'
-        : station.locationType === 'finca' ? 'finca' : null;
-      const label = [station.zone, station.name, locationKind].filter(Boolean).join(' · ');
-      return `<tr>
-        <td>${escapeText(label)}</td>
-        <td>${localValue == null ? '—' : `${numberText(localValue, 1)} °C`}<br><small>${station.temperatureFreshness === 'stale' ? 'Dato antiguo' : station.connectivity === 'offline' ? 'Estación sin conexión' : station.temperatureFreshness === 'unknown' ? 'Sin dato válido' : 'Medición reciente'}</small></td>
-        <td>${escapeText(dateText(localAt) || '—')}<br><small>${escapeText(sinceText(localAt) || '')}</small></td>
-        <td>${aemetObservation?.temperatureC == null ? (station.aemet?.observationStatus === 'unconfigured' ? 'No configurada' : station.aemet?.observationStatus === 'unavailable' ? 'Consulta no disponible' : 'Sin observación') : `${numberText(aemetObservation.temperatureC, 1)} °C`}<br><small>${escapeText(aemetObservation?.stationId || 'AEMET')}${station.aemet?.observationStatus === 'stale' ? ' · respuesta antigua' : ''}</small></td>
-        <td>${escapeText(dateText(aemetObservation?.observedAt) || '—')}</td>
-        <td><strong>${escapeText(diff)}</strong>${comparison?.state !== 'matched' ? `<br><small>Sin pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min</small>` : ''}</td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table></div>`;
-  const metadata = stations.map((station) => {
-    const proximity = station.comparison?.proximity || station.aemet?.observation?.proximity;
-    if (!proximity) return '';
-    return `<p class="aemet-proximity"><strong>${escapeText(station.zone || station.name)}:</strong> ${numberText(proximity.distanceKm, 1)} km entre emplazamientos · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} (${escapeText(proximity.aemetAltitudeSource || 'sin fuente')}) · urbana ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} (${escapeText(proximity.microAltitudeSource || 'sin fuente')}). Coordenadas AEMET: ${escapeText(proximity.aemetLocationSource || 'sin fuente')}; urbanas: ${escapeText(proximity.microLocationSource || 'sin fuente')}.</p>`;
-  }).filter(Boolean).join('');
+  const cards = stations.map((station) => {
+    const comparison = station.comparison;
+    const aemetObservation = comparison?.aemet || station.aemet?.observation;
+    const localValue = comparison?.local?.temperatureC ?? station.temperatureC;
+    const localAt = comparison?.local?.observedAt || station.observedAt;
+    const aemetValue = aemetObservation?.temperatureC ?? station.aemet?.observation?.temperatureC;
+    const aemetAt = aemetObservation?.observedAt;
+    const localLabel = comparison?.local?.location || station.zone || station.name;
+    const locationKind = station.locationType === 'urbano' ? 'zona urbana'
+      : station.locationType === 'finca' ? 'finca' : null;
+    const where = [station.zone, station.name, locationKind].filter(Boolean).join(' · ');
+    const localState = station.temperatureFreshness === 'stale' ? 'Dato antiguo'
+      : station.connectivity === 'offline' ? 'Estación sin conexión'
+        : station.temperatureFreshness === 'unknown' ? 'Sin dato válido' : 'Medición reciente';
+    const aemetStatus = station.aemet?.observationStatus;
+    const aemetState = aemetStatus === 'unconfigured' ? 'No configurada'
+      : aemetStatus === 'unavailable' ? 'Consulta no disponible'
+        : aemetStatus === 'stale' ? 'Respuesta antigua' : null;
+    const diff = comparison?.state === 'matched' && comparison.differenceC != null
+      ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
+      : 'No calculada';
+    const diffTone = comparison?.state === 'matched'
+      ? (comparison.differenceC > 0 ? 'más cálida' : comparison.differenceC < 0 ? 'más fría' : 'igual')
+      : null;
+    const windowNote = comparison?.state !== 'matched'
+      ? `Sin pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min`
+      : null;
+    const proximity = comparison?.proximity || aemetObservation?.proximity || station.aemet?.observation?.proximity;
+    const metadata = proximity ? `<details class="comparison-metadata"><summary>Distancia y altitud</summary>
+      <p class="aemet-proximity"><strong>${escapeText(where)}:</strong> ${numberText(proximity.distanceKm, 1)} km entre emplazamientos · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} (${escapeText(proximity.aemetAltitudeSource || 'sin fuente')}) · urbana ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} (${escapeText(proximity.microAltitudeSource || 'sin fuente')}). Coordenadas AEMET: ${escapeText(proximity.aemetLocationSource || 'sin fuente')}; urbanas: ${escapeText(proximity.microLocationSource || 'sin fuente')}.</p></details>` : '';
+    return `<article class="comparison-card">
+      <h3>${escapeText(where)}</h3>
+      <div class="comparison-readings">
+        <div class="reading reading-local">
+          <span class="reading-label">Medición local${escapeText(localLabel && localLabel !== where ? ` · ${localLabel}` : '')}</span>
+          <strong>${localValue == null ? '—' : `${numberText(localValue, 1)} °C`}</strong>
+          <span class="reading-time">${escapeText(dateText(localAt) || '—')}</span>
+          <span class="reading-state">${escapeText(localState)}</span>
+        </div>
+        <div class="reading reading-aemet">
+          <span class="reading-label">Observación AEMET · ${escapeText(aemetObservation?.stationId || station.aemet?.observation?.stationId || 'AEMET')}</span>
+          <strong>${aemetValue == null ? '—' : `${numberText(aemetValue, 1)} °C`}</strong>
+          <span class="reading-time">${escapeText(dateText(aemetAt) || '—')}</span>
+          <span class="reading-state">${escapeText(aemetState || '—')}</span>
+        </div>
+      </div>
+      <div class="comparison-diff">
+        <strong>${escapeText(diff)}</strong>
+        ${diffTone ? `<span>microestación ${diffTone} · pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min</span>` : ''}
+        ${windowNote ? `<span>${escapeText(windowNote)}</span>` : ''}
+      </div>
+      ${metadata}
+    </article>`;
+  }).join('');
+
   const forecastKeys = new Set();
   const forecasts = stations.map((station) => {
     const days = station.aemet?.forecast?.days || [];
@@ -131,7 +162,7 @@ export function renderPublicZones(stations) {
           : state === 'unconfigured' ? 'Consulta de avisos AEMET no configurada.' : 'No se ha podido consultar avisos AEMET.';
     return `<article class="weather-provider"><h4>Avisos oficiales · ${escapeText(station.zone || station.name)}</h4><p>${escapeText(banner)}</p>${active.map((warning) => `<p><strong>${escapeText(warning.event || warning.headline || 'Aviso')} · ${escapeText(warning.severity || 'sin nivel')}</strong> ${escapeText(warning.area || '')} · ${warning.expires ? `vigente hasta ${escapeText(dateText(warning.expires))}` : ''}</p>`).join('')}</article>`;
   }).filter(Boolean).join('');
-  return `${table}${metadata ? `<div class="public-metadata">${metadata}</div>` : ''}<p class="hint">Las diferencias solo se calculan cuando observación y medición están separadas por un máximo de ±10 minutos. Positivo significa que la urbana midió más; negativo, menos. La distancia, altitud, exposición y entorno pueden influir; no se atribuye el resultado a un factor único.</p>${forecasts || forecastNotice ? `<section class="public-forecast"><h3>Previsión · independiente de las observaciones</h3>${forecasts}${forecastNotice}</section>` : ''}${warnings ? `<section class="public-forecast"><h3>Avisos oficiales AEMET</h3>${warnings}</section>` : ''}`;
+  return `${cards}<p class="hint">Las diferencias solo se calculan cuando observación y medición están separadas por un máximo de ±10 minutos. Positivo significa que la urbana midió más; negativo, menos. La distancia, altitud, exposición y entorno pueden influir; no se atribuye el resultado a un factor único.</p>${forecasts || forecastNotice ? `<section class="public-forecast"><h3>Previsión · independiente de las observaciones</h3>${forecasts}${forecastNotice}</section>` : ''}${warnings ? `<section class="public-forecast"><h3>Avisos oficiales AEMET</h3>${warnings}</section>` : ''}`;
 }
 
 export function renderDayHistory(station, now = Date.now()) {

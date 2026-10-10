@@ -111,7 +111,7 @@ export async function renderStationAlertsTab(content, stationId) {
   const alerts = await api(`/api/v1/alerts?device_id=${encodeURIComponent(stationId)}&status=all&limit=100`);
   if (!editable) {
     const notice = alerts.not_subscribed
-      ? '<p class="hint">Estás viendo esta estación por la demostración, pero no estás suscrito a sus avisos: los avisos solo llegan a quien tiene la estación concedida.</p>'
+      ? '<p class="hint">Estás viendo esta estación con acceso de consulta, pero no estás suscrito a sus avisos: los avisos solo llegan a quien tiene la estación concedida.</p>'
       : '';
     content.innerHTML = `<section class="panel">
       <div class="section-heading"><div><p class="eyebrow">AVISOS DE LA ESTACIÓN</p><h2>Qué se ha observado</h2></div></div>
@@ -120,7 +120,7 @@ export async function renderStationAlertsTab(content, stationId) {
       })}
       ${notice}
       <p class="hint">Cada aviso indica su categoría, su fuente, su fecha, su estado y su vigencia, y si es un dato real,
-        una previsión, un cálculo o una simulación. Las reglas y los destinatarios no se muestran en la demostración.</p>
+        una previsión, un cálculo o una simulación. Las reglas y los destinatarios no se muestran con acceso de consulta.</p>
       ${deliveryNote()}
     </section>`;
     return;
@@ -164,7 +164,7 @@ function rulesSection(rules, stationId, editable) {
       <label>No repetir (s)<input type="number" name="cooldown_s" min="0" max="604800" step="60" value="0"></label>
       <label>Mensaje<input name="message" required maxlength="200"></label>
       <label>Destinatario<input name="recipient" maxlength="200" placeholder="correo o teléfono"></label>
-      <label>Canal<select name="channel">${Object.entries(CHANNEL_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'in_app' ? 'selected' : ''}>${escapeText(label)}</option>`).join('')}</select></label>
+      <label>Canal<select name="channel">${availableChannels({ me: session.me, whatsappDelivery: session.support?.whatsappDelivery }).map(({ key, label }) => `<option value="${key}" ${key === 'in_app' ? 'selected' : ''}>${escapeText(label)}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" name="urgent"> Urgente: pedir envío inmediato</label>
       <button type="submit">Crear regla</button>
     </form>` : ''}
@@ -246,26 +246,154 @@ function ruleBody(form, deviceId) {
   return body;
 }
 
+// ---- Estado de alta de avisos ----------------------------------------------
+// Un listado vacío tiene tres causas distintas — sin estación, canal sin
+// terminar o simplemente nada que haya superado los umbrales — y «No hay
+// avisos para estos filtros» no las diferencia. Estos pasos presentan el alta
+// de avisos de la cuenta y señalan el siguiente paso concreto, sin insinuar
+// que no hay riesgo meteorológico: de eso responde la cobertura de datos, no
+// el estado del alta.
+export function signupSteps({ me = {}, engineVerified = true, whatsappDelivery = null } = {}) {
+  const contacts = me.contacts || [];
+  const channels = contacts.filter((contact) => contact.channel === 'email' || contact.channel === 'whatsapp');
+  const configured = channels.length > 0;
+  const authorized = channels.some((contact) => contact.optedIn);
+  const verified = channels.some((contact) => contact.verified);
+  const pendingChannels = channels.filter((contact) => !contact.verified || !contact.optedIn);
+
+  const steps = [];
+
+  if (me.stations?.length) {
+    steps.push({ key: 'station', label: 'Estación', state: 'ok',
+      detail: `${me.stations.length} estación(es) concedida(s): ${me.stations.map((s) => s.name).join(', ')}.` });
+  } else {
+    steps.push({ key: 'station', label: 'Estación', state: 'missing',
+      detail: 'Sin estación concedida no hay medición propia que pueda disparar avisos.',
+      action: { href: '#/', label: 'Solicitar acceso al piloto' } });
+  }
+
+  const channelNames = channels.map((c) => (c.channel === 'email' ? 'Correo' : 'WhatsApp')).join(' y ');
+  if (!configured) {
+    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'missing',
+      detail: 'No hay destinatario de avisos configurado: ni correo ni WhatsApp.',
+      action: { href: '#/cuenta', label: 'Configurar canal en Cuenta' } });
+  } else if (pendingChannels.length) {
+    const pending = pendingChannels.map((c) => (c.channel === 'email' ? 'Correo' : 'WhatsApp')).join(' y ');
+    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'pending',
+      detail: `${channelNames} configurado(s), pero falta completar ${pending}: verificación y autorización.`,
+      action: { href: '#/cuenta', label: 'Completar en Cuenta' } });
+  } else {
+    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'ok', detail: `${channelNames} verificado(s) y autorizado(s).` });
+  }
+
+  steps.push(authorized
+    ? { key: 'optin', label: 'Autorización', state: 'ok', detail: 'Hay destinatario autorizado a recibir avisos.' }
+    : { key: 'optin', label: 'Autorización', state: configured ? 'pending' : 'missing',
+        detail: configured
+          ? 'Ningún canal está autorizado a recibir avisos: sin autorización no se envía nada.'
+          : 'Sin canal configurado no hay autorización que revisar.',
+        action: configured ? { href: '#/cuenta', label: 'Autorizar en Cuenta' } : null });
+
+  steps.push(verified
+    ? { key: 'verify', label: 'Verificación', state: 'ok', detail: 'Destinatario de avisos verificado con código.' }
+    : { key: 'verify', label: 'Verificación', state: configured ? 'pending' : 'missing',
+        detail: configured
+          ? 'Ningún destinatario verificado: los avisos solo salen a direcciones confirmadas con código.'
+          : 'Sin canal configurado no hay verificación pendiente.',
+        action: configured ? { href: '#/cuenta', label: 'Verificar en Cuenta' } : null });
+
+  // Esta verificación es la del acceso por correo de la cuenta, no la del
+  // destinatario de avisos: van por separado y no se confunden aquí.
+  const serviceNotes = [];
+  let serviceState = 'ok';
+  if (!engineVerified) { serviceState = 'pending'; serviceNotes.push('el motor de avisos no está comprobado en esta instalación'); }
+  if (whatsappDelivery === 'manual') serviceNotes.push('el WhatsApp se envía de forma manual durante el piloto');
+  else if (whatsappDelivery === 'disabled') { serviceState = serviceState === 'ok' ? 'pending' : serviceState; serviceNotes.push('sin entrega por WhatsApp configurada'); }
+  steps.push({
+    key: 'service', label: 'Servicio de avisos', state: serviceState,
+    detail: serviceNotes.length ? `Con limitaciones: ${serviceNotes.join('; ')}.` : 'Motor de avisos comprobado y canales operativos.',
+  });
+
+  return steps;
+}
+
+const STEP_BADGES = { ok: 'badge-valid', pending: 'badge-warn', missing: 'badge-invalid' };
+const STEP_STATE_LABELS = { ok: 'Listo', pending: 'Pendiente', missing: 'Falta' };
+
+export function renderSignupSteps(steps) {
+  return `<ul class="signup-steps">${steps.map((step) => `<li>
+    <span class="badge ${STEP_BADGES[step.state] || 'badge-muted'}">${STEP_STATE_LABELS[step.state] || step.state}</span>
+    <strong>${escapeText(step.label)}</strong>
+    <span>${escapeText(step.detail)}</span>
+    ${step.action ? `<a class="link" href="${step.action.href}">${escapeText(step.action.label)}</a>` : ''}
+  </li>`).join('')}</ul>`;
+}
+
+// Bloque que acompaña a un centro de avisos vacío: estado del alta y siguiente
+// paso. No reemplaza a la cobertura de datos: ambas dicen cosas distintas.
+export function signupBlock({ me, engineVerified, whatsappDelivery }) {
+  const steps = signupSteps({ me, engineVerified, whatsappDelivery });
+  const complete = steps.every((step) => step.state === 'ok');
+  const headline = complete
+    ? 'Tu alta de avisos está completa. En el periodo consultado, ninguna condición ha superado los umbrales; si esperabas un aviso, revisa la cobertura de datos de arriba.'
+    : 'Tu alta de avisos está incompleta: aunque hubiera riesgo, con el alta a medias no te llegaría ningún aviso.';
+  return `<section class="panel" data-signup>
+    <div class="section-heading"><div><p class="eyebrow">ESTADO DE ALTA</p><h2>Por qué puede que no haya avisos</h2></div></div>
+    <p class="hint">${escapeText(headline)}</p>
+    ${renderSignupSteps(steps)}
+    <p class="hint">Este bloque habla de tu configuración. Que no haya avisos tampoco significa que no haya riesgo:
+      la cobertura de datos de arriba indica qué fuentes están activas y cuáles no.</p>
+  </section>`;
+}
+
+// Canales que la cuenta puede realmente usar en el filtro del centro: los del
+// alta (correo siempre, WhatsApp si está configurado o con entrega activa) más
+// el aviso en pantalla. SMS, Webhook y Push no existen para esta cuenta, así
+// que filtrar por ellos solo añadiría selectores vacíos.
+export function availableChannels({ me = {}, whatsappDelivery = null } = {}) {
+  const contacts = me.contacts || [];
+  const channels = [{ key: 'in_app', label: CHANNEL_LABELS.in_app }];
+  channels.push({ key: 'email', label: CHANNEL_LABELS.email });
+  const whatsappUsable = contacts.some((contact) => contact.channel === 'whatsapp')
+    || (whatsappDelivery && whatsappDelivery !== 'disabled');
+  if (whatsappUsable) channels.push({ key: 'whatsapp', label: CHANNEL_LABELS.whatsapp });
+  return channels;
+}
+
 // ---- Centro de avisos (todas las estaciones) --------------------------------
 export async function renderAlertsCenter(root) {
   const editable = canEdit();
+  const channels = availableChannels({ me: session.me, whatsappDelivery: session.support?.whatsappDelivery });
   root.innerHTML = `
     <div class="page-heading">
       <div><p class="eyebrow">AVISOS</p><h1>Centro de avisos</h1></div>
     </div>
-    <section class="panel">
-      <div class="table-filters">
-        <label>Estado<select data-filter="status">
-          <option value="open">Abiertos</option><option value="closed">Cerrados</option><option value="all">Todos</option></select></label>
+    <section class="panel" data-service>
+      <div class="section-heading"><div><p class="eyebrow">ESTADO DEL SERVICIO</p><h2>Servicio y canal</h2></div></div>
+      <p class="hint">Tu cuenta recibe avisos en pantalla y por
+        ${channels.filter(({ key }) => key !== 'in_app').map(({ label }) => label.toLowerCase()).join(' y ')}.
+        El WhatsApp se envía de forma manual durante el piloto. SMS, Webhook y Push no están disponibles en esta instalación.</p>
+      <p class="coverage" data-counts></p>
+      <p class="error" data-alert-error role="alert"></p>
+      <p data-delivery-note></p>
+    </section>
+    <section class="panel" data-active>
+      <div class="section-heading"><div><p class="eyebrow">AVISOS ACTIVOS</p><h2>Lo que requiere tu atención</h2></div></div>
+      <div data-active-rows></div>
+      <div data-signup></div>
+    </section>
+    <section class="panel" data-history>
+      <div class="section-heading"><div><p class="eyebrow">HISTORIAL</p><h2>Avisos cerrados</h2></div></div>
+      <div data-history-rows></div>
+    </section>
+    <section class="panel" data-filters>
+      <details class="filters-advanced">
+        <summary>Filtros avanzados</summary>
         <label>Canal<select data-filter="channel">
-          <option value="">Todos</option>${Object.entries(CHANNEL_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label>
+          <option value="">Todos</option>${channels.map(({ key, label }) => `<option value="${key}">${label}</option>`).join('')}</select></label>
         <label>Estación<select data-filter="device"><option value="">Todas</option></select></label>
         <button type="button" data-action="apply">Aplicar</button>
-      </div>
-      <p class="error" data-alert-error role="alert"></p>
-      <p class="coverage" data-counts></p>
-      <div data-rows></div>
-      <p data-delivery-note></p>
+      </details>
     </section>
     <section class="panel${editable ? '' : ' hidden'}" data-rules></section>
     ${isAdmin() ? `<section class="panel" data-legacy>
@@ -282,19 +410,38 @@ export async function renderAlertsCenter(root) {
 
   const load = async () => {
     $('[data-alert-error]', root).textContent = '';
-    const params = new URLSearchParams({ status: $('[data-filter="status"]', root).value, limit: '200' });
+    const params = new URLSearchParams({ status: 'all', limit: '200' });
     const channel = $('[data-filter="channel"]', root).value;
     const device = $('[data-filter="device"]', root).value;
     if (channel) params.set('channel', channel);
     if (device) params.set('device_id', device);
     try {
       const data = await api(`/api/v1/alerts?${params}`);
-      // Un listado vacío no significa "sin riesgo": si faltan lecturas, se dice.
-      const caveat = coverageCaveat(stations);
-      $('[data-rows]', root).innerHTML = renderAlertsList(data.alerts, session.me?.farms || [], {
-        technical: editable, caveat, engineVerified: data.engine_verified !== false, admin: isAdmin(),
+      const open = data.alerts.filter((alert) => !alert.closedAt);
+      const closed = data.alerts.filter((alert) => alert.closedAt);
+      const listOptions = {
+        technical: editable, engineVerified: data.engine_verified !== false, admin: isAdmin(),
+      };
+      // Un listado vacío no significa "sin riesgo": la cobertura acompaña a los activos.
+      $('[data-active-rows]', root).innerHTML = renderAlertsList(open, session.me?.farms || [], {
+        ...listOptions, caveat: coverageCaveat(stations),
       });
-      $('[data-counts]', root).textContent = `${data.counts.open} activas · ${data.counts.closed} cerradas`
+      // El historial es su propio bloque: no comparte filtro con los activos.
+      $('[data-history-rows]', root).innerHTML = closed.length
+        ? renderAlertsList(closed, session.me?.farms || [], listOptions)
+        : '<p class="empty">Todavía no hay avisos cerrados.</p>';
+      // Estado del alta: se explica siempre que falte algo por completar, aunque
+      // ya haya avisos en pantalla; si el alta está completa y hay activos, no hace falta.
+      const steps = signupSteps({
+        me: session.me, engineVerified: data.engine_verified !== false,
+        whatsappDelivery: session.support?.whatsappDelivery,
+      });
+      const incomplete = steps.some((step) => step.state !== 'ok');
+      $('[data-signup]', root).innerHTML = (open.length && !incomplete) ? '' : signupBlock({
+        me: session.me, engineVerified: data.engine_verified !== false,
+        whatsappDelivery: session.support?.whatsappDelivery,
+      });
+      $('[data-counts]', root).textContent = `${open.length} activas · ${closed.length} cerradas`
         + (data.engine_verified === false ? ' · motor de avisos sin comprobar' : '');
       // Las reglas son configuración operativa: fuera del rol de demostración.
       if (editable) {

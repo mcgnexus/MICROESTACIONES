@@ -139,7 +139,15 @@ const contrast = (a, b) => {
   return (high + 0.05) / (low + 0.05);
 };
 const GRADIENT = ['#123e2e', '#174f48', '#07536b'];
-const readCss = () => readFileSync(new URL('../public/app.css', import.meta.url), 'utf8');
+// Los valores repetidos viven en tokens de :root; resolver `var(--x)` antes de
+// medir conserva la comprobación de contraste sin fijar el literal en la regla.
+const resolveVars = (css) => {
+  const tokens = Object.fromEntries([...css.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)]
+    .map(([, name, value]) => [name, value.trim()]));
+  return css.replace(/var\((--[\w-]+)(?:,([^)]*))?\)/g,
+    (match, name, fallback) => tokens[name] ?? fallback ?? match);
+};
+const readCss = () => resolveVars(readFileSync(new URL('../public/app.css', import.meta.url), 'utf8'));
 
 test('el color de Cerrar alcanza 4,5:1 en la parte más clara del degradado', () => {
   const css = readCss();

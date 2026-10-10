@@ -106,6 +106,7 @@ function showLanding() {
   viewTeardown();
   viewTeardown = () => {};
   session.me = null;
+  setPageTitle('landing');
   landingView.classList.remove('hidden');
   loginView.classList.add('hidden');
   viewRoot.classList.add('hidden');
@@ -116,10 +117,30 @@ function showLanding() {
   sessionChip.classList.add('hidden');
 }
 
+// Portada con sesión: el usuario logged-in puede consultar la información
+// pública del producto (tiempo local, vías, herramientas...) sin cerrar sesión
+// y volver al panel cuando quiera. No se limpia la sesión: a diferencia de
+// showLanding, conserva la chip, la navegación privada y el botón de cierre.
+function showLandingView() {
+  viewTeardown();
+  viewTeardown = () => {};
+  landingView.classList.remove('hidden');
+  loginView.classList.add('hidden');
+  viewRoot.classList.add('hidden');
+  publicNav.classList.add('hidden');
+  mainNav.classList.remove('hidden');
+  mobileNav.classList.remove('hidden');
+  logoutButton.classList.remove('hidden');
+  sessionChip.classList.remove('hidden');
+  sessionChip.textContent = `${session.me.email} · ${roleLabel(session.me.role)}`;
+  highlightNav('landing');
+}
+
 function showLogin() {
   viewTeardown();
   viewTeardown = () => {};
   session.me = null;
+  setPageTitle('entrar');
   landingView.classList.add('hidden');
   loginView.classList.remove('hidden');
   viewRoot.classList.add('hidden');
@@ -175,13 +196,33 @@ function isRouteFragment(hash = location.hash) {
 
 function highlightNav(section) {
   const key = section === 'estaciones' ? 'stations' : section === 'avisos' ? 'alerts' : section;
-  mainNav.querySelectorAll('[data-nav]').forEach((link) => link.classList.toggle('active', link.dataset.nav === key));
-  mobileNav.querySelectorAll('[data-mobile-nav]').forEach((link) => {
-    const active = link.dataset.mobileNav === key;
-    link.classList.toggle('active', active);
-    if (active) link.setAttribute('aria-current', 'page');
-    else link.removeAttribute('aria-current');
-  });
+  for (const [nav, attribute] of [[mainNav, 'data-nav'], [mobileNav, 'data-mobile-nav']]) {
+    nav.querySelectorAll(`[${attribute}]`).forEach((link) => {
+      const active = link.getAttribute(attribute) === key;
+      link.classList.toggle('active', active);
+      // La sección abierta se marca también para quien navega con lector de
+      // pantalla: el menú de arriba y el de abajo dicen lo mismo.
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+  }
+}
+
+// El título del documento sigue a la sección abierta. En las pantallas
+// privadas el título público de la portada no corresponde a lo que se ve.
+const PAGE_TITLES = {
+  panel: 'Panel',
+  estaciones: 'Estaciones',
+  avisos: 'Avisos',
+  cuenta: 'Cuenta',
+  admin: 'Administración',
+  entrar: 'Entrar',
+};
+const PUBLIC_PAGE_TITLE = 'Tiempo local medido en Huéscar | TecRural';
+
+function setPageTitle(section) {
+  const label = PAGE_TITLES[section];
+  document.title = label ? `${label} · TecRural` : PUBLIC_PAGE_TITLE;
 }
 
 // Herramienta que el visitante quería abrir antes de autenticarse; se conserva
@@ -195,18 +236,34 @@ async function route() {
   const { section, id, tab } = currentRoute();
   homeMetric(!session.me && section === 'landing');
   lockedMetric(!session.me && ['panel', 'estaciones', 'avisos'].includes(section));
+  setPageTitle(section);
   if (!session.me) {
     // La portada y las páginas públicas no piden sesión. Solo el panel y el
     // resto de secciones privadas muestran el login.
     if (section === 'entrar' || PRIVATE_SECTIONS.has(section)) {
+      // Quien llega a una sección privada sin sesión ve el formulario de
+      // acceso: el título es el de esa pantalla, no el de la sección pedida.
+      setPageTitle('entrar');
       pendingReturn = section; showLogin(); return;
     }
     showLanding();
     if (PUBLIC_SECTIONS.has(section)) scrollToPublicSection(section);
     return;
   }
-  // Con sesión, la portada lleva directo al panel.
-  if (section === 'landing' || section === 'entrar') { location.hash = '#/panel'; return; }
+// Con sesión, la portada y las secciones públicas se pueden consultar sin
+  // cerrar sesión: la app las muestra con su propia navegación para que el
+  // usuario pueda volver al panel cuando quiera. No se exige cerrar sesión para
+  // consultar la información del producto.
+  if (section === 'landing' || section === 'entrar') {
+    if (section === 'entrar') { location.hash = '#/panel'; return; }
+    showLandingView();
+    return;
+  }
+  if (PUBLIC_SECTIONS.has(section)) {
+    showLandingView();
+    scrollToPublicSection(section);
+    return;
+  }
   showApp();
   highlightNav(section);
   viewTeardown();
@@ -231,7 +288,10 @@ async function route() {
     viewRoot.innerHTML = '<section class="panel"><p class="error" data-route-error></p></section>';
     $('[data-route-error]', viewRoot).textContent = `No se pudo cargar la vista: ${error.message}`;
   }
-  if (section !== 'panel') window.scrollTo({ top: 0 });
+  // Toda sección nueva empieza en su cabecera: el panel no se quedaba con el
+  // scroll de la pantalla anterior, y en móvil eso dejaba el título y el
+  // selector de periodo fuera de vista.
+  window.scrollTo({ top: 0 });
   showConnection();
 }
 
@@ -264,6 +324,7 @@ function renderMagicView() {
   const form = $('#magic-form');
   const notice = $('#magic-unavailable');
   const confirm = $('#magic-confirm');
+  const sent = $('#magic-sent');
   if (!form || !notice) return;
   const title = $('#magic-title');
   const description = $('#magic-description');
@@ -273,14 +334,30 @@ function renderMagicView() {
     : 'Te enviamos un enlace de un solo uso. Sin contraseña y sin crear cuenta con antelación.';
   if (pendingMagicToken) {
     form.classList.add('hidden');
+    sent.classList.add('hidden');
     notice.classList.add('hidden');
     confirm?.classList.remove('hidden');
     return;
   }
   confirm?.classList.add('hidden');
   const unavailable = session.support?.emailAvailable === false;
-  form.classList.toggle('hidden', unavailable);
+  const hasSentState = resendCooldown > 0 || lastSentEmail;
+  form.classList.toggle('hidden', unavailable || hasSentState);
+  sent.classList.toggle('hidden', !hasSentState);
   notice.classList.toggle('hidden', !unavailable);
+  if (hasSentState && !unavailable) {
+    $('#magic-sent-email').textContent = lastSentEmail;
+    if (resendCooldown > 0) {
+      $('#magic-resend-hint').classList.remove('hidden');
+      $('#magic-resend').classList.add('hidden');
+      resendCooldown = 60;
+      updateResendCountdown();
+    } else {
+      $('#magic-resend-hint').classList.add('hidden');
+      $('#magic-resend').classList.remove('hidden');
+    }
+    $('#magic-sent-email').textContent = lastSentEmail;
+  }
   const phone = session.support?.supportPhone;
   const whatsapp = session.support?.supportWhatsapp;
   const contact = [phone && `teléfono ${phone}`, whatsapp && whatsapp !== phone && `WhatsApp ${whatsapp}`]
@@ -288,6 +365,63 @@ function renderMagicView() {
   $('[data-magic-support]', notice).textContent = contact ? `¿Dudas? Escríbenos: ${contact}.` : '';
 }
 
+// Estado de reenvío: 60 s de espera entre envíos.
+let resendCooldown = 0;
+let resendTimer = null;
+let lastSentEmail = '';
+
+function startResendCooldown() {
+  resendCooldown = 60;
+  lastSentEmail = $('#magic-form input[name="email"]').value.trim();
+  $('#magic-form').classList.add('hidden');
+  $('#magic-sent').classList.remove('hidden');
+  $('#magic-sent-email').textContent = lastSentEmail;
+  $('#magic-resend').classList.add('hidden');
+  $('#magic-resend-hint').classList.remove('hidden');
+  updateResendCountdown();
+}
+
+function updateResendCountdown() {
+  const countdownEl = $('#magic-resend-countdown');
+  if (resendCooldown > 0) {
+    countdownEl.textContent = resendCooldown;
+    resendCooldown--;
+    resendTimer = setTimeout(updateResendCountdown, 1000);
+  } else {
+    countdownEl.textContent = '0';
+    $('#magic-resend-hint').classList.add('hidden');
+    $('#magic-resend').classList.remove('hidden');
+  }
+}
+
+function clearResendTimer() {
+  if (resendTimer) {
+    clearTimeout(resendTimer);
+    resendTimer = null;
+  }
+  resendCooldown = 0;
+}
+
+function showSentState() {
+  $('#magic-form').classList.add('hidden');
+  $('#magic-sent').classList.remove('hidden');
+  $('#magic-sent-email').textContent = lastSentEmail;
+  $('#magic-resend').classList.add('hidden');
+  $('#magic-resend-hint').classList.remove('hidden');
+  resendCooldown = 60;
+  updateResendCountdown();
+}
+
+function showFormAgain() {
+  clearResendTimer();
+  $('#magic-sent').classList.add('hidden');
+  $('#magic-form').classList.remove('hidden');
+  $('#magic-status').textContent = '';
+  $('#magic-error').textContent = '';
+  $('#magic-form input[name="email"]').value = lastSentEmail;
+}
+
+// Enviar enlace: pasa a estado "enviado" con cuenta atrás y opción de cambiar correo.
 $('#magic-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
@@ -304,11 +438,10 @@ $('#magic-form').addEventListener('submit', async (event) => {
       body: JSON.stringify({
         email: data.get('email'),
         next: pendingReturn,
-        commercial_consent: data.get('marketing') === 'on',
         acquisition,
       }),
     });
-    statusEl.textContent = 'Si la dirección puede recibir acceso, te hemos enviado un enlace. Revisa tu correo y la carpeta de spam.';
+    startResendCooldown();
   } catch (error) {
     statusEl.textContent = '';
     if (error.message === 'email_delivery_unavailable') {
@@ -319,7 +452,43 @@ $('#magic-form').addEventListener('submit', async (event) => {
     } else {
       errorEl.textContent = 'No se pudo solicitar el acceso. Inténtalo de nuevo en unos minutos.';
     }
+    button.disabled = false;
   } finally {
+    if (!resendCooldown) {
+      button.disabled = false;
+    }
+  }
+});
+
+$('#magic-change-email').addEventListener('click', () => {
+  showFormAgain();
+});
+
+$('#magic-resend').addEventListener('click', async () => {
+  if (resendCooldown > 0) return;
+  const button = $('#magic-resend');
+  button.disabled = true;
+  const statusEl = $('#magic-sent-status');
+  const errorEl = $('#magic-error');
+  errorEl.textContent = '';
+  statusEl.textContent = 'Reenviando…';
+  try {
+    await api('/api/auth/magic/request', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: lastSentEmail,
+        next: pendingReturn,
+        acquisition,
+      }),
+    });
+    startResendCooldown();
+  } catch (error) {
+    statusEl.textContent = '';
+    if (error.message === 'email_delivery_unavailable') {
+      statusEl.textContent = 'El acceso por correo no está disponible ahora mismo. Usa la solicitud de acceso y te contactaremos.';
+    } else {
+      statusEl.textContent = 'No se pudo reenviar el enlace. Inténtalo de nuevo en unos minutos.';
+    }
     button.disabled = false;
   }
 });

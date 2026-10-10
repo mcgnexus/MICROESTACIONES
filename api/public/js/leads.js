@@ -16,35 +16,38 @@ const acquisition = (() => {
 })();
 
 export const LEAD_FORM_HTML = `
-<div class="section-heading"><div><p class="eyebrow">SOLICITUD</p><h2 data-lead-title></h2></div></div>
+  <div class="section-heading"><div><p class="eyebrow">SOLICITUD</p><h2 data-lead-title></h2></div></div>
     <p class="hint" data-lead-description>Déjanos tus datos y revisaremos la solicitud.</p>
-    <p class="hint"><strong>Esta no es la vía de acceso inmediato.</strong> Para entrar ahora mismo con tu correo, usa <a href="#/entrar">Entrar</a>. Y para ver un ejemplo sin registrarte, está la <a href="#/demo-agricola">demostración</a>.</p>
+    <p class="hint"><strong>Esta no es la vía de acceso inmediato.</strong> Para entrar ahora mismo con tu correo, usa <a href="#/entrar">Entrar</a>. Y para ver un ejemplo con datos inventados, está la <a href="#/demo-agricola">simulación</a>.</p>
   <form class="rule-form" data-lead-form>
     <label>Tu nombre<input name="name" required minlength="2" maxlength="120" autocomplete="name"></label>
-    <label>Teléfono de WhatsApp<input name="phone" required inputmode="tel" maxlength="30" autocomplete="tel" placeholder="+34 600 000 000"></label>
-    <label>Correo electrónico (opcional)<input name="email" type="email" maxlength="254" autocomplete="email"></label>
-    <label>Tipo de actividad
-      <select name="activity">
-        <option value="agricultura">Agricultura</option>
-        <option value="ganaderia">Ganadería</option>
-        <option value="mixta">Agricultura y ganadería</option>
-        <option value="otra">Otra</option>
-      </select>
-    </label>
+    <label>Teléfono de contacto<input name="phone" type="tel" required inputmode="tel" maxlength="30" autocomplete="tel" placeholder="+34 600 000 000"></label>
     <label>Zona o localidad<input name="zone" maxlength="160"></label>
-    <label>Cultivo o ganado<input name="crop_or_livestock" maxlength="160"></label>
-    <label>¿Qué te interesa más?
-      <select name="interest">
-        <option value="general">Información general</option>
-        <option value="heladas">Heladas</option>
-        <option value="calor">Golpes de calor</option>
-        <option value="tormentas">Tormentas</option>
-        <option value="viento">Viento</option>
-        <option value="humedad">Humedad</option>
-        <option value="futura_instalacion">Futura instalación</option>
-      </select>
-    </label>
-    <label>Notas<textarea name="notes" maxlength="1000" rows="2"></textarea></label>
+    <details class="lead-details span-all"><summary>Cuéntanos más de tu actividad (opcional)</summary>
+      <label>Correo electrónico<input name="email" type="email" maxlength="254" autocomplete="email"></label>
+      <label>Tipo de actividad
+        <select name="activity">
+          <option value="agricultura">Agricultura</option>
+          <option value="ganaderia">Ganadería</option>
+          <option value="mixta">Agricultura y ganadería</option>
+          <option value="otra">Otra</option>
+        </select>
+      </label>
+      <label>Cultivo o ganado<input name="crop_or_livestock" maxlength="160"></label>
+      <label>¿Qué te interesa más?
+        <select name="interest">
+          <option value="general">Información general</option>
+          <option value="heladas">Heladas</option>
+          <option value="calor">Golpes de calor</option>
+          <option value="tormentas">Tormentas</option>
+          <option value="viento">Viento</option>
+          <option value="humedad">Humedad</option>
+          <option value="futura_instalacion">Futura instalación</option>
+        </select>
+      </label>
+      <label>Notas<textarea name="notes" maxlength="1000" rows="2"></textarea></label>
+    </details>
+    <p class="hint span-all">Siguiente paso: revisamos la solicitud en un plazo de 5 días laborables y te contactamos para confirmar el acceso. El envío no programa una instalación automática.</p>
     <label class="check span-all"><input type="checkbox" name="consent" required> Acepto que TecRural contacte conmigo para responder a esta solicitud y tramitar el acceso. Consulta la <a href="/privacidad">Política de privacidad</a>.</label>
     <label class="check span-all"><input type="checkbox" name="commercial_consent"> Quiero recibir novedades y ofertas sobre microestaciones (opcional). Puedes darte de baja cuando quieras.</label>
     <input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" class="honeypot">

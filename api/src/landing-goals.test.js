@@ -35,7 +35,7 @@ test('las tres vías se separan y cada una declara su resultado antes del enlace
   const cards = vias.split('<article class="via-card">').slice(1);
   assert.equal(cards.length, 3, 'se esperaban tres caminos distintos');
   const expected = [
-    ['Ver la demostración', '#/demo-agricola', /sin cre(ar|é) cuenta|no creas cuenta|ningún dato sale/i],
+    ['Ver la simulación', '#/demo-agricola', /sin cre(ar|é) cuenta|no creas cuenta|ningún dato sale/i],
     ['Entrar con tu correo', '#/entrar', /acceso inmediato/i],
     ['Consultar una instalación', '#/solicitar-piloto', /hasta que te escribamos no hay acceso concedido/i],
   ];

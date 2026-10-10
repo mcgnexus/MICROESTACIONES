@@ -1,7 +1,7 @@
 import {
   $, api, escapeText, dateText, dayText, numberText, pressureMbar, pressureText, chartTrend,
   chartSection, connectivityBadge, openDialog, makeChart, trendWindows, trendPeriodLabel, session, renderSupport,
-  isAdmin, canEdit,
+  isAdmin, canEdit, freshness, roleLabel, locationLabel,
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
 import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
@@ -20,6 +20,21 @@ const REFRESH_MS = 15 * 60 * 1000;
 // después, cada aviso abierto nuevo dispara una notificación del navegador.
 const seenOpenAlerts = new Set();
 let alertsBaselineDone = false;
+
+// Cabecera del panel: nombre y tipo de cada estación más el rol efectivo. El
+// detalle técnico queda en las tarjetas; aquí solo se sitúa quién eres y qué
+// estaciones ves, que es lo primero que pide la organización de lectura.
+function setPanelContext(root, devices = []) {
+  const target = $('[data-panel-context]', root);
+  if (!target) return;
+  const stations = devices.map((item) => {
+    const type = item?.device?.locationType ? ` · ${locationLabel(item.device.locationType)}` : '';
+    return `${item?.device?.name || '—'}${type}`;
+  });
+  const role = session.me?.role ? roleLabel(session.me.role) : null;
+  const access = canEdit() ? 'Acceso de edición' : 'Solo lectura';
+  target.textContent = [role, ...stations, access].filter(Boolean).join(' · ');
+}
 
 function surfaceNewAlerts(openAlerts) {
   if (!alertsBaselineDone) {
@@ -329,7 +344,7 @@ function heroBlock({ latest, history, weather, status, detailKey }) {
         <div class="hero-temperature"><strong>${numberText(temperature)}</strong><span>°C</span></div>
         <div class="hero-forecast"><span class="hero-weather-icon">${icon(forecast ? (aemetDay ? 'cloud' : 'cloud') : 'station', { size: 22 })}</span><strong>${escapeText(forecastSky)}</strong><small>${forecastProvider ? `Previsión · ${forecastProvider}` : 'Previsión no disponible'}</small>${minimum != null || maximum != null ? `<small>${numberText(minimum)}° / ${numberText(maximum)}°</small>` : ''}</div>
       </div>
-      <div class="hero-readout-footer"><span>Medición local · ${dateText(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} mbar</span></div>
+      <div class="hero-readout-footer"><span>Medición local · ${freshness(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} mbar</span></div>
     </div>
   </section>`;
 }
@@ -355,14 +370,19 @@ function heroFirstSection(item) {
   </section>`;
 }
 
-// Al abrir el panel, la vista se centra en la tarjeta grande de temperatura.
-// Solo en la primera carga: los refrescos silenciosos no mueven el scroll.
+// Al abrir el panel, la tarjeta grande recibe el foco, pero el scroll no se
+// va con ella: la vista se queda en la cabecera para que el título y el
+// selector de periodo sigan visibles (en móvil, centrar la tarjeta los dejaba
+// fuera de pantalla). Solo en la primera carga: los refrescos silenciosos no
+// mueven el scroll.
 function focusHeroSlot(slot) {
   const hero = slot?.querySelector('.station-hero');
   if (!hero || typeof hero.scrollIntoView !== 'function') return;
-  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   hero.focus({ preventScroll: true });
-  hero.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+  const heading = slot?.parentElement?.querySelector('.page-heading');
+  if (!heading || typeof heading.scrollIntoView !== 'function') return;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  heading.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
 }
 
 function comparisonBlock({ latest, history, trendHistory, weather, sensors, status, detailKey }) {
@@ -394,7 +414,7 @@ function comparisonBlock({ latest, history, trendHistory, weather, sensors, stat
   const observationCacheAge = weather.aemet?.observationAgeSeconds == null ? ''
     : ` · respuesta utilizable hace ${Math.round(weather.aemet.observationAgeSeconds / 60)} min`;
   const aemetStatus = observation
-    ? `Estación ${escapeText(observation.stationId)} · medida ${dateText(observation.observedAt)}${observationStatus === 'stale' ? ` · caché antigua${observationCacheAge}` : ''}`
+    ? `Estación ${escapeText(observation.stationId)} · medida ${freshness(observation.observedAt)}${observationStatus === 'stale' ? ` · caché antigua${observationCacheAge}` : ''}`
     : observationStatus === 'unconfigured' ? 'Consulta AEMET no configurada'
       : observationStatus === 'empty' ? 'Sin observación en la respuesta AEMET'
         : 'Observación AEMET no disponible';
@@ -407,7 +427,7 @@ function comparisonBlock({ latest, history, trendHistory, weather, sensors, stat
   // producto: su lugar es la ficha del equipo y la portada, no la rejilla de
   // lecturas, donde ocupaban cuatro huecos «Próximamente».
   return `<div class="reading-comparison">
-    <section class="reading-source local-readings"><div class="reading-source-head"><h3>Microestación</h3><small>${dateText(latest?.observedAt)}</small></div><div class="reading-grid">${local}</div></section>
+    <section class="reading-source local-readings"><div class="reading-source-head"><h3>Microestación</h3><small>Actualizado ${freshness(latest?.observedAt)}</small></div><div class="reading-grid">${local}</div></section>
     <section class="reading-source aemet-readings"><div class="reading-source-head"><h3>AEMET</h3><small>${aemetStatus}</small></div><div class="reading-grid">${aemetCards}</div>${proximityNote}</section>
     ${temperatureComparisonBlock(weather?.comparison)}
     <p class="reading-legend"><span class="legend-swatch legend-green"></span> rango habitual <span class="legend-swatch legend-blue"></span> frío/fresco <span class="legend-swatch legend-amber"></span> precaución <span class="legend-swatch legend-red"></span> extremo. La presión se colorea respecto a la mediana del periodo. Viento y precipitación los aporta AEMET, no esta estación.</p>
@@ -425,7 +445,13 @@ function temperatureComparisonBlock(comparison) {
   if (!comparison) return '';
   const local = comparison.local;
   const aemet = comparison.aemet;
-  if (!local || !aemet) return `<section class="detail-block temperature-comparison"><h4>Comparación temporal de temperatura</h4><p class="hint">No hay mediciones emparejables. Las observaciones local y AEMET se mantienen independientes.</p></section>`;
+  // El titular dice qué se está comparando: la última pareja dentro de la
+  // ventana, que no tiene por qué ser la lectura de ahora. Sin ese matiz, dos
+  // horas distintas en la misma tarjeta se leen como un error.
+  const pairTitle = local?.observedAt && aemet?.observedAt
+    ? `Última pareja comparable · ${clockLabel(local.observedAt)}–${clockLabel(aemet.observedAt)}`
+    : 'Última pareja comparable';
+  if (!local || !aemet) return `<section class="detail-block temperature-comparison"><h4>${pairTitle}</h4><p class="hint">No hay mediciones emparejables. Las observaciones local y AEMET se mantienen independientes.</p></section>`;
   const difference = comparison.state === 'matched' && comparison.differenceC != null
     ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
     : 'Sin diferencia directa';
@@ -436,19 +462,26 @@ function temperatureComparisonBlock(comparison) {
     : `No hay pareja dentro de ±${comparison.windowMinutes} min; se muestran ambas horas y no se calcula diferencia${offset}.`;
   const proximity = comparison.proximity;
   const metadata = proximity ? `<p class="aemet-proximity">${numberText(proximity.distanceKm, 1)} km · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} (${escapeText(proximity.aemetAltitudeSource || 'fuente no disponible')}) · microestación ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} (${escapeText(proximity.microAltitudeSource || 'fuente no disponible')}).</p>` : '';
-  return `<section class="detail-block temperature-comparison"><h4>Comparación temporal de temperatura</h4><div class="reading-grid">
+  return `<section class="detail-block temperature-comparison"><h4>${pairTitle}</h4><div class="reading-grid">
     ${readingCard({ label: `Microestación · ${escapeText(local.location || 'zona configurada')}`, icon: 'temperature', value: numberText(local.temperatureC), unit: `°C · ${dateText(local.observedAt)}`, tone: 'tone-neutral' })}
     ${readingCard({ label: `AEMET · ${escapeText(aemet.stationId || 'estación')}`, icon: 'station', value: numberText(aemet.temperatureC), unit: `°C · ${dateText(aemet.observedAt)}`, tone: 'tone-neutral' })}
     ${readingCard({ label: 'Microestación − AEMET', icon: 'difference', value: difference, unit: '', tone: comparison.state === 'matched' ? 'tone-neutral' : 'tone-muted' })}
-  </div><p class="hint">${escapeText(reason)} Diferencia positiva: microestación más cálida; negativa: más fría.</p>${metadata}<p class="hint">La diferencia puede relacionarse con distancia, altitud, exposición y entorno. No se atribuye a un único factor.</p></section>`;
+  </div><p class="hint">${escapeText(reason)} Esta comparación no describe el instante presente: usa la pareja más reciente dentro de la ventana, y la lectura de ahora puede ser más nueva. Diferencia positiva: microestación más cálida; negativa: más fría.</p>${metadata}<p class="hint">La diferencia puede relacionarse con distancia, altitud, exposición y entorno. No se atribuye a un único factor.</p></section>`;
 }
+
+// Hora corta para titulares de comparación: 22:00, sin fecha ni segundos.
+const clockLabel = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+};
 
 function weatherBlock(weather, detailKey) {
   if (!weather?.configured) return '';
   const open = weather.openMeteo;
   const current = open?.current;
   const currentBlock = current && !weather.aemet?.observation ? `<div class="weather-current">
-    <div class="weather-current-title"><div><span class="source-tag">Open-Meteo · condición actual estimada</span><h4>${weatherText(current.weatherCode)}</h4></div><small>Actualizado ${dateText(open.fetchedAt)}</small></div>
+    <div class="weather-current-title"><div><span class="source-tag">Open-Meteo · condición actual estimada</span><h4>${weatherText(current.weatherCode)}</h4></div><small>Actualizado ${freshness(open.fetchedAt)}</small></div>
     <div class="weather-metrics">
       <div><span><span class="weather-icon">${icon('temperature', { size: 15 })}</span> Temperatura</span><strong>${numberText(current.temperatureC)} °C</strong></div>
       <div><span><span class="weather-icon">${icon('humidity', { size: 15 })}</span> Humedad</span><strong>${numberText(current.humidityPct)} %</strong></div>
@@ -463,7 +496,7 @@ function weatherBlock(weather, detailKey) {
   const openDays = open?.daily || [];
   const hours = aemetHasForecast ? [] : (open?.hourly || []).slice(0, 24).filter((_, index) => index % 3 === 0);
   const hourlyForecast = hours.length ? `<details class="weather-hourly"><summary>Previsión por horas · próximas 24 h</summary><div class="weather-hours">${hours.map((hour) => `<div><strong>${dateText(hour.forecastFor)}</strong><span><span class="weather-icon">${icon('temperature', { size: 15 })}</span> ${numberText(hour.temperatureC)} °C · <span class="weather-icon">${icon('humidity', { size: 15 })}</span> ${numberText(hour.humidityPct)} %</span><span><span class="weather-icon">${icon('rain', { size: 15 })}</span> ${numberText(hour.precipitationMm)} mm${hour.precipitationProbabilityPct != null ? ` · ${numberText(hour.precipitationProbabilityPct, 0)} %` : ''}</span><span><span class="weather-icon">${icon('wind', { size: 15 })}</span> ${numberText(hour.windKmh)} km/h · rachas ${numberText(hour.windGustKmh)} km/h</span></div>`).join('')}</div></details>` : '';
-  const openForecast = !aemetHasForecast && openDays.length ? `<div class="weather-provider"><h4>Previsión Open-Meteo · 5 días · actualizado ${dateText(open.fetchedAt)}</h4><div class="weather-days">${openDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
+  const openForecast = !aemetHasForecast && openDays.length ? `<div class="weather-provider"><h4>Previsión Open-Meteo · 5 días · actualizado ${freshness(open.fetchedAt)}</h4><div class="weather-days">${openDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
     <strong>${dayText(`${day.date}T12:00:00`)}</strong><span>${weatherText(day.weatherCode)}</span>
     <span><span class="weather-icon">${icon('temperature', { size: 15 })}</span> ${numberText(day.temperatureMinC)}–${numberText(day.temperatureMaxC)} °C</span>
     <span><span class="weather-icon">${icon('rain', { size: 15 })}</span> ${numberText(day.precipitationMm)} mm${day.precipitationProbabilityPct != null ? ` · ${numberText(day.precipitationProbabilityPct, 0)} %` : ''}</span>
@@ -472,7 +505,7 @@ function weatherBlock(weather, detailKey) {
   const aemetDays = weather.aemet?.forecast?.days || [];
   const aemetForecastAge = weather.aemet?.forecastStatus === 'stale' && weather.aemet?.forecastAgeSeconds != null
     ? ` · respuesta antigua (${Math.round(weather.aemet.forecastAgeSeconds / 60)} min)` : '';
-  const aemetForecast = aemetDays.length ? `<div class="weather-provider"><h4>Previsión municipal AEMET · ${escapeText(weather.aemet.forecast.municipality || weather.location)} · actualizado ${dateText(weather.aemet.forecastFetchedAt)}${aemetForecastAge}</h4><div class="weather-days">${aemetDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
+  const aemetForecast = aemetDays.length ? `<div class="weather-provider"><h4>Previsión municipal AEMET · ${escapeText(weather.aemet.forecast.municipality || weather.location)} · actualizado ${freshness(weather.aemet.forecastFetchedAt)}${aemetForecastAge}</h4><div class="weather-days">${aemetDays.map((day) => `<div class="weather-day"${detailAttrs(detailKey, 'forecast', 'local')} data-detail-day="${escapeText(String(day.date).slice(0, 10))}">
     <strong>${dayText(`${String(day.date).slice(0, 10)}T12:00:00`)}</strong><span>${escapeText(day.sky || 'Sin descripción')}</span>
     <span><span class="weather-icon">${icon('temperature', { size: 15 })}</span> ${numberText(day.temperatureMinC)}–${numberText(day.temperatureMaxC)} °C</span>
     <span><span class="weather-icon">${icon('rain', { size: 15 })}</span> Probabilidad máx. ${numberText(day.precipitationProbabilityPct, 0)} %</span>
@@ -561,7 +594,7 @@ const sensorState = Object.entries({ Temperatura: sensors.temperature, Humedad: 
         <div>
           <p class="eyebrow">ESTACIÓN · ${escapeText(device.id)}</p>
           <h2><a href="#/estaciones/${encodeURIComponent(device.id)}">${escapeText(device.name)}</a></h2>
-          <p class="updated">Última actualización: ${dateText(updated)} ${latestNote}</p>
+          <p class="updated">Actualizado ${freshness(updated)} ${latestNote}</p>
         </div>
         <div class="station-tags">${connectivityBadge(status.connectivity)}${status.dataFreshness === 'stale' ? '<span class="badge badge-warn">Datos antiguos</span>' : status.dataFreshness === 'unknown' ? '<span class="badge badge-muted">Sin datos válidos</span>' : ''}</div>
       </div>
@@ -574,7 +607,7 @@ const sensorState = Object.entries({ Temperatura: sensors.temperature, Humedad: 
       <div>
         <p class="eyebrow">ESTACIÓN · ${escapeText(device.id)}</p>
         <h2><a href="#/estaciones/${encodeURIComponent(device.id)}">${escapeText(device.name)}</a></h2>
-        <p class="updated">Última actualización: ${dateText(updated)} ${latestNote}</p>
+        <p class="updated">Actualizado ${freshness(updated)} ${latestNote}</p>
       </div>
       <div class="station-tags">${connectivityBadge(status.connectivity)}${status.dataFreshness === 'stale' ? '<span class="badge badge-warn">Datos antiguos</span>' : status.dataFreshness === 'unknown' ? '<span class="badge badge-muted">Sin datos válidos</span>' : ''}${canEdit() ? `<span class="badge badge-muted">Config v${status.configVersion}</span>` : ''}</div>
     </div>
@@ -645,17 +678,58 @@ function panelDocumentation() {
     </details>`;
 }
 
+// ---- Refresco visible del panel -------------------------------------------
+// El panel se vuelve a consultar cada 15 minutos (REFRESH_MS), pero ese
+// intervalo es código, no algo que se vea. El botón «Actualizar» deja pedirlo
+// a mano y la marca de «última consulta» dice cuándo se pidió por última vez.
+// La consulta es al servidor; la medición es el dato que se muestra en las
+// tarjetas. Son cosas distintas y aquí no se nombran igual.
+function refreshControls() {
+  return `<button type="button" class="quiet" data-refresh>${icon('refresh', { size: 15 })} Actualizar</button>
+      <p class="hint refresh-meta" data-refresh-status role="status" aria-live="polite">Última consulta: pendiente.</p>`;
+}
+
+// Mientras llega la respuesta no se borra nada: los datos anteriores siguen
+// en pantalla y la carga se anuncia en la cabecera, que encabeza todos los
+// bloques que la consulta va a tocar.
+function createRefreshState(root) {
+  const status = $('[data-refresh-status]', root);
+  const button = $('[data-refresh]', root);
+  let lastQueryAt = null;
+  let busy = false;
+  const paint = () => {
+    if (!status) return;
+    if (busy) status.textContent = 'Consultando… se conservan los datos anteriores.';
+    else if (lastQueryAt) status.textContent = `Última consulta: ${dateText(lastQueryAt)}`;
+    else status.textContent = 'Última consulta: pendiente.';
+  };
+  const setBusy = (value) => {
+    busy = value;
+    if (value) root.setAttribute('aria-busy', 'true');
+    else root.removeAttribute('aria-busy');
+    if (button) button.disabled = value;
+    paint();
+  };
+  paint();
+  return {
+    begin: () => setBusy(true),
+    done: () => { lastQueryAt = new Date().toISOString(); setBusy(false); },
+    fail: () => setBusy(false),
+  };
+}
+
 // Panel sencillo para el agricultor: estado, alertas, próximo riesgo, evolución
 // y, al final, el detalle técnico. El administrador usa el completo.
 async function renderSimplePanel(root) {
   root.innerHTML = `
     <div class="page-heading">
-      <div><p class="eyebrow">TU FINCA</p><h1>Resumen de un vistazo</h1></div>
+      <div><p class="eyebrow">TU FINCA</p><h1>Resumen de un vistazo</h1><p class="hint panel-context" data-panel-context></p></div>
       <div class="row-actions">
         <button type="button" class="quiet hidden" data-notify-enable title="Recibir alertas emergentes del navegador">${icon('alerts', { size: 15 })} Alertas emergentes</button>
         <label class="period-label">Periodo del histórico
           <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
         </label>
+        ${refreshControls()}
       </div>
     </div>
     <p class="error" data-error role="alert"></p>
@@ -699,11 +773,14 @@ async function renderSimplePanel(root) {
   resetStationDetails();
   renderSupport(root);
   let heroFocused = false;
+  const refresh = createRefreshState(root);
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) $('[data-error]', root).textContent = '';
+    refresh.begin();
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
+      setPanelContext(root, data.devices);
       $('#simple-hero', root).innerHTML = heroFirstSection(primaryReading(data.devices));
       $('#simple-state', root).innerHTML = renderStateCards(data.devices);
       const caveat = coverageCaveat(data.devices);
@@ -726,8 +803,10 @@ async function renderSimplePanel(root) {
         ? data.devices.map((item) => renderStationCard(item, { chartsOnly: true })).join('')
         : '<p class="empty">Todavía no hay estaciones que mostrar.</p>';
       surfaceNewAlerts(open);
+      refresh.done();
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
+      refresh.fail();
       if (error.message === 'authentication_required' || error.message === 'session_expired') return [];
       $('[data-error]', root).textContent = `No se pudo cargar el panel: ${error.message}`;
       return [];
@@ -737,6 +816,7 @@ async function renderSimplePanel(root) {
   const stations = await loadDashboard();
   mountMeasurements($('#simple-measurements', root), { stations });
   $('#period', root).addEventListener('change', loadDashboard);
+  $('[data-refresh]', root).addEventListener('click', () => loadDashboard());
   wireNotificationButton(root);
 
   let refreshTimer = null;
@@ -755,7 +835,7 @@ async function renderSimplePanel(root) {
 }
 
 // ---- Panel de demostración para usuarios registrados ----------------------
-// Solo lectura y solo sobre estaciones autorizadas para la demostración. No
+// Solo lectura y solo sobre estaciones autorizadas para consulta. No
 // incluye edición, borrado, reglas, configuración ni administración.
 const DEMO_PERIOD_HOURS = { '24h': 24, '7d': 168, '30d': 720 };
 
@@ -843,12 +923,21 @@ export function renderDemoDetails(data) {
 // → detalles. Lo que explica, documenta o calcula se pliega en «Detalles» para
 // que quien solo viene a consultar el valor de ahora no lo atraviese.
 async function renderDemoPanel(root) {
+  // Tres palabras con significados que no deben mezclarse: los datos de este
+  // panel son REALES (vienen de la estación urbana), el acceso es de CONSULTA y
+  // el permiso es de SOLO LECTURA. «Simulación» queda reservado para la
+  // demostración con datos inventados de la portada, que nunca entra aquí.
   root.innerHTML = `
     <div class="page-heading">
-      <div><p class="eyebrow">DEMOSTRACIÓN · SOLO LECTURA</p><h1>Panel ampliado</h1></div>
-      <label class="period-label">Periodo
-        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
-      </label>
+      <div><p class="eyebrow">ESTACIÓN URBANA REAL · ACCESO DE CONSULTA</p><h1>Panel ampliado</h1>
+        <p class="hint">Datos reales medidos por la estación. Solo lectura: este acceso no permite editar, borrar ni configurar nada.</p>
+        <p class="hint panel-context" data-panel-context></p></div>
+      <div class="row-actions">
+        <label class="period-label">Periodo
+          <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+        </label>
+        ${refreshControls()}
+      </div>
     </div>
     <p class="error" data-error role="alert"></p>
     <div id="demo-hero" class="hero-first-slot"></div>
@@ -879,7 +968,7 @@ async function renderDemoPanel(root) {
       </section>
       <section class="panel">
         <div class="section-heading"><div><p class="eyebrow">ALCANCE</p><h2>Herramientas ampliadas del registro</h2></div></div>
-        <p class="hint">Este panel usa <strong>solo estaciones autorizadas para la demostración</strong> y no permite editar, borrar ni configurar nada. Las estaciones privadas de terceros no son accesibles desde aquí.</p>
+        <p class="hint">Este panel muestra <strong>estaciones reales autorizadas para consulta</strong> y no permite editar, borrar ni configurar nada. Las estaciones privadas de terceros no son accesibles desde aquí. La simulación con datos inventados está en la portada y nunca aparece en este panel.</p>
       </section>
       <section class="panel">
         <div class="section-heading"><div><p class="eyebrow">CÓMO FUNCIONAN LOS AVISOS</p><h2>Qué llega aquí y por qué</h2></div></div>
@@ -895,11 +984,12 @@ async function renderDemoPanel(root) {
   renderSupport(root);
   let lastDevices = [];
   let heroFocused = false;
+  const refresh = createRefreshState(root);
 
   const loadAnalysis = async () => {
     const deviceId = $('#demo-device', root)?.value;
     if (!deviceId) {
-      $('#demo-overview', root).innerHTML = '<p class="empty">No hay estaciones autorizadas para la demostración.</p>';
+      $('#demo-overview', root).innerHTML = '<p class="empty">No hay estaciones autorizadas para consulta.</p>';
       $('#demo-analysis', root).innerHTML = '';
       return;
     }
@@ -917,10 +1007,12 @@ async function renderDemoPanel(root) {
 
   const load = async () => {
     $('[data-error]', root).textContent = '';
+    refresh.begin();
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
       lastDevices = data.devices || [];
+      setPanelContext(root, lastDevices);
       $('#demo-hero', root).innerHTML = heroFirstSection(primaryReading(lastDevices));
       $('#demo-state', root).innerHTML = renderStateCards(lastDevices);
       // Los avisos llegan del mismo /dashboard, ya acotados por el servidor a las
@@ -935,20 +1027,23 @@ async function renderDemoPanel(root) {
         : emptyAlertsHtml(caveat);
       $('#demo-stations', root).innerHTML = lastDevices.length
         ? lastDevices.map((item) => renderStationCard(item, { chartsOnly: true })).join('')
-        : '<section class="panel"><p class="empty">Todavía no hay estaciones autorizadas para la demostración.</p></section>';
+        : '<section class="panel"><p class="empty">Todavía no hay estaciones autorizadas para consulta.</p></section>';
       const select = $('#demo-device', root);
       const previous = select.value;
       select.innerHTML = lastDevices.map((item) => `<option value="${escapeText(item.device.id)}">${escapeText(item.device.name)}</option>`).join('');
       if (lastDevices.some((item) => item.device.id === previous)) select.value = previous;
       if (!heroFocused && lastDevices.length) { heroFocused = true; focusHeroSlot($('#demo-hero', root)); }
+      refresh.done();
       await loadAnalysis();
     } catch (error) {
+      refresh.fail();
       $('[data-error]', root).textContent = `No se pudo cargar el panel: ${error.message}`;
     }
   };
 
   $('#period', root).addEventListener('change', load);
   $('#demo-device', root).addEventListener('change', loadAnalysis);
+  $('[data-refresh]', root).addEventListener('click', () => load());
   await load();
 
   let refreshTimer = null;
@@ -965,12 +1060,13 @@ export async function renderPanel(root) {
   if (!isAdmin()) return renderSimplePanel(root);
   root.innerHTML = `
     <div class="page-heading">
-      <div><p class="eyebrow">ADMINISTRACIÓN · TU FINCA</p><h1>Estado y alertas</h1></div>
+      <div><p class="eyebrow">ADMINISTRACIÓN · TU FINCA</p><h1>Estado y alertas</h1><p class="hint panel-context" data-panel-context></p></div>
       <div class="row-actions">
         <button type="button" class="quiet hidden" data-notify-enable title="Recibir alertas emergentes del navegador">${icon('alerts', { size: 15 })} Alertas emergentes</button>
         <label class="period-label">Periodo del detalle técnico
           <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
         </label>
+        ${refreshControls()}
       </div>
     </div>
     <p class="error" data-error role="alert"></p>
@@ -1009,11 +1105,14 @@ export async function renderPanel(root) {
   resetStationDetails();
   renderSupport(root);
   let heroFocused = false;
+  const refresh = createRefreshState(root);
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) $('[data-error]', root).textContent = '';
+    refresh.begin();
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
+      setPanelContext(root, data.devices);
       $('#panel-hero', root).innerHTML = heroFirstSection(primaryReading(data.devices));
       const caveat = coverageCaveat(data.devices);
       const engineOk = data.engine_verified !== false;
@@ -1041,8 +1140,10 @@ export async function renderPanel(root) {
         : `<p class="empty">No hay avisos recientes.</p>${caveatBlock(caveat)}`;
       surfaceNewAlerts(open);
       if (!heroFocused && data.devices.length) { heroFocused = true; focusHeroSlot($('#panel-hero', root)); }
+      refresh.done();
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
+      refresh.fail();
       if (error.message === 'authentication_required' || error.message === 'session_expired') return [];
       $('[data-error]', root).textContent = `No se pudo cargar el panel: ${error.message}`;
       return [];
@@ -1052,6 +1153,7 @@ export async function renderPanel(root) {
   const stations = await loadDashboard();
   mountMeasurements($('#panel-measurements', root), { stations });
   $('#period', root).addEventListener('change', loadDashboard);
+  $('[data-refresh]', root).addEventListener('click', () => loadDashboard());
   wireNotificationButton(root);
 
   // Refresco silencioso cada 15 minutos; se pausa mientras la pestaña está oculta.

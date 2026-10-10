@@ -79,6 +79,8 @@ test('the public current card keeps the last reading even when stale, clearly la
   const currentHtml = renderLocalWeatherCard(currentUrban);
   assert.match(currentHtml, /12,3 °C/);
   assert.match(currentHtml, /no toda la ciudad/i);
+  // La antigüedad se muestra en palabras ("Medido hace…"), no solo con la fecha.
+  assert.match(currentHtml, /Medido hace/);
 });
 
 test('the day graph only draws supplied real points and has an explicit empty state', () => {

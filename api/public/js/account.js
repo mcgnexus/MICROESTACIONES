@@ -3,8 +3,8 @@ import { WHATSAPP_MANUAL_NOTE } from './notice-taxonomy.js';
 import { FROST_C, HEAT_C } from './farm-cards.js';
 
 const CHANNELS = [
-  { key: 'whatsapp', label: 'WhatsApp', placeholder: '+34 600 000 000', addressLabel: 'Teléfono de WhatsApp' },
-  { key: 'email', label: 'Correo', placeholder: 'tu@correo.es', addressLabel: 'Correo electrónico' },
+  { key: 'whatsapp', label: 'WhatsApp', placeholder: '+34 600 000 000', addressLabel: 'Teléfono de WhatsApp', inputType: 'tel', autocomplete: 'tel', inputmode: 'tel' },
+  { key: 'email', label: 'Correo', placeholder: 'tu@correo.es', addressLabel: 'Correo electrónico', inputType: 'email', autocomplete: 'email', inputmode: 'email' },
 ];
 
 function channelBlock(channel, contact) {
@@ -16,7 +16,7 @@ function channelBlock(channel, contact) {
   return `<div class="contact-block">
     <div class="section-heading"><div><h3>${channel.label}</h3><p class="hint">${escapeText(status)}</p></div></div>
     <form data-contact-form="${channel.key}" class="rule-form">
-      <label>${channel.addressLabel}<input name="address" value="${escapeText(contact?.address || '')}" placeholder="${channel.placeholder}"></label>
+      <label>${channel.addressLabel}<input name="address" type="${channel.inputType}" inputmode="${channel.inputmode}" autocomplete="${channel.autocomplete}" value="${escapeText(contact?.address || '')}" placeholder="${channel.placeholder}"></label>
       <label class="check"><input type="checkbox" name="opt_in" ${optedIn ? 'checked' : ''}> Autorizar avisos por ${channel.label.toLowerCase()}</label>
       <button type="submit">Guardar</button>
     </form>
@@ -29,6 +29,38 @@ function channelBlock(channel, contact) {
       <p class="hint" data-verify-hint="${channel.key}"></p>
     </div>` : ''}
   </div>`;
+}
+
+// Asistente de avisos: cuatro pasos con su estado real, para que se vea qué
+// falta sin leer un formulario largo de arriba abajo. No sustituye a los
+// controles: los ordena.
+function signupStepper(contacts, prefs) {
+  const configured = contacts.filter((contact) => contact.address);
+  const hasContact = configured.length > 0;
+  const authorized = configured.some((contact) => contact.optedIn);
+  const verified = configured.some((contact) => contact.verified);
+  const effective = Boolean(prefs) && [
+    prefs.receiveFrost, prefs.receiveHeat, prefs.receiveStorm,
+    prefs.receiveWind, prefs.receiveHumidity, prefs.receiveGeneral,
+  ].some(Boolean);
+  const state = (ok, pending = false) => (ok ? 'ok' : pending ? 'pending' : 'missing');
+  const steps = [
+    { label: 'Contacto', state: state(hasContact),
+      detail: hasContact ? 'Hay un destinatario configurado.' : 'Añade tu WhatsApp o correo.' },
+    { label: 'Autorización', state: state(authorized, hasContact),
+      detail: !hasContact ? 'Primero hace falta un contacto.'
+        : authorized ? 'Autorizaste recibir avisos por ese canal.' : 'Marca la casilla de autorización del canal.' },
+    { label: 'Verificación', state: state(verified, hasContact),
+      detail: !hasContact ? 'Primero hace falta un contacto.'
+        : verified ? 'Destinatario verificado.' : 'Envía y confirma el código de verificación.' },
+    { label: 'Preferencias efectivas', state: state(effective, hasContact),
+      detail: !hasContact ? 'Primero hace falta un contacto.'
+        : effective ? 'Elegiste qué avisos quieres recibir.' : 'Selecciona al menos un tipo de aviso abajo.' },
+  ];
+  const tone = { ok: 'badge-valid', pending: 'badge-warn', missing: 'badge-invalid' };
+  const text = { ok: 'Listo', pending: 'Pendiente', missing: 'Falta' };
+  return `<ol class="signup-steps avisos-steps">${steps.map((step) =>
+    `<li><span class="badge ${tone[step.state]}">${text[step.state]}</span><strong>${escapeText(step.label)}</strong><span>${escapeText(step.detail)}</span></li>`).join('')}</ol>`;
 }
 
 function farmBlock(farm, stations) {
@@ -72,28 +104,49 @@ export async function renderAccount(root) {
     <div class="page-heading"><div><p class="eyebrow">CUENTA</p><h1>${escapeText(me.email)}</h1></div></div>
     <p class="error" data-error role="alert"></p>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SUSCRIPCIÓN</p><h2>Tu cuenta</h2></div></div>
-      <dl class="detail-grid">
-        <dt>Rol</dt><dd>${escapeText(roleLabel(me.role))}</dd>
-        <dt>Plan</dt><dd>${escapeText(planLabel(me.plan))}</dd>
-        <dt>Estaciones</dt><dd>${me.stations.map((station) => escapeText(station.name)).join(', ') || 'sin estaciones vinculadas'}</dd>
-        <dt>Correo verificado</dt><dd>${me.emailVerifiedAt
-          ? `<span class="badge badge-valid">verificado ${dateText(me.emailVerifiedAt)}</span>`
-          : '<span class="badge badge-warn">pendiente</span>'}</dd>
-      </dl>
+      <div class="section-heading"><div><p class="eyebrow">CONFIGURACIÓN DE AVISOS</p><h2>Asistente de avisos</h2></div></div>
+      <p class="hint">Cuatro pasos: contacto → autorización → verificación → preferencias efectivas. Las alertas solo salen a contactos verificados y autorizados.</p>
+      ${signupStepper(contacts, prefs)}
+      <div class="section-heading"><div><h3>Contacto, autorización y verificación</h3></div></div>
+      <p class="hint">Añade tu WhatsApp o correo, autoriza el envío y verifica la dirección. Las alertas solo salen a contactos verificados y autorizados.</p>
+      ${session.support?.whatsappDelivery === 'manual'
+        ? `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`
+        : ''}
+      ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key])).join('')}
+      <div class="section-heading"><div><h3>Preferencias efectivas</h3></div></div>
+      <p class="hint">No todos necesitan lo mismo: un almendro teme la helada y el ganado el calor. Elige aquí tus avisos.</p>
+      <form data-prefs-form class="rule-form">
+        <fieldset class="prefs-group span-all"><legend>Tipos de aviso</legend>
+          <label class="check"><input type="checkbox" name="receive_frost" ${prefs.receiveFrost ? 'checked' : ''}> Heladas</label>
+          <label class="check"><input type="checkbox" name="receive_heat" ${prefs.receiveHeat ? 'checked' : ''}> Golpes de calor</label>
+          <label class="check"><input type="checkbox" name="receive_storm" ${prefs.receiveStorm ? 'checked' : ''}> Tormentas</label>
+          <label class="check"><input type="checkbox" name="receive_wind" ${prefs.receiveWind ? 'checked' : ''}> Viento</label>
+          <label class="check"><input type="checkbox" name="receive_humidity" ${prefs.receiveHumidity ? 'checked' : ''}> Humedad</label>
+          <label class="check"><input type="checkbox" name="receive_general" ${prefs.receiveGeneral ? 'checked' : ''}> Información general</label>
+        </fieldset>
+        <fieldset class="prefs-group span-all"><legend>Canales</legend>
+          <label class="check"><input type="checkbox" name="channel_whatsapp" ${prefs.channelWhatsapp ? 'checked' : ''}> WhatsApp</label>
+          <label class="check"><input type="checkbox" name="channel_email" ${prefs.channelEmail ? 'checked' : ''}> Correo</label>
+        </fieldset>
+        <label>Silencio desde<input type="time" name="quiet_start" value="${escapeText((prefs.quietStart || '').slice(0, 5))}"></label>
+        <label>Silencio hasta<input type="time" name="quiet_end" value="${escapeText((prefs.quietEnd || '').slice(0, 5))}"></label>
+        <label>Zona<input name="zone" maxlength="160" value="${escapeText(prefs.zone || '')}"></label>
+        <label>Cultivo o ganado<input name="crop" maxlength="160" value="${escapeText(prefs.crop || '')}"></label>
+        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias.</p>
+        <button type="submit" class="span-all">Guardar preferencias</button>
+      </form>
     </section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PUBLICIDAD</p><h2>Novedades y ofertas (opcional)</h2></div></div>
-      <p class="hint">Usar la demo no depende de esto. Marca solo los canales por los que quieras recibir novedades y ofertas sobre microestaciones. Puedes retirarlos cuando quieras.</p>
-      <div class="consent-grid">
-        ${CHANNELS.map((channel) => {
-          const granted = Boolean(me.consents?.commercial?.[channel.key]?.granted);
-          const available = channel.key === 'email' || Boolean(byChannel.whatsapp);
-          return `<label class="check"><input type="checkbox" data-commercial="${channel.key}"
-            ${granted ? 'checked' : ''} ${available ? '' : 'disabled'}> ${channel.label}${available ? '' : ' (añade el canal arriba)'}</label>`;
-        }).join('')}
-      </div>
-      <p class="hint">Texto informativo vigente: <strong>${escapeText(me.consentTextVersion || '')}</strong>. Al revocar, se cancelan los envíos comerciales pendientes.</p>
+      <div class="section-heading"><div><p class="eyebrow">MIS FINCAS</p><h2>Fincas y estaciones</h2></div></div>
+      <p class="hint">Agrupa tus estaciones por finca para reconocer cada aviso por su nombre.</p>
+      <div class="farm-list">${farms.map((farm) => farmBlock(farm, me.stations)).join('') || '<p class="empty">Todavía no has creado ninguna finca.</p>'}</div>
+      <form data-farm-form class="rule-form">
+        <label>Nombre de la finca<input name="name" required minlength="2" maxlength="120"></label>
+        <label>Municipio<input name="municipality" maxlength="120"></label>
+        <label>Cultivo<input name="crop" maxlength="120"></label>
+        <label>Ganado<input name="livestock" maxlength="120"></label>
+        <button type="submit">Añadir finca</button>
+      </form>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">PERFIL OPCIONAL</p><h2>Para afinar tus avisos</h2></div></div>
@@ -126,40 +179,20 @@ export async function renderAccount(root) {
       </form>
     </section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">DESTINATARIOS</p><h2>Canales de aviso</h2></div></div>
-      <p class="hint">Añade tu WhatsApp o correo, autoriza el envío y verifica la dirección. Las alertas solo salen a contactos verificados y autorizados.</p>
-      ${session.support?.whatsappDelivery === 'manual'
-        ? `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`
-        : ''}
-      ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key])).join('')}
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PREFERENCIAS</p><h2>Qué alertas quieres recibir</h2></div></div>
-      <p class="hint">No todos necesitan lo mismo: un almendro teme la helada y el ganado el calor. Elige aquí tus avisos.</p>
-      <form data-prefs-form class="rule-form">
-        <fieldset class="prefs-group span-all"><legend>Tipos de aviso</legend>
-          <label class="check"><input type="checkbox" name="receive_frost" ${prefs.receiveFrost ? 'checked' : ''}> Heladas</label>
-          <label class="check"><input type="checkbox" name="receive_heat" ${prefs.receiveHeat ? 'checked' : ''}> Golpes de calor</label>
-          <label class="check"><input type="checkbox" name="receive_storm" ${prefs.receiveStorm ? 'checked' : ''}> Tormentas</label>
-          <label class="check"><input type="checkbox" name="receive_wind" ${prefs.receiveWind ? 'checked' : ''}> Viento</label>
-          <label class="check"><input type="checkbox" name="receive_humidity" ${prefs.receiveHumidity ? 'checked' : ''}> Humedad</label>
-          <label class="check"><input type="checkbox" name="receive_general" ${prefs.receiveGeneral ? 'checked' : ''}> Información general</label>
-        </fieldset>
-        <fieldset class="prefs-group span-all"><legend>Canales</legend>
-          <label class="check"><input type="checkbox" name="channel_whatsapp" ${prefs.channelWhatsapp ? 'checked' : ''}> WhatsApp</label>
-          <label class="check"><input type="checkbox" name="channel_email" ${prefs.channelEmail ? 'checked' : ''}> Correo</label>
-        </fieldset>
-        <label>Silencio desde<input type="time" name="quiet_start" value="${escapeText((prefs.quietStart || '').slice(0, 5))}"></label>
-        <label>Silencio hasta<input type="time" name="quiet_end" value="${escapeText((prefs.quietEnd || '').slice(0, 5))}"></label>
-        <label>Zona<input name="zone" maxlength="160" value="${escapeText(prefs.zone || '')}"></label>
-        <label>Cultivo o ganado<input name="crop" maxlength="160" value="${escapeText(prefs.crop || '')}"></label>
-        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias.</p>
-        <button type="submit" class="span-all">Guardar preferencias</button>
-      </form>
+      <div class="section-heading"><div><p class="eyebrow">SUSCRIPCIÓN</p><h2>Tu cuenta</h2></div></div>
+      <dl class="detail-grid">
+        <dt>Rol</dt><dd>${escapeText(roleLabel(me.role))}</dd>
+        <dt>Plan</dt><dd>${escapeText(planLabel(me.plan))}</dd>
+        <dt>Estaciones</dt><dd>${me.stations.map((station) => escapeText(station.name)).join(', ') || 'sin estaciones vinculadas'}</dd>
+        <dt>Correo de acceso verificado</dt><dd>${me.emailVerifiedAt
+          ? `<span class="badge badge-valid">verificado ${dateText(me.emailVerifiedAt)}</span>`
+          : '<span class="badge badge-warn">pendiente</span>'}</dd>
+      </dl>
+      <p class="hint">Esta verificación es la del correo con el que entras: confirma tu acceso. Es distinta de la verificación por código de un destinatario de avisos, que se hace arriba, en cada canal.</p>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">REFERENCIA PARA EL EQUIPO</p><h2>Umbrales que te servirían</h2></div></div>
-      <p class="hint">Estos valores <strong>no cambian los avisos que recibes</strong>. Los umbrales que disparan las alertas los fija el equipo por estación y no se editan desde aquí.</p>
+      <p class="hint"><strong>Preferencia para valorar con el equipo. Todavía no modifica tus avisos.</strong> Estos valores no cambian los avisos que recibes: los umbrales que disparan las alertas los fija el equipo por estación y no se editan desde aquí.</p>
       <p class="hint">Déjanos los que tú usarías: los revisamos contigo al ajustar el piloto. Rellenarlo es opcional.</p>
       <form data-thresholds-form class="rule-form">
         <label>A partir de qué °C te preocuparía la helada (°C)<input type="number" step="0.5" placeholder="${FROST_C}" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
@@ -170,21 +203,22 @@ export async function renderAccount(root) {
       <p class="hint" data-thresholds-ok role="status"></p>
     </section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">MIS FINCAS</p><h2>Fincas y estaciones</h2></div></div>
-      <p class="hint">Agrupa tus estaciones por finca para reconocer cada aviso por su nombre.</p>
-      <div class="farm-list">${farms.map((farm) => farmBlock(farm, me.stations)).join('') || '<p class="empty">Todavía no has creado ninguna finca.</p>'}</div>
-      <form data-farm-form class="rule-form">
-        <label>Nombre de la finca<input name="name" required minlength="2" maxlength="120"></label>
-        <label>Municipio<input name="municipality" maxlength="120"></label>
-        <label>Cultivo<input name="crop" maxlength="120"></label>
-        <label>Ganado<input name="livestock" maxlength="120"></label>
-        <button type="submit">Añadir finca</button>
-      </form>
-    </section>
-    <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">PILOTO</p><h2>¿Quieres alertas en otra finca?</h2></div></div>
       <p class="hint">Las solicitudes de piloto se gestionan desde la web pública. Si conoces a alguien interesado, puedes compartir la dirección de la portada.</p>
       <p class="hint"><a class="link" href="#/">Ir a la página pública</a></p>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">PUBLICIDAD</p><h2>Novedades y ofertas (opcional)</h2></div></div>
+      <p class="hint">Usar la demo no depende de esto. Marca solo los canales por los que quieras recibir novedades y ofertas sobre microestaciones. Puedes retirarlos cuando quieras.</p>
+      <div class="consent-grid">
+        ${CHANNELS.map((channel) => {
+          const granted = Boolean(me.consents?.commercial?.[channel.key]?.granted);
+          const available = channel.key === 'email' || Boolean(byChannel.whatsapp);
+          return `<label class="check"><input type="checkbox" data-commercial="${channel.key}"
+            ${granted ? 'checked' : ''} ${available ? '' : 'disabled'}> ${channel.label}${available ? '' : ' (añade el canal en Canales de aviso)'}</label>`;
+        }).join('')}
+      </div>
+      <p class="hint">Texto informativo vigente: <strong>${escapeText(me.consentTextVersion || '')}</strong>. Al revocar, se cancelan los envíos comerciales pendientes.</p>
     </section>`;
 
   const error = (message) => { $('[data-error]', root).textContent = message; };

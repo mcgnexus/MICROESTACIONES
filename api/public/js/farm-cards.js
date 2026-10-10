@@ -161,8 +161,8 @@ export function assessFrost(item) {
     action: 'No se afirma que no haya riesgo: sencillamente no hay medición.' };
   const missingForecast = forecastMin == null && forecastProvider(item) == null;
   return { tone: 'ok', value: `${numberText(temperature)} °C`, since: observed, nature: 'real',
-    meaning: `Sin riesgo de helada según la medición actual${missingForecast ? ' (sin previsión disponible: la afirmación solo cubre este momento)' : ''}.`,
-    action: 'No hace falta hacer nada.' };
+    meaning: `Temperatura por encima del umbral de helada en la medición actual${missingForecast ? ' (sin previsión disponible: esto solo cubre este momento)' : ''}.`,
+    action: 'No hay una señal de frío ahora mismo; comprueba la previsión antes de dar el día por seguro.' };
 }
 
 export function assessHeat(item) {
@@ -206,8 +206,8 @@ export function assessHeat(item) {
     action: 'No se afirma que la temperatura sea normal: no hay medición.' };
   const missingForecast = forecastMax == null && forecastProvider(item) == null;
   return { tone: 'ok', value: `${numberText(temperature)} °C`, since: observed, nature: 'real',
-    meaning: `Temperatura dentro de lo normal según la medición actual${missingForecast ? ' (sin previsión disponible: la afirmación solo cubre este momento)' : ''}.`,
-    action: 'No hace falta hacer nada.' };
+    meaning: `Temperatura por debajo del umbral de calor en la medición actual${missingForecast ? ' (sin previsión disponible: esto solo cubre este momento)' : ''}.`,
+    action: 'No hay una señal de calor ahora mismo; comprueba la previsión antes de dar el día por seguro.' };
 }
 
 // Las tormentas no se detectan con los sensores actuales: se muestran avisos
@@ -416,7 +416,7 @@ export function nextRisk(devices, alerts = [], now = new Date()) {
   }
   return { tone: 'ok', title: 'Sin riesgos previstos', when: null, device: null,
     meaning: 'No hay alertas activas ni riesgos estimados próximos, con lecturas actuales y previsión disponible.',
-    action: 'Puedes seguir con tu rutina.' };
+    action: 'Es una foto de ahora, no una garantía: vuelve a mirar si cambia el tiempo.' };
 }
 
 // Comparación entre zonas: sin coordenadas, solo lecturas y diferencia.

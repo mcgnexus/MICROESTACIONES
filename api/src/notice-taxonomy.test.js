@@ -71,8 +71,12 @@ test('simulated notices are confined to the demonstration', () => {
   assert.equal(meta.category, 'simulated');
   assert.equal(meta.nature, 'simulado');
   assert.equal(NOTICE_CATEGORIES.simulated.audience, 'demo');
-  assert.match(validityText('simulated'), /demostración/);
-  // Nada de la demostración se cuela en las categorías reales.
+  // «Simulación» queda reservado para los datos inventados: la palabra
+  // «demostración» ya no describe la naturaleza de un dato.
+  assert.match(validityText('simulated'), /simulación/);
+  assert.doesNotMatch(validityText('simulated'), /demostración/);
+  assert.match(NOTICE_CATEGORIES.simulated.description, /inventado/);
+  // Nada de la simulación se cuela en las categorías reales.
   for (const input of [
     { source: 'station_measurement', ruleId: '1' },
     { source: 'external_forecast' },
@@ -122,7 +126,7 @@ test('the origin always names the datum or forecast and never promises detection
   assert.match(originText({ source: 'external_forecast', temperatureC: -2 }), /Previsión externa de -2 °C/);
   assert.match(originText({ source: 'estimate', value: { value: 0 } }), /Estimación propia/);
   assert.match(originText({ source: 'official_warning' }), /Aviso oficial de AEMET/);
-  assert.match(originText({ simulated: true }), /serie simulada/);
+  assert.match(originText({ simulated: true }), /serie inventada/);
   for (const input of [{ kind: 'access' }, { kind: 'commercial' }, { source: 'external_forecast' }]) {
     assert.doesNotMatch(originText(input), /detectamos|detectado|llega una helada/i);
   }

@@ -7,7 +7,7 @@
 //   real      dato observado o medido (estado de la estación, medida al umbral)
 //   previsto  previsión externa o aviso oficial: aún no ha ocurrido
 //   calculado derivado por una fórmula (estimación sobre previsión, punto de rocío)
-//   simulado  valor de muestra de la demostración; no describe ninguna finca
+//   simulado  valor inventado de la simulación; no describe ninguna finca
 //   comunicacion los dos tipos de mensaje (comercial y acceso) no son avisos de
 //             riesgo: marcarlos así deja claro que no son ninguno de los cuatro
 //
@@ -38,7 +38,7 @@ export const NOTICE_CATEGORIES = {
   simulated: {
     label: 'Aviso agrícola simulado',
     nature: 'simulado',
-    description: 'Valor ilustrativo de la demostración: no procede de ninguna estación ni finca existente.',
+    description: 'Valor inventado de la simulación: no procede de ninguna estación ni finca existente.',
     audience: 'demo',
   },
   commercial: {
@@ -59,7 +59,7 @@ export const NOTICE_NATURES = {
   real: { label: 'Real', hint: 'Dato observado o medido.' },
   previsto: { label: 'Previsto', hint: 'Previsión externa o aviso oficial: aún no ha ocurrido.' },
   calculado: { label: 'Calculado', hint: 'Derivado por una fórmula a partir de otros datos.' },
-  simulado: { label: 'Simulado', hint: 'Valor de muestra de la demostración.' },
+  simulado: { label: 'Simulado', hint: 'Valor inventado de la simulación.' },
   comunicacion: { label: 'Comunicación', hint: 'Mensaje operativo, no un aviso de riesgo.' },
 };
 
@@ -74,7 +74,7 @@ export const NOTICE_SOURCES = {
   official_warning: { label: 'Aviso oficial de AEMET', nature: 'previsto', official: true },
   estimate: { label: 'Estimación de TecRural sobre la previsión', nature: 'calculado' },
   derived: { label: 'Cálculo a partir de tus datos', nature: 'calculado' },
-  simulation: { label: 'Simulación de la demostración', nature: 'simulado' },
+  simulation: { label: 'Simulación', nature: 'simulado' },
   consent: { label: 'Tu autorización de novedades', nature: 'comunicacion' },
   authentication: { label: 'Sistema de acceso', nature: 'comunicacion' },
 };
@@ -199,7 +199,7 @@ export function originText(notice = {}) {
         ? `Estado observado de la estación (${value}).`
         : 'Estado observado de la estación.';
     case 'simulated':
-      return 'Valor de una serie simulada dentro de la demostración.';
+      return 'Valor de una serie inventada dentro de la simulación.';
     case 'commercial':
       return 'Mensaje de novedades al que autorizaste expresamente por este canal.';
     case 'access':
@@ -254,7 +254,7 @@ export function validityText(category, until = null) {
     ? `Caduca el ${new Date(until).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}.`
     : 'Caduca pronto y solo puede usarse una vez.';
   if (category === 'commercial') return 'Vigente mientras tu autorización siga activa; la revocación cancela los envíos pendientes.';
-  if (category === 'simulated') return 'Sin vigencia: es una demostración, no un aviso real.';
+  if (category === 'simulated') return 'Sin vigencia: es una simulación, no un aviso real.';
   if (category === 'forecast') return until
     ? `Vigente hasta ${new Date(until).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}.`
     : 'Vigente hasta que el proveedor lo sustituya o caduque.';

@@ -8,7 +8,7 @@ export const PUBLIC_PAGES = {
   '/vias': ['Tres formas de empezar | TecRural', 'Ver la demostración simulada, entrar con tu correo o consultar una instalación: tres caminos distintos con resultados distintos.'],
   '/fincas': ['Medición meteorológica para fincas | TecRural', 'Explora la utilidad de medir en una finca y declara tu interés en una futura instalación, sin compromiso automático.'],
   '/herramientas': ['Herramientas agrícolas y acceso | TecRural', 'Herramientas para consultar y entender las mediciones de tus estaciones. Requieren entrar con tu correo y que el equipo conceda el acceso.'],
-  '/demo-agricola': ['Demostración agrícola simulada | TecRural', 'Explora escenarios simulados de frío, calor y diferencias entre puntos. No son lecturas actuales ni resultados de clientes.'],
+  '/demo-agricola': ['Simulación agrícola con datos inventados | TecRural', 'Explora escenarios simulados de frío, calor y diferencias entre puntos. No son lecturas actuales ni resultados de clientes: las mediciones reales están en la portada.'],
   '/preguntas': ['Preguntas sobre microestaciones | TecRural', 'Alcance de las mediciones, fuentes externas, avisos orientativos y acceso a TecRural.'],
   '/solicitar-piloto': ['Consultar una instalación | TecRural', 'Revisamos tu solicitud y te contactamos para estudiarla. No da acceso por sí solo ni programa una instalación automática.'],
 };

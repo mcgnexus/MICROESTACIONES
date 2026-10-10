@@ -50,6 +50,7 @@ const PATHS = {
   connectivity: '<path d="M6 17.5a8.5 8.5 0 0 1 12 0"/><path d="M9 14.4a5 5 0 0 1 6 0"/><circle cx="12" cy="17.8" r="1.4"/>',
   install: '<rect x="6" y="3" width="12" height="18" rx="2.4"/><path d="M12 8v5M9.8 11l2.2 2.2 2.2-2.2"/>',
 
+  refresh: '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 3.5v4.2h-4.2"/>',
   chart: '<path d="M4 19.5V4.5"/><path d="M4 19.5h16"/><path d="m6.5 15 3.5-4.5 3 2.5 4.5-6"/>',
   difference: '<path d="M7.5 4.5v15M16.5 4.5v15"/><path d="m4.8 7 2.7 3-2.7 3M19.2 7l-2.7 3 2.7 3"/>',
 };

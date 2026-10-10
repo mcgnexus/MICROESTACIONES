@@ -5,6 +5,15 @@ import { readFile } from 'node:fs/promises';
 const publicDir = new URL('../public/', import.meta.url);
 const read = (name) => readFile(new URL(name, publicDir), 'utf8');
 const readView = (name) => readFile(new URL(`../views/${name}`, import.meta.url), 'utf8');
+// Los colores repetidos se guardan en tokens de :root; resolver `var(--x)`
+// mantiene estas comprobaciones sobre el color real y no sobre el nombre.
+const resolveVars = (css) => {
+  const tokens = Object.fromEntries([...css.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)]
+    .map(([, name, value]) => [name, value.trim()]));
+  return css.replace(/var\((--[\w-]+)(?:,([^)]*))?\)/g,
+    (match, name, fallback) => tokens[name] ?? fallback ?? match);
+};
+const readCss = async () => resolveVars(await read('app.css'));
 
 test('el viewport permite cubrir el notch y la barra respeta la zona segura', async () => {
   const [html, css] = await Promise.all([readView('index.html'), read('app.css')]);
@@ -28,7 +37,7 @@ test('los controles táctiles mantienen tamaño cómodo y las tablas se desplaza
 });
 
 test('la medición opcional contrasta dentro del pie oscuro', async () => {
-  const css = await read('app.css');
+  const css = await readCss();
   assert.match(css, /\.analytics-choice \{[^}]*background: #fff[^}]*color: #1e2c24/);
   assert.match(css, /\.analytics-choice a \{ color: #1f6241/);
 });
@@ -70,7 +79,7 @@ test('los contenedores públicos dejan de ser fila de carga al recibir contenido
 });
 
 test('el botón principal tiene fondo y contraste, no sólo al pasar el ratón', async () => {
-  const css = await read('app.css');
+  const css = await readCss();
   assert.match(css, /\.cta\{[^}]*background:#1f6241[^}]*color:white/);
 });
 

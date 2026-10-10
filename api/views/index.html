@@ -53,7 +53,7 @@
           { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están dentro de la ventana temporal configurada. Si no hay pareja, ambas lecturas se muestran por separado." } },
           { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
           { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
-          { "@type": "Question", "name": "¿Cuál es la diferencia entre las tres formas de empezar?", "acceptedAnswer": { "@type": "Answer", "text": "Ver la demostración no requiere registro y muestra escenarios simulados. Entrar da acceso inmediato a tu propia sesión mediante un enlace de correo de un solo uso. Consultar una instalación es la única vía que revisa el equipo, y hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación." } }
+          { "@type": "Question", "name": "¿Cuál es la diferencia entre las tres formas de empezar?", "acceptedAnswer": { "@type": "Answer", "text": "La simulación no requiere registro y muestra escenarios con datos inventados. Entrar da acceso de consulta, solo lectura, a las mediciones reales mediante un enlace de correo de un solo uso. Consultar una instalación es la única vía que revisa el equipo, y hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación." } }
         ]
       }
     ]
@@ -102,16 +102,16 @@
         <p class="section-intro">Según lo que quieras hacer, te lleva a una cosa o a otra. No hacen falta los tres y ninguno programa nada por su cuenta.</p>
         <div class="vias-grid">
           <article class="via-card">
-            <p class="eyebrow">SIN REGISTRARTE</p>
-            <h3>Ver la demostración</h3>
-            <p class="via-outcome"><strong>Resultado:</strong> ves tres escenarios simulados y mueves el umbral de aviso. No creas cuenta, no Envías nada y ningún dato sale de tu navegador.</p>
-            <p class="hint">Los datos son ilustrativos: no proceden de ninguna estación ni finca real.</p>
-            <p><a class="via-link" href="#/demo-agricola">Ver la demostración</a></p>
+            <p class="eyebrow">SIN REGISTRARTE · DATOS INVENTADOS</p>
+            <h3>Ver la simulación</h3>
+            <p class="via-outcome"><strong>Resultado:</strong> ves tres escenarios simulados y mueves el umbral de aviso. No creas cuenta, no envías nada y ningún dato sale de tu navegador.</p>
+            <p class="hint">Los datos son inventados: no proceden de ninguna estación ni finca real. La estación urbana real está arriba, sin registro.</p>
+            <p><a class="via-link" href="#/demo-agricola">Ver la simulación</a></p>
           </article>
           <article class="via-card">
-            <p class="eyebrow">ACCESO INMEDIATO</p>
+            <p class="eyebrow">ACCESO INMEDIATO · DATOS REALES</p>
             <h3>Entrar con tu correo</h3>
-            <p class="via-outcome"><strong>Resultado:</strong> entras tú mismo, sin esperar a nadie. Escribes tu correo, recibes un enlace de un solo uso y en cuanto lo confirmas ya tienes acceso gratuito a la sesión de demostración.</p>
+            <p class="via-outcome"><strong>Resultado:</strong> entras tú mismo, sin esperar a nadie. Escribes tu correo, recibes un enlace de un solo uso y en cuanto lo confirmas ya tienes acceso de consulta a las mediciones reales.</p>
             <p class="hint">Sin contraseña. Si prefieres que te lo tramite el equipo, usa la tercera vía.</p>
             <p><a class="via-link" href="#/entrar">Entrar</a></p>
           </article>
@@ -152,9 +152,9 @@
       </section>
 
       <section id="demo-agricola" class="landing-section">
-        <p class="eyebrow">DEMOSTRACIÓN INTERACTIVA · SIMULACIÓN</p>
+        <p class="eyebrow">SIMULACIÓN INTERACTIVA · DATOS INVENTADOS</p>
         <h2>Explora cómo se vería una estación en tu finca</h2>
-        <p class="section-intro">Tres escenarios simulados, con datos ilustrativos que no proceden de ninguna estación ni de ninguna finca existente. Mueve el umbral para ver cuándo se generaría un aviso; la simulación no crea avisos reales ni cambia nada.</p>
+        <p class="section-intro">Tres escenarios con datos inventados que no proceden de ninguna estación ni de ninguna finca existente. Mueve el umbral para ver cuándo se generaría un aviso; la simulación no crea avisos reales ni cambia nada. Las mediciones reales están en «Tiempo local», arriba.</p>
         <div data-farm-sim></div>
       </section>
 
@@ -180,7 +180,7 @@
           <details><summary>¿Qué mide la tarjeta del tiempo local?</summary><p>Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no se presenta como representativa de cada calle o finca.</p></details>
           <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están dentro de la ventana configurada. Si no hay pareja, no mostramos una diferencia directa.</p></details>
           <details><summary>¿La lectura del casco representa mi finca?</summary><p>No necesariamente. Hondonadas, vegas y zonas altas pueden tener condiciones distintas según su emplazamiento y las condiciones del momento. Medir en la finca permite observar ese punto concreto.</p></details>
-          <details><summary>¿Cuál es la diferencia entre las tres formas de empezar?</summary><p><a href="#/demo-agricola">Ver la demostración</a> no requiere registro y muestra datos simulados. <a href="#/entrar">Entrar</a> da acceso inmediato a tu propia sesión con un enlace de correo. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única que revisa el equipo: hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación.</p></details>
+          <details><summary>¿Cuál es la diferencia entre las tres formas de empezar?</summary><p><a href="#/demo-agricola">Ver la simulación</a> no requiere registro y muestra datos inventados. <a href="#/entrar">Entrar</a> da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única que revisa el equipo: hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación.</p></details>
           <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Se muestran avisos oficiales y riesgo estimado. Una detección local precisa requeriría sensores adicionales.</p></details>
         </div>
       </section>
@@ -203,11 +203,19 @@
       </div>
       <form id="magic-form">
         <label>Correo electrónico<input name="email" type="email" autocomplete="email" required></label>
-        <label class="check"><input type="checkbox" name="marketing"> Quiero recibir novedades y ofertas sobre microestaciones por correo (opcional)</label>
         <button type="submit">Enviar enlace de acceso</button>
-        <p class="hint">El acceso es gratuito y no depende de esta casilla. Puedes cambiarla cuando quieras.</p>
+        <p class="hint">El acceso es gratuito y no requiere casillas adicionales.</p>
         <p id="magic-status" class="hint" role="status" aria-live="polite"></p>
       </form>
+      <div id="magic-sent" class="hidden">
+        <p class="hint" role="status" aria-live="polite">Hemos enviado un enlace a <strong id="magic-sent-email"></strong>. Revisa tu bandeja de entrada y la carpeta de spam.</p>
+        <p class="hint" id="magic-resend-hint"><span id="magic-resend-countdown">60</span> s para reenviar</p>
+        <div class="button-group">
+          <button type="button" id="magic-resend" class="hidden">Reenviar enlace</button>
+          <button type="button" class="quiet" id="magic-change-email">Cambiar correo</button>
+        </div>
+        <p id="magic-sent-status" class="hint" role="status" aria-live="polite"></p>
+      </div>
       <p id="magic-error" class="error" role="alert"></p>
       <div id="magic-unavailable" class="hidden">
         <p class="warn-box"><strong>El acceso por correo no está disponible ahora mismo.</strong> No te enviaremos enlaces que no puedan llegar: solicita el acceso y te contactaremos para activarlo.</p>
