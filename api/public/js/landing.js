@@ -199,7 +199,9 @@ function setPublicFailure(root, message) {
   const comparison = root.querySelector('#public-comparison');
   const evolution = root.querySelector('#public-evolution');
   if (loading) settle(loading).innerHTML = `<p class="public-state-card tone-warn" role="alert">${escapeText(message)}</p>`;
-  if (card) card.innerHTML = '';
+  // Si el servidor ya pintó la tarjeta (SSR), un fallo posterior no la borra:
+  // se mantiene la última lectura mostrada en vez de dejar un hueco.
+  if (card && !card.hasAttribute('data-public-ready')) card.innerHTML = '';
   if (comparison) settle(comparison).innerHTML = '<p class="public-state-card tone-muted">La comparación no está disponible hasta recuperar las observaciones.</p>';
   if (evolution) settle(evolution).innerHTML = '<p class="public-state-card tone-muted">La evolución no está disponible hasta recuperar las mediciones.</p>';
 }
@@ -270,9 +272,7 @@ export function initLanding() {
     mountFarmSimulation(simMount);
   }
   mountLeadForms();
-  // Si el servidor ya pintó la lectura (SSR), no se vuelve a pedir de inmediato:
-  // el refresco periódico se encarga. Sin SSR, se carga como antes.
-  if (!document.querySelector('#local-weather-card[data-public-ready]')) loadPublicWeather();
+  loadPublicWeather();
   initLandingRefresh();
 }
 

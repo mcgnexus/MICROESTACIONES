@@ -1,28 +1,29 @@
 // Render en servidor de la lectura pública para el primer pintado.
 //
-// La portada mostraba la tarjeta, la comparación y la evolución solo después de
-// cargar el JS y pedir /api/v1/public/stations. Aquí se generan las mismas
-// piezas con las funciones del cliente y se incrustan en el HTML servido: el
-// dato se ve sin esperar a JS ni a la API. El cliente detecta `data-public-ready`
-// y no repite la petición inicial; el refresco periódico sigue funcionando.
+// La portada mostraba la tarjeta solo después de cargar el JS y pedir
+// /api/v1/public/stations. Aquí se genera esa misma tarjeta con las funciones
+// del cliente y se incrusta en el HTML servido: el dato de ahora se ve sin
+// esperar a JS ni a la API. Solo la tarjeta: la comparación y la evolución son
+// contenido bajo el pliegue (y la gráfica pesa), así que las carga el cliente.
 import { loadPublicStations } from './public.js';
-import { renderPublicWeather } from '../public/js/landing.js';
+import { renderLocalWeatherCard, selectUrbanStation } from '../public/js/landing.js';
 
 const TTL_MS = 60 * 1000;
 let cache = null;
 let inflight = null;
 
-// Piezas ya renderizadas. Se guardan 60 s en memoria: la portada recibe muchas
+// Tarjeta ya renderizada. Se guarda 60 s en memoria: la portada recibe muchas
 // visitas y la consulta no debe repetirse en cada una. Coincide con la caché de
 // CDN de /api/v1/public/stations, así que no añade más antigüedad que aquella.
-export async function landingWeatherParts() {
-  if (cache && Date.now() - cache.at < TTL_MS) return cache.parts;
+export async function landingWeatherCard() {
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.card;
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const parts = renderPublicWeather(await loadPublicStations());
-      cache = { at: Date.now(), parts };
-      return parts;
+      const stations = await loadPublicStations();
+      const card = renderLocalWeatherCard(selectUrbanStation(stations));
+      cache = { at: Date.now(), card };
+      return card;
     } finally {
       inflight = null;
     }
@@ -30,20 +31,16 @@ export async function landingWeatherParts() {
   return inflight;
 }
 
-// Sustituye los marcadores del HTML por el contenido renderizado. Es puro
-// (recibe las piezas) para poder probarlo sin base de datos.
-export function injectLandingParts(html, parts) {
-  if (!parts || html.includes('data-public-ready')) return html;
+// Sustituye el estado de carga y el contenedor de la tarjeta por el contenido
+// renderizado. Es puro (recibe la tarjeta) para poder probarlo sin base de datos.
+export function injectLandingParts(html, card) {
+  if (!card || html.includes('data-public-ready')) return html;
   const replaceElement = (source, id, replacement) =>
     source.replace(new RegExp(`<div id="${id}"[^>]*>[\\s\\S]*?</div>`), replacement);
   let out = replaceElement(html, 'local-weather-state',
     '<div id="local-weather-state" role="status" aria-live="polite"></div>');
   out = replaceElement(out, 'local-weather-card',
-    `<div id="local-weather-card" data-public-ready="1">${parts.card}</div>`);
-  out = replaceElement(out, 'public-comparison',
-    `<div id="public-comparison" aria-live="polite">${parts.comparison}</div>`);
-  out = replaceElement(out, 'public-evolution',
-    `<div id="public-evolution" aria-live="polite">${parts.evolution}</div>`);
+    `<div id="local-weather-card" data-public-ready="1">${card}</div>`);
   return out;
 }
 
@@ -51,7 +48,7 @@ export function injectLandingParts(html, parts) {
 // se sirve el HTML sin SSR y el cliente carga los datos como antes.
 export async function injectLandingWeather(html) {
   try {
-    return injectLandingParts(html, await landingWeatherParts());
+    return injectLandingParts(html, await landingWeatherCard());
   } catch {
     return html;
   }
