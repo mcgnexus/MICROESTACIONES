@@ -16,25 +16,22 @@ router.get('/stations', async (_req, res) => {
   const rows = await sql`SELECT d.id, d.name, d.location_type, d.public_zone, d.altitude, d.latitude, d.longitude,
       d.aemet_municipality_code, d.aemet_station_id, d.aemet_warning_area, c.config,
       ds.connectivity, ds.last_contact, ds.last_valid_data,
-      m.temperature_c, m.temperature_observed_at, m.humidity_pct, m.humidity_observed_at
+      m_temp.temperature_c, m_temp.temperature_observed_at, m_hum.humidity_pct, m_hum.humidity_observed_at
     FROM devices d
     LEFT JOIN device_configs c ON c.device_id = d.id
     LEFT JOIN device_status ds ON ds.device_id = d.id
     LEFT JOIN LATERAL (
-      SELECT
-        (SELECT temperature_c FROM measurements
-          WHERE device_id = d.id AND is_validated AND deleted_at IS NULL AND temperature_c IS NOT NULL
-          ORDER BY observed_at DESC LIMIT 1) AS temperature_c,
-        (SELECT observed_at FROM measurements
-          WHERE device_id = d.id AND is_validated AND deleted_at IS NULL AND temperature_c IS NOT NULL
-          ORDER BY observed_at DESC LIMIT 1) AS temperature_observed_at,
-        (SELECT humidity_pct FROM measurements
-          WHERE device_id = d.id AND is_validated AND deleted_at IS NULL AND humidity_pct IS NOT NULL
-          ORDER BY observed_at DESC LIMIT 1) AS humidity_pct,
-        (SELECT observed_at FROM measurements
-          WHERE device_id = d.id AND is_validated AND deleted_at IS NULL AND humidity_pct IS NOT NULL
-          ORDER BY observed_at DESC LIMIT 1) AS humidity_observed_at
-    ) m ON true
+      SELECT temperature_c, observed_at AS temperature_observed_at
+      FROM measurements
+      WHERE device_id = d.id AND is_validated AND deleted_at IS NULL AND temperature_c IS NOT NULL
+      ORDER BY observed_at DESC LIMIT 1
+    ) m_temp ON true
+    LEFT JOIN LATERAL (
+      SELECT humidity_pct, observed_at AS humidity_observed_at
+      FROM measurements
+      WHERE device_id = d.id AND is_validated AND deleted_at IS NULL AND humidity_pct IS NOT NULL
+      ORDER BY observed_at DESC LIMIT 1
+    ) m_hum ON true
     WHERE ${PUBLIC_WHERE}
     ORDER BY d.public_zone NULLS LAST, d.name`;
   const stationIds = rows.map((row) => row.id);
@@ -67,7 +64,7 @@ router.get('/stations', async (_req, res) => {
       id: row.id, name: row.name, publicZone: row.publicZone, latitude: row.latitude, longitude: row.longitude,
       altitude: row.altitude, aemetMunicipalityCode: row.aemetMunicipalityCode,
       aemetStationId: row.aemetStationId, aemetWarningArea: row.aemetWarningArea,
-    }).catch(() => null);
+    }, { backgroundRefresh: true }).catch(() => null);
     return {
       name: row.name,
       locationType: row.locationType,
@@ -111,6 +108,11 @@ router.get('/stations', async (_req, res) => {
       weatherErrors: weather?.errors ?? [],
     };
   }));
+  // Datos públicos, no personalizados: la ventana de refresco real es de ~30 min,
+  // así que 60 s de caché en el CDN y en el navegador ahorran recalcular en cada
+  // visita sin falsear la antigüedad (que se deriva de la hora del propio dato).
+  res.set('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=300');
+  res.set('CDN-Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
   res.json({ stations });
 });
 
@@ -124,6 +126,8 @@ router.get('/summary', async (_req, res) => {
   const zones = [...new Set(rows.map((row) => row.publicZone).filter(Boolean))];
   const latest = rows.map((row) => row.lastData).filter(Boolean)
     .sort((a, b) => new Date(b) - new Date(a))[0] ?? null;
+  res.set('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=300');
+  res.set('CDN-Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
   res.json({ stationCount: rows.length, zones, updatedAt: latest,
     stations: rows.map((row) => ({
       name: row.name, zone: row.publicZone ?? null,

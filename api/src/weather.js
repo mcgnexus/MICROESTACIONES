@@ -732,7 +732,7 @@ export function aemetConfigForDevice(device) {
   };
 }
 
-export async function weatherForDevice(device) {
+export async function weatherForDevice(device, { backgroundRefresh = false } = {}) {
   if (device.latitude == null || device.longitude == null) {
     return { configured: false, location: device.publicZone || null, message: 'Configura las coordenadas de la estación para consultar el tiempo externo.' };
   }
@@ -778,7 +778,14 @@ export async function weatherForDevice(device) {
         }
       }).catch(() => errors.push('AEMET no está disponible temporalmente.')));
     }
-    await Promise.all(jobs);
+    const canDefer = backgroundRefresh && (openMeteo || aemet);
+    if (canDefer) {
+      // El usuario no espera a un proveedor externo: se sirve el snapshot
+      // cacheado (aunque esté viejo) y el refresco sigue en segundo plano.
+      Promise.all(jobs).catch(() => {});
+    } else {
+      await Promise.all(jobs);
+    }
   }
   const localRows = aemet?.observation
     ? await sql`SELECT temperature_c, observed_at FROM measurements

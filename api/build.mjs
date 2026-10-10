@@ -41,6 +41,17 @@ const entryOutput = Object.entries(js.metafile.outputs)
 if (!entryOutput) throw new Error('No se encontró el bundle de entrada app.js');
 const jsUrl = `/dist/assets/${entryOutput[0].split('/').pop()}`;
 
+// Los chunks que el entry importa de forma estática se conocen solo al parsear
+// app.js: sin aviso previo el navegador los descubre tarde y encadena una ida y
+// vuelta por chunk. Se anuncian con `modulepreload` para que se descarguen en
+// paralelo con el entry.
+const preloaded = [jsUrl, ...(entryOutput[1].imports || [])
+  .filter((imp) => !imp.external && imp.kind === 'import-statement')
+  .map((imp) => `/dist/assets/${imp.path.split('/').pop()}`)];
+const preloadLinks = [...new Set(preloaded)]
+  .map((href) => `<link rel="modulepreload" href="${href}">`)
+  .join('\n  ');
+
 // CSS: minificado y firmado con el hash de su contenido minificado.
 const cssSource = await readFile(join(publicDir, 'app.css'), 'utf8');
 const cssBuild = await build({
@@ -59,7 +70,8 @@ await writeFile(join(assetsDir, cssUrl.split('/').pop()), cssMin);
 const html = await readFile(join(rootDir, 'views', 'index.html'), 'utf8');
 const rewritten = html
   .replace('href="/app.css"', `href="${cssUrl}"`)
-  .replace('src="/app.js"', `src="${jsUrl}"`);
+  .replace('src="/app.js"', `src="${jsUrl}"`)
+  .replace('</head>', `  ${preloadLinks}\n</head>`);
 if (rewritten === html) throw new Error('No se han reescrito las referencias de index.html');
 await writeFile(join(distDir, 'index.html'), rewritten);
 

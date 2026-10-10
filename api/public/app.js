@@ -179,7 +179,9 @@ function clearPrivateState() {
 }
 
 async function loadMe() {
-  session.me = await api('/api/v1/me');
+  // Sin disparar el manejador global de 401: un visitante anónimo no debe ver
+  // el formulario de acceso antes de que se decida la ruta.
+  session.me = await api('/api/v1/me', { skipUnauthorized: true });
 }
 function currentRoute() {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -603,9 +605,27 @@ api('/api/v1/public-config')
   .finally(() => { renderSupport(); renderMagicView(); });
 mountIcons();
 initLanding();
-try { await loadMe(); } catch { session.me = null; }
-await handleMagicReturn();
-await route();
+// La sesión se pide sin bloquear el primer pintado. En rutas públicas la vista
+// se muestra de inmediato y, cuando llega /me, se reconcilia la navegación si
+// hay sesión. Solo las rutas privadas esperan a la comprobación.
+const meReady = loadMe().catch(() => { session.me = null; });
+const magicReturn = await handleMagicReturn();
+const initialRoute = currentRoute();
+const publicFirst = !magicReturn && isRouteFragment()
+  && (initialRoute.section === 'landing' || PUBLIC_SECTIONS.has(initialRoute.section));
+if (publicFirst) {
+  showLanding();
+  homeMetric(initialRoute.section === 'landing');
+  if (PUBLIC_SECTIONS.has(initialRoute.section)) scrollToPublicSection(initialRoute.section);
+}
+await meReady;
+if (publicFirst && session.me) {
+  // Con sesión, la portada pública conserva la navegación privada.
+  showLandingView();
+  if (PUBLIC_SECTIONS.has(initialRoute.section)) scrollToPublicSection(initialRoute.section);
+} else if (!publicFirst) {
+  await route();
+}
 // Los gráficos se generan como cadena antes de insertarlos, así que miden el
 // ancho de referencia. Al entrar en el documento se vuelven a medir y se
 // redibujan a su ancho real: es lo que mantiene legible la escala en móvil.

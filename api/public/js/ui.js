@@ -62,20 +62,24 @@ let onUnauthorized = () => {};
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 export async function api(path, options = {}) {
+  // `skipUnauthorized`: la comprobación inicial de sesión no debe disparar el
+  // manejador global, o un visitante anónimo vería un parpadeo del formulario
+  // de acceso antes de que se resuelva la portada pública.
+  const { skipUnauthorized, ...fetchOptions } = options;
   const response = await fetch(path, {
     cache: 'no-store',
     credentials: 'same-origin',
-    ...options,
+    ...fetchOptions,
     headers: {
       'X-Requested-With': 'fetch',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
+      ...(fetchOptions.body ? { 'Content-Type': 'application/json' } : {}),
+      ...fetchOptions.headers,
     },
   }).catch(() => {
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('api-unavailable'));
     throw new Error('Sin conexión con el servidor. Inténtalo cuando recuperes la conexión.');
   });
-  if (response.status === 401) onUnauthorized();
+  if (response.status === 401 && !skipUnauthorized) onUnauthorized();
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const detail = Array.isArray(body.details) && body.details.length
