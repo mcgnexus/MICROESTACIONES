@@ -1,5 +1,6 @@
-import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport } from './js/ui.js';
+import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport, mountCharts } from './js/ui.js';
 import { initAnalyticsChoice, homeMetric, lockedMetric } from './js/analytics.js';
+import { mountIcons } from './js/icons.js';
 import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, initLanding } from './js/landing.js';
 
 const landingView = $('#landing-view');
@@ -431,8 +432,13 @@ api('/api/v1/public-config')
   .then((support) => { session.support = support; })
   .catch(() => { session.support = null; })
   .finally(() => { renderSupport(); renderMagicView(); });
+mountIcons();
 initLanding();
 try { await loadMe(); } catch { session.me = null; }
 await handleMagicReturn();
 await route();
+// Los gráficos se generan como cadena antes de insertarlos, así que miden el
+// ancho de referencia. Al entrar en el documento se vuelven a medir y se
+// redibujan a su ancho real: es lo que mantiene legible la escala en móvil.
+mountCharts();
 await initAnalyticsChoice();

@@ -2,6 +2,7 @@
 // cuándo, qué significa y qué puede hacer el usuario. Sin jerga ni coordenadas.
 import { escapeText, dateText, numberText } from './ui.js';
 import { coverageCaveat, NOTICE_NATURES } from './notice-taxonomy.js';
+import { icon } from './icons.js';
 
 export const FROST_C = 2;
 export const FROST_HARD_C = 0;
@@ -311,11 +312,11 @@ export function assessStation(item) {
 
 // ---- Tarjetas principales --------------------------------------------------
 
-function stateCard({ icon, title, tone, value, since, meaning, action, nature = null }) {
+function stateCard({ icon: iconName, title, tone, value, since, meaning, action, nature = null }) {
   const sinceLine = since ? `Desde ${escapeText(sinceText(since) || '—')}` : 'Ahora mismo';
   return `<article class="state-card tone-${tone}">
     <div class="state-card-head">
-      <span class="state-icon" aria-hidden="true">${icon}</span>
+      <span class="state-icon">${icon(iconName, { size: 20 })}</span>
       <h3>${escapeText(title)}</h3>
       <span class="overview-tag tone-${tone}">${escapeText(toneLabel(tone))}</span>
       ${natureBadge(nature)}
@@ -353,8 +354,8 @@ export function renderStateCards(devices, now = new Date(), { readings = false }
   const temperature = lastReading?.temperatureC ?? null;
   const humidity = lastReading?.humidityPct ?? null;
   const lastSeen = lastReading?.observedAt ?? null;
-  const reading = (icon, freshTitle, staleTitle, value, unit, since, hasSensor = true) => stateCard({
-    icon,
+  const reading = (iconName, freshTitle, staleTitle, value, unit, since, hasSensor = true) => stateCard({
+    icon: iconName,
     title: readingsFresh ? freshTitle : staleTitle,
     tone: hasSensor && value != null ? (readingsFresh ? 'ok' : 'warn') : 'muted',
     nature: hasSensor && value != null ? 'real' : null,
@@ -368,16 +369,16 @@ export function renderStateCards(devices, now = new Date(), { readings = false }
         : readingsFresh ? 'Sin acción.' : 'No la tomes como tiempo actual.',
   });
   const readingCards = readings
-    ? `${reading('🌡️', 'Temperatura actual', 'Última temperatura', temperature, '°C', lastSeen, sensors.temperature !== false)}
-    ${reading('💧', 'Humedad actual', 'Última humedad', humidity, '%', lastSeen, sensors.humidity !== false)}`
+    ? `${reading('temperature', 'Temperatura actual', 'Última temperatura', temperature, '°C', lastSeen, sensors.temperature !== false)}
+    ${reading('humidity', 'Humedad actual', 'Última humedad', humidity, '%', lastSeen, sensors.humidity !== false)}`
     : '';
   return `<div class="state-grid">
     ${readingCards}
-    ${stateCard({ icon: '❄️', title: 'Riesgo de helada', tone: frost.tone, value: frost.value, since: frost.since, meaning: frost.meaning, action: frost.action, nature: frost.nature })}
-    ${stateCard({ icon: '🔥', title: 'Riesgo de calor', tone: heat.tone, value: heat.value, since: heat.since, meaning: heat.meaning, action: heat.action, nature: heat.nature })}
-    ${stateCard({ icon: '⛈️', title: 'Riesgo de tormenta', tone: storm.tone, value: storm.value, since: storm.since, meaning: storm.meaning, action: storm.action, nature: storm.nature })}
-    ${stateCard({ icon: '📡', title: 'Última comunicación', tone: connection.tone, value: connection.value, since: connection.since, meaning: connection.meaning, action: connection.action, nature: connection.nature })}
-    ${stateCard({ icon: '🔋', title: 'Estado de la estación', tone: station.tone, value: station.value, since: station.since, meaning: station.meaning, action: station.action, nature: station.nature })}
+    ${stateCard({ icon: 'frost', title: 'Riesgo de helada', tone: frost.tone, value: frost.value, since: frost.since, meaning: frost.meaning, action: frost.action, nature: frost.nature })}
+    ${stateCard({ icon: 'heat', title: 'Riesgo de calor', tone: heat.tone, value: heat.value, since: heat.since, meaning: heat.meaning, action: heat.action, nature: heat.nature })}
+    ${stateCard({ icon: 'storm', title: 'Riesgo de tormenta', tone: storm.tone, value: storm.value, since: storm.since, meaning: storm.meaning, action: storm.action, nature: storm.nature })}
+    ${stateCard({ icon: 'connectivity', title: 'Última comunicación', tone: connection.tone, value: connection.value, since: connection.since, meaning: connection.meaning, action: connection.action, nature: connection.nature })}
+    ${stateCard({ icon: 'battery', title: 'Estado de la estación', tone: station.tone, value: station.value, since: station.since, meaning: station.meaning, action: station.action, nature: station.nature })}
   </div>`;
 }
 
@@ -454,7 +455,7 @@ export function renderZoneComparison(devices) {
 
 export function renderNextRisk(risk) {
   return `<article class="next-risk tone-${risk.tone}">
-    <div class="state-card-head"><span class="state-icon" aria-hidden="true">⚠️</span>
+    <div class="state-card-head"><span class="state-icon">${icon(risk.tone === 'muted' ? 'compass' : 'alerts', { size: 20 })}</span>
       <h3>${escapeText(risk.title)}</h3>
       <span class="overview-tag tone-${risk.tone}">${escapeText(toneLabel(risk.tone))}</span></div>
     <p class="state-since">${risk.when ? escapeText(dateText(risk.when)) : 'Ahora'}${risk.device ? ` · ${escapeText(risk.device)}` : ''}</p>

@@ -1,5 +1,6 @@
 import { $, api, escapeText, dateText, numberText, pressureMbar, canEdit, METRIC_ICONS, verificationBadge } from './ui.js';
 import { makeChart } from './ui.js';
+import { icon } from './icons.js';
 
 const TREND_LABELS = { sube: 'sube', baja: 'baja', estable: 'estable', insuficiente: 'sin datos suficientes' };
 
@@ -32,7 +33,7 @@ export async function renderStatisticsTab(content, stationId, station) {
     } : sourceMetric;
     return `
     <div class="stat-card">
-      <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span class="metric-icon" aria-hidden="true">${METRIC_ICONS[metric.label]} </span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
+      <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span class="metric-icon">${icon(METRIC_ICONS[metric.label], { size: 18 })}</span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
       <div class="stat-row">
         <span>Mín</span><strong>${numberText(metric.min, metric.digits ?? 1)}</strong>
         <span>Máx</span><strong>${numberText(metric.max, metric.digits ?? 1)}</strong>

@@ -135,7 +135,7 @@ export async function renderStations(root) {
               ${verificationBadge(station.verification)}
             </div>
           </div>
-          <p class="coverage">Último contacto: ${dateText(status.lastContact)} · último dato válido: ${dateText(status.lastValidData)} · batería ${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)}) · configuración v${status.configVersion}</p>
+          <p class="coverage">Último contacto: ${dateText(status.lastContact)} · último dato válido: ${dateText(status.lastValidData)} · ${station.sensors?.battery === false ? 'batería: sensor desactivado' : `batería ${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)})`} · configuración v${status.configVersion}</p>
           <div class="row-actions">${actions}</div>
         </article>`;
       }).join('') : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
@@ -342,8 +342,13 @@ function renderEstado(content, detail) {
   const station = detail.station;
   const status = detail.status;
   const stats = detail.measurementStats || {};
-  const sensorState = SENSOR_KEYS
-    .map(([key, label]) => `<li>${label}: ${station.sensors?.[key] === false ? 'desactivado' : 'activo'}</li>`)
+  // Los sensores desactivados no ocupan espacio en el resumen: se declaran aquí,
+// en la ficha del equipo, que es donde se cambia la configuración.
+const sensorState = SENSOR_KEYS
+    .map(([key, label]) => {
+      const off = station.sensors?.[key] === false;
+      return `<li>${label}: ${off ? 'desactivado, no se mide' : 'activo'}</li>`;
+    })
     .join('');
   const site = station.siteInfo || {};
   const verification = station.verification || {};
@@ -381,7 +386,7 @@ function renderEstado(content, detail) {
     ['Connectividad', status.connectivity],
     ['Último contacto', dateText(status.lastContact)],
     ['Último dato válido', dateText(status.lastValidData)],
-    ['Batería', status.batteryMv == null ? 'sin dato' : `${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)})`],
+    ['Batería', station.sensors?.battery === false ? 'sensor desactivado' : status.batteryMv == null ? 'no medida' : `${numberText(status.batteryMv, 0)} mV (${batteryLabel(status.batteryLevel)})`],
     ['Configuración aplicada', `v${status.configVersion}`],
     ['Muestras pendientes', status.pendingSamples],
     ['Mediciones', `${stats.valid ?? 0} válidas de ${stats.total ?? 0} · última ${dateText(stats.lastObserved)}`],
@@ -397,6 +402,7 @@ function renderEstado(content, detail) {
     <dl class="detail-grid">${visibleRows
       .map(([label, value]) => `<dt>${label}</dt><dd>${escapeText(value ?? '—')}</dd>`).join('')}</dl>
     <h3>Sensores</h3><ul class="plain-list">${sensorState}</ul>
+    <p class="hint">Los sensores desactivados no aparecen en el resumen ni tienen gráfica: el equipo no envía esa magnitud. Viento y precipitación los aporta AEMET; la radiación UV no se mide hoy.</p>
   </section>`;
 }
 

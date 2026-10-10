@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, pressureMbar, pressureText, trendWindows, trendWindowRows, trendPeriodLabel, validationBadge, verificationBadge } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, chartScale, pressureMbar, pressureText, shortDate, trendWindows, trendWindowRows, trendPeriodLabel, validationBadge, verificationBadge } from '../public/js/ui.js';
 import { renderStationCard } from '../public/js/panel.js';
 
 test('an accepted reading is labelled as automatic-control accepted, not certified', () => {
@@ -52,9 +52,10 @@ test('station cards compare microstation and AEMET, and prefer AEMET daily forec
   assert.match(html, /<strong>900<\/strong><small>mbar<\/small>/);
   assert.match(html, /5051X/);
   assert.match(html, /MICROESTACIÓN · MEDICIÓN DIRECTA/);
-  assert.match(html, /Próximas mediciones locales/);
-  assert.match(html, /Radiación UV/);
-  assert.match(html, /AEMET aporta ahora viento y precipitación/);
+  // 14 · P2: las capacidades futuras ya no ocupan la rejilla operativa. La
+  // tarjeta dice de dónde salen viento y precipitación, y punto.
+  assert.match(html, /Viento y precipitación los aporta AEMET, no esta estación/);
+  assert.doesNotMatch(html, /Próximamente|Próximas mediciones locales/);
   assert.match(html, /Previsión municipal AEMET/);
   // El hero mantiene la previsión del día de AEMET y el bloque externo da el detalle.
   assert.match(html, /hero-forecast/);
@@ -201,7 +202,10 @@ test('trendPeriodLabel falls back to a stated default when there is no period', 
 });
 
 test('metrics include an icon and graphs explain temperature trend with an arrow', () => {
-  assert.match(metric('Temperatura', '19,2', '°C'), /🌡️/);
+  // El icono viene del conjunto común en SVG, no de un emoji: cada sistema
+  // operativo los dibujaba de forma distinta.
+  assert.match(metric('Temperatura', '19,2', '°C'), /<svg class="icon"[^>]*viewBox="0 0 24 24"/);
+  assert.doesNotMatch(metric('Temperatura', '19,2', '°C'), /🌡/);
   const rows = [1, 2, 3].map((temperatureC, i) => ({
     observedAt: new Date(i * 30 * 60 * 1000).toISOString(), temperatureC,
   }));
@@ -209,7 +213,8 @@ test('metrics include an icon and graphs explain temperature trend with an arrow
   assert.match(chart, /chart-trend trend-sube/);
   assert.match(chart, /↑/);
   assert.match(chart, /calentamiento/);
-  assert.match(chart, /viewBox="0 0 560 200"/);
+  // La caja de referencia es de 560 px de ancho y su alto sale de chartScale.
+  assert.match(chart, new RegExp(`viewBox="0 0 560 ${chartScale(560).height}"`));
   assert.match(chart, /chart-area/);
   assert.match(chart, /tecrural-chart-card/);
   assert.match(chart, /chart-current/);

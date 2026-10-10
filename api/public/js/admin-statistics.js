@@ -1,6 +1,7 @@
 import {
   $, api, escapeText, dateText, numberText, pressureMbar, makeChart, METRIC_ICONS,
 } from './ui.js';
+import { icon } from './icons.js';
 
 // Panel de cálculo estadístico para administración: elige estación(es) y
 // periodo, ejecuta el informe validado y permite exportarlo a CSV.
@@ -41,11 +42,11 @@ function normalizeMetric(key, metric) {
 
 function metricCard(key, source) {
   const metric = normalizeMetric(key, source);
-  const icon = METRIC_ICONS[metric.label] || '📊';
+  const iconName = METRIC_ICONS[metric.label] || 'chart';
   const trend = metric.trend || { direction: 'insuficiente' };
   const arrow = trend.direction === 'sube' ? '↑' : trend.direction === 'baja' ? '↓' : trend.direction === 'estable' ? '→' : '·';
   return `<div class="stat-card">
-    <p class="eyebrow"><span class="metric-icon" aria-hidden="true">${icon}</span>${escapeText(metric.label)} <small>${escapeText(metric.displayUnit)}</small></p>
+    <p class="eyebrow"><span class="metric-icon">${icon(iconName, { size: 18 })}</span>${escapeText(metric.label)} <small>${escapeText(metric.displayUnit)}</small></p>
     <div class="stat-row">
       <span>Mín</span><strong>${numberText(metric.min, metric.digits)}</strong>
       <span>Máx</span><strong>${numberText(metric.max, metric.digits)}</strong>

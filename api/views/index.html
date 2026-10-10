@@ -147,7 +147,7 @@
         <div class="farm-value-grid">
           <article><span aria-hidden="true">❄️</span><h3>Frío</h3><p>Observa cómo evolucionan las temperaturas en tu emplazamiento.</p></article>
           <article><span aria-hidden="true">☀️</span><h3>Calor</h3><p>Sigue los episodios cálidos en el punto que te interesa.</p></article>
-          <article><span aria-hidden="true">💧</span><h3>Humedad</h3><p>Consulta la humedad medida junto con la hora de cada lectura.</p></article>
+          <article><span class="nav-icon" data-icon="humidity"></span><h3>Humedad</h3><p>Consulta la humedad medida junto con la hora de cada lectura.</p></article>
         </div>
       </section>
 
@@ -162,10 +162,11 @@
         <p class="eyebrow">ACCESO AMPLIADO</p>
         <h2>Más seguimiento para tu finca</h2>
         <p class="section-intro">El acceso ampliado reúne herramientas para consultar y entender las mediciones de tus estaciones. Para usarlo hacen falta las dos piezas: entrar con tu correo y que el equipo conceda el acceso a alguna estación.</p>
+        <p class="hint">Qué mide hoy cada estación y qué no, se declara en su ficha de equipo. Las capacidades que la estación aún no mide —viento y precipitación propios, iluminación y radiación UV— aparecen como tal, no como gráficos vacíos.</p>
         <div class="tools-preview">
-          <article><span aria-hidden="true">📈</span><div><h3>Histórico y evolución</h3><p>Revisa mediciones anteriores y sus tendencias.</p><a href="#/estaciones">Abrir histórico · requiere acceso</a></div></article>
-          <article><span aria-hidden="true">🔔</span><div><h3>Avisos y seguimiento</h3><p>Consulta avisos, estado de conexión y calidad de los datos.</p><a href="#/avisos">Abrir avisos · requiere acceso</a></div></article>
-          <article><span aria-hidden="true">📍</span><div><h3>Estaciones y fincas</h3><p>Organiza tus ubicaciones y consulta el punto medido.</p><a href="#/panel">Abrir panel · requiere acceso</a></div></article>
+          <article><span class="nav-icon" data-icon="chart"></span><div><h3>Histórico y evolución</h3><p>Revisa mediciones anteriores y sus tendencias.</p><a href="#/estaciones">Abrir histórico · requiere acceso</a></div></article>
+          <article><span class="nav-icon" data-icon="alerts"></span><div><h3>Avisos y seguimiento</h3><p>Consulta avisos, estado de conexión y calidad de los datos.</p><a href="#/avisos">Abrir avisos · requiere acceso</a></div></article>
+          <article><span class="nav-icon" data-icon="stations"></span><div><h3>Estaciones y fincas</h3><p>Organiza tus ubicaciones y consulta el punto medido.</p><a href="#/panel">Abrir panel · requiere acceso</a></div></article>
         </div>
         <a class="access-link" href="#/vias">Ver las tres formas de empezar</a>
       </section>
@@ -239,10 +240,10 @@
     </div>
   </footer>
   <nav id="mobile-nav" class="mobile-tab-bar hidden" aria-label="Navegación móvil">
-    <a href="#/panel" data-mobile-nav="panel"><span aria-hidden="true">⌂</span>Panel</a>
-    <a href="#/estaciones" data-mobile-nav="stations"><span aria-hidden="true">◉</span>Estaciones</a>
-    <a href="#/avisos" data-mobile-nav="alerts"><span aria-hidden="true">♧</span>Avisos</a>
-    <a href="#/cuenta" data-mobile-nav="account"><span aria-hidden="true">●</span>Cuenta</a>
+    <a href="#/panel" data-mobile-nav="panel"><span class="nav-icon" data-icon="panel"></span>Panel</a>
+    <a href="#/estaciones" data-mobile-nav="stations"><span class="nav-icon" data-icon="stations"></span>Estaciones</a>
+    <a href="#/avisos" data-mobile-nav="alerts"><span class="nav-icon" data-icon="alerts"></span>Avisos</a>
+    <a href="#/cuenta" data-mobile-nav="account"><span class="nav-icon" data-icon="account"></span>Cuenta</a>
   </nav>
   <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
   <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación; las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. No se calculan predicciones meteorológicas propias. Cada dato lleva su etiqueta de procedencia: «Medido», «Previsión», «Calculado» o «Simulación», con su proveedor y su hora.</p>

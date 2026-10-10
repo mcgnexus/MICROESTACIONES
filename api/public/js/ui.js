@@ -1,4 +1,5 @@
 // Utilidades compartidas del panel: API, formato, insignias y gráficas.
+import { icon } from './icons.js';
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -44,11 +45,13 @@ export async function api(path, options = {}) {
 export const canEdit = () => ['admin', 'operator'].includes(session.me?.role);
 export const isAdmin = () => session.me?.role === 'admin';
 
-export const METRIC_ICONS = { Temperatura: '🌡️', Humedad: '💧', Presión: '🌬️', Batería: '🔋', Lux: '☀️', Iluminancia: '☀️' };
+// Iconos por métrica, del conjunto común. Sustituyen a los emojis, que cada
+// sistema operativo dibujaba con su propio tamaño, color y estilo de trazo.
+export const METRIC_ICONS = { Temperatura: 'temperature', Humedad: 'humidity', Presión: 'pressure', Batería: 'battery', Lux: 'lux', Iluminancia: 'lux' };
 
 export function metric(label, value, unit = '') {
-  const icon = METRIC_ICONS[label] || '';
-  return `<div class="metric"><span>${icon ? `<span class="metric-icon" aria-hidden="true">${icon}</span> ` : ''}${label}</span><strong>${value}</strong> <small>${unit}</small></div>`;
+  const name = METRIC_ICONS[label] || '';
+  return `<div class="metric"><span>${name ? `<span class="metric-icon">${icon(name, { size: 18 })}</span>` : ''}${label}</span><strong>${value}</strong> <small>${unit}</small></div>`;
 }
 
 export function fieldError(root, message) {
@@ -109,8 +112,10 @@ export function verificationBadge(verification = {}) {
   return `<span class="badge ${css}" title="${escapeText(title)}">${label}</span>`;
 }
 
-const BATTERY = { ok: 'Correcta', low: 'Baja', critical: 'Crítica', unknown: 'Sin dato' };
-export const batteryLabel = (level) => BATTERY[level] || 'Sin dato';
+// En una cabecera de badges, «Sin dato» no dice de qué dato se trata: se lee
+// como si faltara algo que no se nombra. Cada estado nombra su magnitud.
+const BATTERY = { ok: 'Batería correcta', low: 'Batería baja', critical: 'Batería crítica', unknown: 'Batería no medida' };
+export const batteryLabel = (level) => BATTERY[level] || 'Batería no medida';
 
 // Soporte telefónico público (llega en /api/v1/public-config al arrancar).
 export function supportText() {
@@ -163,10 +168,11 @@ export function sampleChartRows(rows, key, limit = 300) {
 }
 
 const TREND_METRICS = {
-  temperatureC: { icon: '🌡️', up: 'calentamiento', down: 'enfriamiento', unit: '°C' },
-  humidityPct: { icon: '💧', up: 'aumenta la humedad relativa', down: 'disminuye la humedad relativa', unit: '%' },
-  pressurePa: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
-  pressureMbar: { icon: '🌬️', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
+  temperatureC: { icon: 'temperature', up: 'calentamiento', down: 'enfriamiento', unit: '°C' },
+  humidityPct: { icon: 'humidity', up: 'aumenta la humedad relativa', down: 'disminuye la humedad relativa', unit: '%' },
+  pressurePa: { icon: 'pressure', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
+  pressureMbar: { icon: 'pressure', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'mbar' },
+  batteryMv: { icon: 'battery', up: 'subida de tensión', down: 'descenso de tensión', unit: 'mV' },
 };
 
 // La magnitud es el cambio observado entre la primera y la última lectura de la
@@ -272,7 +278,54 @@ const CHART_SCALE = {
   batteryMv: { minimumSpan: 500, step: 250 },
 };
 
+// El gráfico se dibuja en un viewBox fijo y luego se escala al ancho del
+// contenedor. Al escalarlo también se reduce el texto interno, que es lo que lo
+// hacía ilegible en móvil: la escala no se puede corregir solo con CSS porque el
+// tamaño final depende del ancho real, que el SVG no conoce al dibujarse.
+//
+// La solución es fijar la altura en píxeles y ajustar la escala de forma que el
+// viewBox se parezca al ancho mostrado: así 1 unidad del viewBox ≈ 1 píxel, y la
+// tipografía del eje conserva su tamaño en pantalla. `chartGeometry` devuelve
+// además los valores medidos para poder probarlos sin navegador.
+export const CHART_BOX = { width: 560, height: 200, minWidth: 260 };
+
+/**
+ * Escala de un gráfico al ancho que realmente ocupa.
+ *
+ * Devuelve el alto en píxeles, el factor de escala y el ancho efectivo del
+ * viewBox. Con un contenedor estrecho se reduce el número de marcas del eje y
+ * se acorta la fecha, nunca el tamaño de la letra.
+ */
+export function chartScale(measuredWidth = CHART_BOX.width) {
+  const width = Math.max(CHART_BOX.minWidth, Math.round(measuredWidth) || CHART_BOX.width);
+  const compact = width < 380;
+  // Alto proporcional al ancho, acotado: en un móvil la gráfica no puede
+  // quedarse en una franja de 135 px con la mitad del texto fuera.
+  const height = Math.round(Math.max(150, Math.min(230, width * 0.5)));
+  // Se estira el viewBox para que coincida con el ancho mostrado: el factor de
+  // escala real pasa a ser 1 y la tipografía se ve al tamaño declarado.
+  return {
+    width,
+    height,
+    scale: 1,
+    compact,
+    // Un eje con cuatro horas no cabe en 260 px: se muestran menos marcas, no
+    // letras más pequeñas.
+    timeTicks: compact ? 3 : 4,
+    valueTicks: compact ? 3 : 3,
+    axisFont: compact ? 12 : 13,
+  };
+}
+
 let chartInstance = 0;
+
+// Gráficos ya dibujados, para poder redibujarlos cuando cambia el ancho. El
+// SVG se genera antes de estar en el documento y, por tanto, antes de saber
+// cuánto mide su contenedor: sin esto, el viewBox fijo haría que en un móvil
+// todo el texto interno se escalase a menos de la mitad.
+const chartSpecs = new Map();
+
+const CHART_REDRAW_TOLERANCE = 24;
 
 export function chartYDomain(key, min, max) {
   const scale = CHART_SCALE[key] || { minimumSpan: 0, step: 1 };
@@ -300,6 +353,19 @@ const clockText = (value) => (value
   : '—');
 
 const trendIcon = (direction) => (direction === 'sube' ? '↑' : direction === 'baja' ? '↓' : direction === 'estable' ? '→' : '·');
+
+// Los extremos del eje se muestran abreviados —día, mes y hora— porque en
+// pantalla ancha la fecha larga no cabe y empujaba el resto. La fecha completa
+// sigue en el title de cada etiqueta, en el aria-label del SVG y en el detalle
+// ampliable: acortar no es quitar.
+export function shortDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const two = (n) => String(n).padStart(2, '0');
+  // Se compone a mano porque el formato largo de es-ES no rellena con cero el
+  // día ni la hora, y un eje con «5/6» junto a «20/6» se lee como dos formatos.
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
 
 function trendExplanation(direction, metric, period) {
   const scope = period.label.toLowerCase();
@@ -339,15 +405,18 @@ function chartTrendBadge(rows, key, digits, now) {
   return `<div class="chart-trend-wrap">${blocks.join('')}</div>`;
 }
 
-export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null, detail = null, trendRows = null, now = new Date()) {
+export function makeChart(title, rows, key, color, unit, digits = 1, exactStats = null, detail = null, trendRows = null, now = new Date(), options = {}) {
   const allPoints = rows.filter((row) => row[key] != null);
   const points = sampleChartRows(rows, key);
-  const icon = TREND_METRICS[key]?.icon || '📈';
+  const metricIcon = TREND_METRICS[key]?.icon || 'chart';
+  const iconHtml = icon(metricIcon, { size: 19 });
   const detailAttrs = detail
     ? ` data-detail-key="${escapeText(detail.key)}" data-detail-metric="${escapeText(detail.metric || key)}" data-detail-source="${escapeText(detail.source || 'local')}" role="button" tabindex="0" aria-label="Ampliar ${escapeText(title)}"`
     : '';
-  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"${detailAttrs}><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones aceptadas por los controles automáticos en este periodo.</p></div>`;
-  const width = 560, height = 200, left = 58, right = 14, top = 16, bottom = 34;
+  if (!allPoints.length) return `<div class="chart-box tecrural-chart-card chart-empty"${detailAttrs}><div class="chart-title"><span class="chart-icon">${iconHtml}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN</small></div></div><p class="empty">No hay mediciones aceptadas por los controles automáticos en este periodo.</p></div>`;
+  const scale = chartScale(options.width ?? CHART_BOX.width);
+  const { width, height } = scale;
+  const left = scale.compact ? 40 : 58, right = 14, top = 16, bottom = scale.compact ? 30 : 34;
   const values = allPoints.map((row) => Number(row[key]));
   const min = exactStats?.min ?? Math.min(...values);
   const max = exactStats?.max ?? Math.max(...values);
@@ -362,21 +431,28 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
   const orderedPoints = [...allPoints].sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
   const first = dateText(orderedPoints[0].observedAt);
   const last = dateText(orderedPoints.at(-1).observedAt);
-  const ticks = [0, 1, 2].map((i) => {
-    const fraction = i / 2;
+  const valueSteps = scale.valueTicks - 1;
+  const ticks = Array.from({ length: scale.valueTicks }, (_, i) => {
+    const fraction = valueSteps ? i / valueSteps : 0;
     const y = top + fraction * (height - top - bottom);
     const value = high - fraction * (high - low);
-    return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-gridline"/><text x="${left - 8}" y="${y + 4}" class="chart-axis-label" text-anchor="end">${numberText(value, digits)}</text>`;
+    return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-gridline"/><text x="${left - 8}" y="${y + 4}" class="chart-axis-label" style="font-size:${scale.axisFont}px" text-anchor="end">${numberText(value, digits)}</text>`;
   }).join('');
   const dateSpan = lastTime - firstTime;
-  const timeLabels = [0, 1, 2, 3].map((i) => {
-    const time = firstTime + dateSpan * i / 3;
-    const date = new Date(time);
-    const text = dateSpan > 36 * 60 * 60 * 1000
-      ? new Intl.DateTimeFormat('es', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
-      : new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' }).format(date);
-    return `<text x="${left + (width - left - right) * i / 3}" y="${height - 7}" class="chart-axis-label" text-anchor="${i === 0 ? 'start' : i === 3 ? 'end' : 'middle'}">${escapeText(text)}</text>`;
-  }).join('');
+  const tickCount = scale.timeTicks;
+    const lastTick = tickCount - 1;
+    const timeLabels = Array.from({ length: tickCount }, (_, i) => {
+      const time = firstTime + dateSpan * i / lastTick;
+      const date = new Date(time);
+      // En un eje estrecho la fecha se abrevia; el valor preciso sigue en el
+      // punto ampliable y en las etiquetas de datos de la tabla.
+      const text = dateSpan > 36 * 60 * 60 * 1000
+        ? new Intl.DateTimeFormat('es', scale.compact
+          ? { day: '2-digit', month: '2-digit' } : { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
+        : new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' }).format(date);
+      const anchor = i === 0 ? 'start' : i === lastTick ? 'end' : 'middle';
+      return `<text x="${left + (width - left - right) * i / lastTick}" y="${height - 7}" class="chart-axis-label" style="font-size:${scale.axisFont}px" text-anchor="${anchor}">${escapeText(text)}</text>`;
+    }).join('');
   const segments = [];
   let segment = [];
   coords.forEach((point, index) => {
@@ -407,7 +483,10 @@ export function makeChart(title, rows, key, color, unit, digits = 1, exactStats 
     return `<circle cx="${x}" cy="${y}" r="9" fill="transparent" class="chart-hit" tabindex="${tabIndex}" role="img" aria-label="${escapeText(label)}" data-chart-tip="${escapeText(label)}" data-chart-x="${x}" data-chart-y="${y}"/><circle cx="${x}" cy="${y}" r="2.4" fill="${color}" pointer-events="none"/>`;
   }).join('');
   const latestValue = numberText(orderedPoints.at(-1)[key], digits);
-  return `<div class="chart-box tecrural-chart-card"${detailAttrs}><div class="chart-heading"><div class="chart-title"><span class="chart-icon" aria-hidden="true">${icon}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits, now)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".42"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient><filter id="${glowId}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>${ticks}${areaPaths}${paths}${pulse}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span>${escapeText(first)}</span><span>${escapeText(last)}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
+  // Se guarda lo necesario para volver a dibujar el mismo gráfico a otro ancho.
+  const chartId = `c${chartInstance}`;
+  chartSpecs.set(chartId, { title, rows, key, color, unit, digits, exactStats, detail, trendRows, now, height });
+  return `<div class="chart-box tecrural-chart-card"${detailAttrs} data-chart-id="${chartId}" data-chart-width="${width}" data-chart-height="${height}"><div class="chart-heading"><div class="chart-title"><span class="chart-icon">${iconHtml}</span><div><h3>${escapeText(title)}</h3><small>MICROESTACIÓN · MEDICIONES VALIDADAS</small></div></div><div class="chart-current"><strong>${latestValue}</strong><small>${escapeText(unit)}</small></div></div><div class="chart-trend-strip">${chartTrendBadge(trendRows && trendRows.length ? trendRows : allPoints, key, digits, now)}</div><div class="chart-wrap"><svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" style="--chart-h:${height}px" role="group" aria-label="${escapeText(title)} desde ${escapeText(first)} hasta ${escapeText(last)}"><defs><linearGradient id="${gradientId}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".42"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient><filter id="${glowId}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.6" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>${ticks}${areaPaths}${paths}${pulse}${timeLabels}${pointTargets}</svg><div class="chart-tooltip" role="status" aria-live="polite" hidden></div></div><div class="chart-dates"><span title="${escapeText(first)}">${escapeText(shortDate(orderedPoints[0].observedAt))}</span><span title="${escapeText(last)}">${escapeText(shortDate(orderedPoints.at(-1).observedAt))}</span></div><div class="summary"><span>Mín. ${numberText(min, digits)} ${escapeText(unit)}</span><span>Máx. ${numberText(max, digits)} ${escapeText(unit)}</span><span>Prom. ${numberText(average, digits)} ${escapeText(unit)}</span></div></div>`;
 }
 
 if (typeof document !== 'undefined') {
@@ -417,8 +496,13 @@ if (typeof document !== 'undefined') {
     const tip = wrap.querySelector('.chart-tooltip');
     tip.textContent = target.dataset.chartTip;
     tip.hidden = false;
-    tip.style.left = `${Math.max(0, Math.min(88, Number(target.dataset.chartX) / 560 * 100))}%`;
-    tip.style.top = `${Math.max(0, Math.min(75, Number(target.dataset.chartY) / 200 * 100))}%`;
+    // El SVG ya se dibuja 1:1 con el ancho mostrado, así que las coordenadas del
+    // viewBox coinciden con las de la caja y no hace falta escalar a mano.
+    const wrapWidth = wrap.getBoundingClientRect().width || CHART_BOX.width;
+    tip.style.left = `${Math.max(0, Math.min(88, Number(target.dataset.chartX) / wrapWidth * 100))}%`;
+    const height = wrap.closest('[data-chart-id]')?.dataset.chartHeight
+      || wrap.getBoundingClientRect().height || CHART_BOX.height;
+    tip.style.top = `${Math.max(0, Math.min(75, Number(target.dataset.chartY) / Number(height) * 100))}%`;
   };
   document.addEventListener('pointerover', (event) => {
     const target = event.target.closest?.('.chart-hit');
@@ -441,6 +525,36 @@ if (typeof document !== 'undefined') {
   });
 }
 
+/**
+ * Redibuja los gráficos cuyo ancho real se ha alejado del que se dibujaron.
+ *
+ * El SVG se genera como cadena antes de insertarlo, así que su primer viewBox es
+ * el de referencia. Al insertarlo se mide el ancho real y, si difiere lo
+ * suficiente, se vuelve a generar a esa medida: es lo que evita que la escala, las
+ * horas y la explicación de tendencia se encojan con el resto del dibujo.
+ */
+export function mountCharts(root = document) {
+  root.querySelectorAll('[data-chart-id]').forEach((card) => {
+    const spec = chartSpecs.get(card.dataset.chartId);
+    if (!spec) return;
+    const measured = Math.round(card.querySelector('.chart-wrap')?.getBoundingClientRect().width || 0);
+    if (!measured) return;
+    const drawn = Number(card.dataset.chartWidth) || CHART_BOX.width;
+    if (Math.abs(measured - drawn) <= CHART_REDRAW_TOLERANCE) return;
+    card.outerHTML = makeChart(spec.title, spec.rows, spec.key, spec.color, spec.unit, spec.digits,
+      spec.exactStats, spec.detail, spec.trendRows, spec.now, { width: measured });
+  });
+}
+
+if (typeof ResizeObserver !== 'undefined' && typeof document !== 'undefined') {
+  let pending = null;
+  const redrawSoon = () => {
+    if (pending) return;
+    pending = requestAnimationFrame(() => { pending = null; mountCharts(document); });
+  };
+  new ResizeObserver(redrawSoon).observe(document.documentElement);
+}
+
 export const chartSection = (history, summary = {}, options = {}) => {
   const pressureHistory = history.map((row) => ({ ...row, pressureMbar: pressureMbar(row.pressurePa) }));
   const pressureSummary = Object.fromEntries(['min', 'max', 'avg'].map((key) => [key, pressureMbar(summary[`pressure_${key}`])]));
@@ -450,10 +564,30 @@ export const chartSection = (history, summary = {}, options = {}) => {
     : null);
   const card = (title, rows, key, color, unit, digits, stats = null) =>
     makeChart(title, rows, key, color, unit, digits, stats, detail ? { ...detail, metric: key } : null, trendFor(key));
+  // Una métrica desactivada no se dibuja: una gráfica vacía ocupa el hueco de
+  // una real y hace que el conjunto parezca menos completo de lo que es. Si el
+  // sensor está apagado, su estado está en la ficha del equipo.
+  const enabled = (key) => options.sensors?.[key] !== false;
   const lux = options.sensors?.lux === true && history.some((row) => row.lux != null)
     ? card('Iluminancia', history, 'lux', '#d99a1f', 'lux', 0)
     : '';
-  return `<div class="chart-grid">${card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg })}${card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg })}${card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary)}${card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })}${lux}</div><p class="chart-trend-help">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Cada tarjeta separa la última hora del resumen del día: las cifras son diferencias entre la primera y la última lectura de cada periodo, no pendientes ajustadas. Toca un gráfico o una tarjeta para ampliar.</p>`;
+  const battery = enabled('battery')
+    ? card('Batería', history, 'batteryMv', '#217a4b', 'mV', 0, { min: summary.battery_min, max: summary.battery_max, avg: summary.battery_avg })
+    : '';
+  const disabled = ['temperature', 'humidity', 'pressure', 'battery'].filter((key) => !enabled(key));
+  // Si no queda ninguna métrica activa, el conjunto vacío dice por qué.
+  const charts = [
+    enabled('temperature') ? card('Temperatura', history, 'temperatureC', '#c97742', '°C', 1, { min: summary.temp_min, max: summary.temp_max, avg: summary.temp_avg }) : '',
+    enabled('humidity') ? card('Humedad', history, 'humidityPct', '#168b80', '%', 1, { min: summary.humidity_min, max: summary.humidity_max, avg: summary.humidity_avg }) : '',
+    enabled('pressure') ? card('Presión', pressureHistory, 'pressureMbar', '#079ab1', 'mbar', 1, pressureSummary) : '',
+    battery,
+    lux,
+  ].join('');
+  const body = charts || '<p class="empty">Todos los sensores de esta estación están desactivados. Su configuración está en la ficha del equipo.</p>';
+  const note = disabled.length
+    ? `<p class="hint">Sin medir: ${disabled.map((key) => ({ temperature: 'temperatura', humidity: 'humedad', pressure: 'presión', battery: 'batería' })[key]).join(', ')}. El equipo no las envía y por eso no tienen gráfica.</p>`
+    : '';
+  return `<div class="chart-grid">${body}</div>${note}<p class="chart-trend-help">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Cada tarjeta separa la última hora del resumen del día: las cifras son diferencias entre la primera y la última lectura de cada periodo, no pendientes ajustadas. Toca un gráfico o una tarjeta para ampliar.</p>`;
 };
 
 // ---- Diálogo de detalle ----------------------------------------------------
