@@ -4,6 +4,7 @@
 // mensajes y no modifica configuraciones: es material para entender el servicio
 // antes de instalar una estación.
 import { escapeText, numberText } from './ui.js';
+import { originBadge, originLegend } from './origin-labels.js';
 
 const round1 = (value) => Math.round(value * 10) / 10;
 
@@ -25,12 +26,12 @@ export const SIM_SCENARIOS = [
     stepMinutes: 30,
     comparator: 'below',
     threshold: { default: 2, min: -6, max: 10, step: 0.5 },
-    intro: 'Una noche de invierno simulada. La temperatura desciende y cruza un umbral que tú eliges. Ninguna serie procede de una estación real.',
+    intro: 'Una noche de invierno. La temperatura desciende y cruza un umbral que tú eliges.',
     distinguishForecast: true,
     series: [
       {
         id: 'forecast',
-        label: 'Previsión externa (ilustrativa)',
+        label: 'Previsión externa',
         color: '#5a7d9a',
         dashed: true,
         control: [[0, 9.4], [120, 7.0], [240, 4.6], [300, 3.5], [360, 2.4], [420, 1.5],
@@ -38,7 +39,7 @@ export const SIM_SCENARIOS = [
       },
       {
         id: 'observed',
-        label: 'Descenso observado (simulado)',
+        label: 'Descenso observado',
         color: '#c97742',
         dashed: false,
         control: [[0, 9.0], [60, 7.7], [120, 6.4], [180, 5.1], [240, 3.8], [300, 2.5],
@@ -56,11 +57,11 @@ export const SIM_SCENARIOS = [
     stepMinutes: 30,
     comparator: 'above',
     threshold: { default: 30, min: 20, max: 40, step: 0.5 },
-    intro: 'Un día de verano simulado: la temperatura sube por la mañana, se mantiene elevada durante horas y baja al atardecer.',
+    intro: 'Un día de verano: la temperatura sube por la mañana, se mantiene elevada durante horas y baja al atardecer.',
     series: [
       {
         id: 'observed',
-        label: 'Temperatura simulada',
+        label: 'Temperatura',
         color: '#c97742',
         dashed: false,
         control: [[0, 17.5], [60, 21.5], [120, 25.5], [180, 29.0], [240, 31.5], [300, 33.5],
@@ -79,11 +80,11 @@ export const SIM_SCENARIOS = [
     stepMinutes: 30,
     comparator: 'below',
     threshold: { default: 2, min: -6, max: 10, step: 0.5 },
-    intro: 'La misma noche simulada en dos sectores de la finca: el aire frío se acumula abajo y la zona alta se mantiene más templada.',
+    intro: 'La misma noche en dos sectores de la finca: el aire frío se acumula abajo y la zona alta se mantiene más templada.',
     series: [
       {
         id: 'zona-alta',
-        label: 'Zona alta (simulada)',
+        label: 'Zona alta',
         color: '#5a7d9a',
         dashed: false,
         control: [[0, 8.6], [120, 6.9], [240, 5.3], [360, 4.1], [480, 3.3], [600, 2.8],
@@ -91,7 +92,7 @@ export const SIM_SCENARIOS = [
       },
       {
         id: 'hondonada',
-        label: 'Hondonada (simulada)',
+        label: 'Hondonada',
         color: '#c97742',
         dashed: false,
         control: [[0, 7.5], [120, 4.8], [240, 2.6], [300, 1.6], [360, 0.7], [420, -0.2],
@@ -200,22 +201,23 @@ export function formatDuration(minutes) {
   return `${rest} min`;
 }
 
-// Nivel orientativo del calor sostenido en la simulación: condiciones
-// ambientales, nunca un diagnóstico veterinario.
+// Nivel orientativo del calor sostenido: condiciones ambientales, nunca un
+// diagnóstico veterinario. Lo simulado ya lo declara la etiqueta de la
+// demostración; repetirlo aquí solo añadiría ruido.
 export function heatStressNote(minutes) {
   if (minutes <= 0) {
-    return { tone: 'muted', text: 'En esta simulación no se alcanza el umbral durante ningún tramo.' };
+    return { tone: 'muted', text: 'No se alcanza el umbral durante ningún tramo.' };
   }
   const duration = formatDuration(minutes);
   if (minutes < 120) {
     return {
       tone: 'warn',
-      text: `Temperatura por encima del umbral durante ${duration} en la simulación. Condiciones cálidas puntuales: conviene revisar sombra, agua y ventilación del ganado.`,
+      text: `Temperatura por encima del umbral durante ${duration}. Condiciones cálidas puntuales: conviene revisar sombra, agua y ventilación del ganado.`,
     };
   }
   return {
     tone: 'alert',
-    text: `Temperatura por encima del umbral durante ${duration} seguidos en la simulación. Riesgo orientativo de estrés térmico por el calor sostenido: refuerza sombra, agua y ventilación.`,
+    text: `Temperatura por encima del umbral durante ${duration} seguidos. Riesgo orientativo de estrés térmico por el calor sostenido: refuerza sombra, agua y ventilación.`,
   };
 }
 
@@ -333,16 +335,16 @@ function scenarioSummary(scenario, built) {
     const peak = item.points.reduce((max, point) => (point.temperatureC > max.temperatureC ? point : max), item.points[0]);
     const note = heatStressNote(item.sustained);
     return `<div class="sim-summary">
-      <p class="sim-facts">Máximo simulado <strong>${numberText(peak.temperatureC, 1)} °C</strong> a las ${clockLabel(scenario.start, peak.t)} · por encima del umbral <strong>${formatDuration(item.sustained)}</strong></p>
+      <p class="sim-facts">Máximo <strong>${numberText(peak.temperatureC, 1)} °C</strong> a las ${clockLabel(scenario.start, peak.t)} · por encima del umbral <strong>${formatDuration(item.sustained)}</strong></p>
       <p class="sim-note tone-${note.tone}">${escapeText(note.text)}</p>
-      <p class="hint">Valor orientativo basado únicamente en temperatura y duración de esta simulación: no es un diagnóstico veterinario ni una recomendación válida para toda la ganadería.</p>
+      <p class="hint">Valor orientativo basado únicamente en temperatura y duración: no es un diagnóstico veterinario ni una recomendación válida para toda la ganadería.</p>
     </div>`;
   }
   if (scenario.id === 'zonas-finca') {
     const gap = coldestGap(scenario, built);
     return `<div class="sim-summary">
       <p class="sim-facts">Diferencia en el punto más frío: <strong>${numberText(Math.abs(gap.gap), 1)} °C</strong> a las ${gap.label} (hondonada más fría).</p>
-      <p class="hint">${escapeText(scenario.summary)} Este caso es ilustrativo: las dos curvas son simuladas y no describen ninguna finca existente.</p>
+      <p class="hint">${escapeText(scenario.summary)}</p>
     </div>`;
   }
   return `<div class="sim-summary"><p class="hint">${escapeText(scenario.summary)}</p></div>`;
@@ -370,7 +372,8 @@ export function initialSimulationState() {
 export function renderSimulationShell() {
   return `
     <div class="sim-shell" data-sim-root>
-      <div class="sim-tabs" role="tablist" aria-label="Escenarios simulados">
+      <p class="sim-origin">${originBadge('simulated')}<span class="hint">Todo lo que hay en esta demostración se calcula aquí y no sale de la página.</span></p>
+      <div class="sim-tabs" role="tablist" aria-label="Escenarios de la demostración">
         ${SIM_SCENARIOS.map((scenario, index) => `
           <button type="button" role="tab" class="sim-tab${index === 0 ? ' is-active' : ''}"
             aria-selected="${index === 0 ? 'true' : 'false'}" data-sim-scenario="${scenario.id}">${escapeText(scenario.title)}</button>`).join('')}
@@ -382,12 +385,20 @@ export function renderSimulationShell() {
           <label class="sim-threshold-label" for="sim-threshold">Umbral del aviso
             <output id="sim-threshold-value" for="sim-threshold"></output></label>
           <input type="range" id="sim-threshold" data-sim-threshold min="0" max="1" step="0.5" value="0">
-          <p class="sim-threshold-hint">Ajusta el umbral para ver cuándo se generaría el aviso en esta simulación.</p>
+          <p class="sim-threshold-hint">Ajusta el umbral para ver cuándo se generaría el aviso.</p>
         </div>
         <div class="sim-chart" data-sim-chart></div>
         <div class="sim-result" data-sim-result aria-live="polite"></div>
       </div>
-      <p class="sim-safety">Demostración local: <strong>los avisos que ves aquí son simulados y solo existen en esta demostración</strong>; no salen de esta página, no crean avisos reales, no envían mensajes y no modifican ninguna configuración. Los valores son ilustrativos y no sustituyen criterios agronómicos ni veterinarios.</p>
+      <details class="sim-safety">
+        <summary>Qué es exactamente esta demostración</summary>
+        <p><strong>Los avisos que ves aquí son simulados y solo existen en esta demostración</strong>: no salen de esta página, no crean avisos reales, no envían mensajes y no modifican ninguna configuración.</p>
+        <p>Los valores son ilustrativos y no sustituyen criterios agronómicos ni veterinarios.</p>
+      </details>
+      ${originLegend([
+        { kind: 'simulated' },
+        { kind: 'forecast', provider: 'openmeteo', text: 'Serie discontinua: lo que un proveedor externo habría previsto. También es un dato inventado para el ejemplo.' },
+      ])}
     </div>
     <div class="sim-lead hidden" data-sim-lead>
       <p class="sim-lead-title">¿Y tu caso concreto?</p>

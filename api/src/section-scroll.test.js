@@ -116,7 +116,7 @@ test('cada sección de la portada tiene un encabezado que puede recibir el foco'
 
 test('el formulario de captación aporta el encabezado que el HTML no trae', () => {
   // solicitar-piloto está vacía en el HTML: su h2 lo inyecta leads.js. Si ese
-  // h2 desapareciera, el salto dejaría de anunciar nada en «Acceso gratuito».
+  // h2 desapareciera, el salto dejaría de anunciar nada en «Consultar instalación».
   assert.match(landing, /mountLeadForms\(\)/);
   const leads = read('js/leads.js');
   assert.match(leads, /<h2 data-lead-title><\/h2>/);

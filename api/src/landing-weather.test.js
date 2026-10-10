@@ -106,7 +106,7 @@ test('public landing has loading containers and a single access request form, wi
   assert.match(html, /id="public-evolution"/);
   assert.equal((html.match(/data-lead-embed/g) || []).length, 1);
   assert.doesNotMatch(html, /3,1 °C|82 %|hace 12 min|Solicitar piloto/);
-  assert.match(html, /Consultar el tiempo local/);
+  assert.match(html, /Ver las tres formas de empezar/);
   assert.match(html, /Explorar todas las herramientas/);
 });
 

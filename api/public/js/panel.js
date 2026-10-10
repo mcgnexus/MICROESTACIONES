@@ -7,6 +7,7 @@ import { mountMeasurements } from './measurements.js';
 import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
 import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison, resourceNote } from './farm-cards.js';
 import { coverageCaveat, caveatBlock } from './alert-copy.js';
+import { originBadge, originLegend } from './origin-labels.js';
 import { classifyNotice } from './notice-taxonomy.js';
 import {
   notificationPermission, requestNotificationPermission, showBrowserNotification, newAlertIds,
@@ -498,7 +499,9 @@ function weatherBlock(weather, detailKey) {
     const pattern = ADVISORY_PATTERNS[notice.kind];
     return !(pattern && pattern.test(warningsText));
   });
-  const advisoriesBlock = advisories.length ? `<div class="weather-alert-group"><h4>Riesgos orientativos · ${aemetHasForecast ? 'AEMET' : 'Open-Meteo'}</h4>${advisories.map((notice) => `<article class="weather-alert advisory"><strong>${escapeText(notice.text)}</strong><span>${dayText(`${notice.date}T12:00:00`)}</span></article>`).join('')}<p class="hint">Indicadores preventivos con umbrales generales; no son avisos oficiales ni sustituyen umbrales específicos del cultivo o ganado.</p></div>` : '';
+  // El rótulo ya dice «Riesgos orientativos» y nombra al proveedor: la nota solo
+// añade el límite que la etiqueta no puede expresar.
+const advisoriesBlock = advisories.length ? `<div class="weather-alert-group"><h4>Riesgos orientativos · ${aemetHasForecast ? 'AEMET' : 'Open-Meteo'}</h4>${advisories.map((notice) => `<article class="weather-alert advisory"><strong>${escapeText(notice.text)}</strong><span>${dayText(`${notice.date}T12:00:00`)}</span></article>`).join('')}<p class="hint">Indicadores con umbrales generales, no umbrales específicos del cultivo o ganado.</p></div>` : '';
   const missing = weather.aemetMissing || [];
   // El error crudo («AEMET previsión municipal: 429») no dice qué se conserva ni
   // qué recurso sigue válido: se traduce al estado de cada recurso, separando
@@ -514,14 +517,14 @@ function weatherBlock(weather, detailKey) {
   ].filter(Boolean);
   const noticeBlock = notices.length ? `<p class="hint">${notices.map(escapeText).join(' ')}</p>` : '';
   if (!currentBlock && !openForecast && !aemetForecast && !officialAlerts && !advisoriesBlock && !noticeBlock) return '';
-  return `<section class="weather-panel"><div class="weather-heading"><div><p class="eyebrow">CONTEXTO EXTERNO · ${escapeText(weather.location)}</p><h3>Tiempo en la localidad</h3></div><span class="badge badge-muted">Fuentes externas, separadas de las mediciones</span></div>
+  return `<section class="weather-panel"><div class="weather-heading"><div><p class="eyebrow">CONTEXTO EXTERNO · ${escapeText(weather.location)}</p><h3>Tiempo en la localidad</h3></div>${originBadge('forecast', { provider: aemetHasForecast ? 'aemet' : 'openmeteo', extra: 'No procede de esta estación.' })}</div>
     ${currentBlock}${aemetHasForecast ? aemetForecast : openForecast}${officialAlerts}${advisoriesBlock}${noticeBlock}
     <p class="weather-attribution">Fuentes: <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> · <a href="https://www.aemet.es/" target="_blank" rel="noopener noreferrer">AEMET</a></p></section>`;
 }
 
 // Tarjeta de estación del panel: estado operativo, cobertura y gráficas
 // (el servidor ya excluye lo no validado y lo borrado del histórico).
-export function renderStationCard(item) {
+export function renderStationCard(item, { chartsOnly = false } = {}) {
   const { device, status, latest, history, nearby, summary, weather } = item;
   const detailKey = registerDetail(item);
   const trendHistory = item.trendHistory?.length ? item.trendHistory : history;
@@ -546,6 +549,22 @@ export function renderStationCard(item) {
   const nearbyBlock = nearby.stations.length || !/ubicación.*no configurada/i.test(nearby.message)
     ? `<div class="subsection"><h3>Estaciones cercanas</h3><p class="coverage">${escapeText(nearby.message)} ${nearby.representative ? 'Cobertura representativa disponible.' : 'La cobertura puede ser insuficiente.'}</p>${nearbyRows}</div>`
     : '';
+
+  // En la sección de evolución el valor actual ya está en la cabecera: la
+  // tarjeta se reduce a sus gráficas para no repetirlo estación por estación.
+  if (chartsOnly) {
+    return `<article class="station-card dashboard-station-card">
+      <div class="station-head">
+        <div>
+          <p class="eyebrow">ESTACIÓN · ${escapeText(device.id)}</p>
+          <h2><a href="#/estaciones/${encodeURIComponent(device.id)}">${escapeText(device.name)}</a></h2>
+          <p class="updated">Última actualización: ${dateText(updated)} ${latestNote}</p>
+        </div>
+        <div class="station-tags">${connectivityBadge(status.connectivity)}${status.dataFreshness === 'stale' ? '<span class="badge badge-warn">Datos antiguos</span>' : status.dataFreshness === 'unknown' ? '<span class="badge badge-muted">Sin datos válidos</span>' : ''}</div>
+      </div>
+      ${chartSection(history, summary, { detailKey, sensors, trendHistory })}
+    </article>`;
+  }
 
   return `<article class="station-card dashboard-station-card">
     <div class="station-head">
@@ -600,8 +619,31 @@ function emptyAlertsHtml(caveat) {
     : '<p class="ok">No hay alertas abiertas. Estaciones con lecturas actuales y previsión disponible.</p>';
 }
 
-// Panel sencillo para el agricultor: estado, alertas, próximo riesgo, zonas,
-// histórico y, al final, el detalle técnico. El administrador usa el completo.
+// Bloques de documentación comunes a los tres paneles. Se leen cuando se
+// necesitan, pero no se atraviesan para consultar el valor de ahora: son
+// metodología, calidad de datos y procedencia de las fuentes.
+function panelDocumentation() {
+  return `
+    <details class="technical-details">
+      <summary>Qué significa cada etiqueta</summary>
+      ${originLegend([
+        { kind: 'medido', text: 'Medición directa de la microestación, con su hora. Aceptada por los controles automáticos de rango, marcas del equipo y hora: eso no demuestra calibración ni exactitud.' },
+        { kind: 'forecast', provider: 'aemet', text: 'Previsión municipal u observación oficial de AEMET. Si AEMET no está disponible, se usa Open-Meteo y se nombra. Aún no ha ocurrido.' },
+        { kind: 'calculated', text: 'Punto de rocío y diferencia con AEMET: valores derivados por fórmula, no observaciones. La diferencia puede relacionarse con distancia, altitud, exposición y entorno, y no se atribuye a un único factor.' },
+        { kind: 'status', text: 'Estado observado del equipo o del canal. No es una previsión.' },
+      ])}
+    </details>
+    <details class="technical-details">
+      <summary>Metodología y calidad de datos</summary>
+      <p class="hint">Las tendencias de cada gráfico son diferencias observadas entre la primera y la última lectura del periodo, no pendientes ajustadas ni pendientes pendientes de corregir.</p>
+      <p class="hint">La cobertura son las lecturas recibidas frente a las esperadas según el intervalo configurado, y no una medida del rendimiento del sensor. Las lecturas extrañas no se borran: se marcan como inválidas y siguen visibles, para que el histórico no pueda ocultar un problema de conectividad.</p>
+      <p class="hint">Un vacío de avisos nunca significa «no hay riesgo»: si faltan datos o la previsión está caída, el panel lo dice en lugar de tranquilizar.</p>
+      <p class="hint">Los avisos propios son orientativos y no son avisos oficiales.</p>
+    </details>`;
+}
+
+// Panel sencillo para el agricultor: estado, alertas, próximo riesgo, evolución
+// y, al final, el detalle técnico. El administrador usa el completo.
 async function renderSimplePanel(root) {
   root.innerHTML = `
     <div class="page-heading">
@@ -615,36 +657,40 @@ async function renderSimplePanel(root) {
     </div>
     <p class="error" data-error role="alert"></p>
     <div id="simple-hero" class="hero-first-slot"></div>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Ahora mismo</h2></div>
-        <a class="link" href="#/avisos">Todas las alertas</a></div>
+    <section class="panel" data-panel-section="estado">
+      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Ahora mismo</h2></div></div>
       <div id="simple-state"></div>
     </section>
-    <section class="panel">
+    <section class="panel" data-panel-section="avisos">
       <div class="section-heading"><div><p class="eyebrow">ALERTAS ACTIVAS</p><h2>Lo que requiere tu atención</h2></div>
         <a class="link" href="#/avisos">Centro de avisos</a></div>
       <div id="simple-alerts" class="plain-alerts"></div>
-      <p class="hint">Las alertas son orientativas, no avisos oficiales. Comprueba siempre la situación en tu finca.</p>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PRÓXIMO RIESGO</p><h2>Qué puede pasar</h2></div></div>
+      ${originLegend([
+        { kind: 'medido', text: 'La regla se cruzó sobre una medida real de tu estación.' },
+        { kind: 'forecast', provider: 'aemet', text: 'Riesgo o aviso oficial externo. Aún no ha ocurrido.' },
+        { kind: 'status', text: 'Estado del equipo o del canal, observado. No es previsión.' },
+      ])}
       <div id="simple-next"></div>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">ZONAS</p><h2>Comparación entre zonas</h2></div></div>
-      <div id="simple-zones"></div>
-      <p class="hint">Sin coordenadas exactas: solo lecturas y diferencias entre tus puntos de medición.</p>
-    </section>
-    <section class="panel">
+    <section class="panel" data-panel-section="evolucion">
+      <div class="section-heading"><div><p class="eyebrow">EVOLUCIÓN</p><h2>Gráficos del periodo</h2></div></div>
+      <p class="hint">Evolución de mediciones aceptadas por los controles automáticos. El detalle de cada estación está en «Ver detalles técnicos».</p>
+      <div id="simple-charts" class="station-list"></div>
       <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Últimos avisos</h2></div>
         <a class="link" href="#/avisos">Ver todos</a></div>
       <div id="simple-history" class="alerts"></div>
     </section>
     <p class="support-line hidden" data-support></p>
-    <details class="technical-details">
+    <details class="technical-details" data-panel-section="detalles">
       <summary>Ver detalles técnicos de las estaciones</summary>
       <div id="simple-stations" class="station-list"></div>
       <section class="panel" id="simple-measurements"></section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">ZONAS</p><h2>Comparación entre zonas</h2></div></div>
+        <div id="simple-zones"></div>
+        <p class="hint">Sin coordenadas exactas: solo lecturas y diferencias entre tus puntos de medición.</p>
+      </section>
+      ${panelDocumentation()}
     </details>`;
 
   resetStationDetails();
@@ -673,6 +719,9 @@ async function renderSimplePanel(root) {
       $('#simple-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
+      $('#simple-charts', root).innerHTML = data.devices.length
+        ? data.devices.map((item) => renderStationCard(item, { chartsOnly: true })).join('')
+        : '<p class="empty">Todavía no hay estaciones que mostrar.</p>';
       surfaceNewAlerts(open);
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
     } catch (error) {
@@ -741,9 +790,21 @@ function demoDailyTable(daily, unit, digits) {
   </table></div>`;
 }
 
-function renderDemoAnalysis(data) {
+// El análisis del periodo se parte en dos salidas porque ocupan lugares
+// distintos en la pantalla: el resumen del periodo acompaña a la evolución, y
+// todo lo que documenta cómo se ha calculado se pliega en Detalles.
+export function renderDemoOverview(data) {
+  return `
+    <div class="stat-grid">
+      ${demoMetricCard(data.metrics.temperature_c, '°C', 1)}
+      ${demoMetricCard(data.metrics.humidity_pct, '%', 1)}
+      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour) } : null }, 'mbar', 1)}
+    </div>
+    <p class="${data.period.complete ? 'hint' : 'warn-box'}">${escapeText(data.period.note)}</p>`;
+}
+
+export function renderDemoDetails(data) {
   const coverage = data.coverage;
-  const periodNote = `<p class="${data.period.complete ? 'hint' : 'warn-box'}">${escapeText(data.period.note)}</p>`;
   const coverageBlock = `<div class="fact-grid">
     <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
     <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
@@ -764,12 +825,6 @@ function renderDemoAnalysis(data) {
       </div><p class="hint">Diferencia = microestación − AEMET. Proveedor AEMET · estación ${escapeText(data.aemet.stationId || '—')} · última observación ${escapeText(stampText(data.aemet.lastObservedAt))}.</p>`
     : `<p class="empty">Sin observaciones AEMET emparejables en el periodo (${data.aemet.observations} observaciones disponibles).</p>`;
   return `
-    <div class="stat-grid">
-      ${demoMetricCard(data.metrics.temperature_c, '°C', 1)}
-      ${demoMetricCard(data.metrics.humidity_pct, '%', 1)}
-      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour) } : null }, 'mbar', 1)}
-    </div>
-    ${periodNote}
     ${coverageBlock}
     <h3>Resúmenes diarios · temperatura</h3>
     ${demoDailyTable(data.weekly.dailyTemperature, '°C', 1)}
@@ -777,9 +832,13 @@ function renderDemoAnalysis(data) {
     ${dewBlock}
     <h3>Comparación histórica con AEMET <span class="badge badge-muted">Fuente externa</span></h3>
     ${aemetBlock}
-    <p class="hint">${(data.limits || []).map(escapeText).join(' ')}</p>`;
+    <p class="hint">${(data.limits || []).map(escapeText).join(' ')}</p>
+    ${panelDocumentation()}`;
 }
 
+// Orden de lectura del panel: resumen actual → avisos relevantes → evolución
+// → detalles. Lo que explica, documenta o calcula se pliega en «Detalles» para
+// que quien solo viene a consultar el valor de ahora no lo atraviese.
 async function renderDemoPanel(root) {
   root.innerHTML = `
     <div class="page-heading">
@@ -790,36 +849,43 @@ async function renderDemoPanel(root) {
     </div>
     <p class="error" data-error role="alert"></p>
     <div id="demo-hero" class="hero-first-slot"></div>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">QUÉ ES ESTO</p><h2>Herramientas ampliadas del registro</h2></div></div>
-      <p class="hint">Este panel usa <strong>solo estaciones autorizadas para la demostración</strong> y no permite editar, borrar ni configurar nada. Las estaciones privadas de terceros no son accesibles desde aquí.</p>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Cómo se muestran aquí</h2></div></div>
-      <p class="hint">Registrarte <strong>no te suscribe a los avisos de la estación urbana</strong>: solo verás los avisos de las estaciones que se te concedan expresamente.
-        Cada aviso indica su categoría, su fuente, su fecha, su estado y su vigencia, y si es un dato <strong>real</strong>, una <strong>previsión</strong>,
-        un <strong>cálculo</strong> o una <strong>simulación</strong>. Los avisos de umbral local solo aparecen cuando el motor de avisos está comprobado,
-        y los simulados de la portada nunca se cuelan aquí.</p>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Últimas mediciones</h2></div>
-        <a class="link" href="#/avisos">Avisos</a></div>
+    <section class="panel" data-panel-section="estado">
+      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Últimas mediciones</h2></div></div>
       <div id="demo-state"></div>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">ANÁLISIS</p><h2>Mínimas, máximas, medias y resúmenes</h2></div>
-        <label class="period-label">Estación <select id="demo-device"></select></label></div>
-      <div id="demo-analysis"></div>
+    <section class="panel" data-panel-section="avisos">
+      <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Lo que requiere tu atención</h2></div>
+        <a class="link" href="#/avisos">Centro de avisos</a></div>
+      <div id="demo-alerts" class="plain-alerts"></div>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Gráficos de 24 h, 7 días y 30 días</h2></div></div>
-      <p class="hint">Evolución de mediciones aceptadas por los controles automáticos de la microestación. Elige el periodo arriba para 24 horas, 7 días o 30 días.</p>
+    <section class="panel" data-panel-section="evolucion">
+      <div class="section-heading"><div><p class="eyebrow">EVOLUCIÓN</p><h2>Gráficos del periodo</h2></div>
+        <label class="period-label">Estación <select id="demo-device"></select></label></div>
+      <div id="demo-overview"></div>
       <div id="demo-stations" class="station-list"></div>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">CÓMO LEERLO</p><h2>Temperatura, humedad y presión</h2></div></div>
-      <div class="fact-grid">${DEMO_EXPLANATIONS.map(([title, text]) => `<div><span>${escapeText(title)}</span><p class="hint">${escapeText(text)}</p></div>`).join('')}</div>
-    </section>
+    <details class="technical-details" data-panel-section="detalles">
+      <summary>Ver detalles del periodo y cómo se han calculado</summary>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">DETALLES DEL PERIODO</p><h2>Resúmenes diarios, punto de rocío y comparación con AEMET</h2></div></div>
+        <div id="demo-analysis"></div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">CÓMO LEERLO</p><h2>Temperatura, humedad y presión</h2></div></div>
+        <div class="fact-grid">${DEMO_EXPLANATIONS.map(([title, text]) => `<div><span>${escapeText(title)}</span><p class="hint">${escapeText(text)}</p></div>`).join('')}</div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">ALCANCE</p><h2>Herramientas ampliadas del registro</h2></div></div>
+        <p class="hint">Este panel usa <strong>solo estaciones autorizadas para la demostración</strong> y no permite editar, borrar ni configurar nada. Las estaciones privadas de terceros no son accesibles desde aquí.</p>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">CÓMO FUNCIONAN LOS AVISOS</p><h2>Qué llega aquí y por qué</h2></div></div>
+        <p class="hint">Registrarte <strong>no te suscribe a los avisos de la estación urbana</strong>: solo verás los avisos de las estaciones que se te concedan expresamente.
+          Cada aviso indica su categoría, su fuente, su fecha, su estado y su vigencia, y si es un dato <strong>real</strong>, una <strong>previsión</strong>,
+          un <strong>cálculo</strong> o una <strong>simulación</strong>. Los avisos de umbral local solo aparecen cuando el motor de avisos está comprobado,
+          y los simulados de la portada nunca se cuelan aquí.</p>
+      </section>
+    </details>
     <p class="support-line hidden" data-support></p>`;
 
   resetStationDetails();
@@ -829,15 +895,20 @@ async function renderDemoPanel(root) {
 
   const loadAnalysis = async () => {
     const deviceId = $('#demo-device', root)?.value;
-    if (!deviceId) { $('#demo-analysis', root).innerHTML = '<p class="empty">No hay estaciones autorizadas para la demostración.</p>'; return; }
+    if (!deviceId) {
+      $('#demo-overview', root).innerHTML = '<p class="empty">No hay estaciones autorizadas para la demostración.</p>';
+      $('#demo-analysis', root).innerHTML = '';
+      return;
+    }
     const hours = DEMO_PERIOD_HOURS[$('#period', root).value] || 24;
     const to = new Date();
     const from = new Date(to.getTime() - hours * 3600 * 1000);
     try {
       const analysis = await api(`/api/v1/stations/${encodeURIComponent(deviceId)}/demo-analysis?from=${from.toISOString()}&to=${to.toISOString()}`);
-      $('#demo-analysis', root).innerHTML = renderDemoAnalysis(analysis);
+      $('#demo-overview', root).innerHTML = renderDemoOverview(analysis);
+      $('#demo-analysis', root).innerHTML = renderDemoDetails(analysis);
     } catch (error) {
-      $('#demo-analysis', root).innerHTML = `<p class="error">No se pudo cargar el análisis: ${escapeText(error.message)}</p>`;
+      $('#demo-overview', root).innerHTML = `<p class="error">No se pudo cargar el análisis: ${escapeText(error.message)}</p>`;
     }
   };
 
@@ -849,8 +920,18 @@ async function renderDemoPanel(root) {
       lastDevices = data.devices || [];
       $('#demo-hero', root).innerHTML = heroFirstSection(primaryReading(lastDevices));
       $('#demo-state', root).innerHTML = renderStateCards(lastDevices);
+      // Los avisos llegan del mismo /dashboard, ya acotados por el servidor a las
+      // estaciones concedidas: aquí no se decide a quién pertenece un aviso.
+      const engineOk = data.engine_verified !== false;
+      const visible = (list) => (engineOk ? list
+        : list.filter((alert) => classifyNotice({ ...alert, engineVerified: engineOk }).category !== 'threshold'));
+      const open = visible(data.alerts).filter((alert) => !alert.closedAt);
+      const caveat = coverageCaveat(lastDevices);
+      $('#demo-alerts', root).innerHTML = open.length
+        ? open.map(renderOpenAlert).join('')
+        : emptyAlertsHtml(caveat);
       $('#demo-stations', root).innerHTML = lastDevices.length
-        ? lastDevices.map(renderStationCard).join('')
+        ? lastDevices.map((item) => renderStationCard(item, { chartsOnly: true })).join('')
         : '<section class="panel"><p class="empty">Todavía no hay estaciones autorizadas para la demostración.</p></section>';
       const select = $('#demo-device', root);
       const previous = select.value;
@@ -891,27 +972,35 @@ export async function renderPanel(root) {
     </div>
     <p class="error" data-error role="alert"></p>
     <div id="panel-hero" class="hero-first-slot"></div>
-    <section class="panel">
+    <section class="panel" data-panel-section="estado">
       <div class="section-heading"><div><p class="eyebrow">ESTADO DE LA FINCA</p><h2>Resumen de un vistazo</h2></div>
         <a class="link" href="#/cuenta">Mis fincas</a></div>
       <div id="panel-overview" class="farm-overview"></div>
     </section>
-    <section class="panel">
+    <section class="panel" data-panel-section="avisos">
       <div class="section-heading"><div><p class="eyebrow">MIS ALERTAS</p><h2>Alertas abiertas</h2></div>
         <a class="link" href="#/avisos">Centro de avisos</a></div>
       <div id="panel-alerts" class="plain-alerts"></div>
-      <p class="hint">Las alertas son orientativas, no avisos oficiales. Comprueba siempre la situación en tu finca.</p>
+      ${originLegend([
+        { kind: 'medido', text: 'La regla se cruzó sobre una medida real de la estación.' },
+        { kind: 'forecast', provider: 'aemet', text: 'Riesgo o aviso oficial externo. Aún no ha ocurrido.' },
+        { kind: 'status', text: 'Estado del equipo o del canal, observado. No es previsión.' },
+      ])}
+    </section>
+    <section class="panel" data-panel-section="evolucion">
+      <div class="section-heading"><div><p class="eyebrow">EVOLUCIÓN</p><h2>Gráficos del periodo</h2></div></div>
+      <p class="hint">Evolución de mediciones aceptadas por los controles automáticos. El detalle de cada estación está en «Ver detalle técnico».</p>
+      <div id="panel-charts" class="station-list"></div>
+      <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Historial reciente</h2></div>
+        <a class="link" href="#/avisos">Centro de avisos</a></div>
+      <div id="panel-history" class="alerts"></div>
     </section>
     <p class="support-line hidden" data-support></p>
-    <details class="technical-details">
+    <details class="technical-details" data-panel-section="detalles">
       <summary>Ver detalle técnico de las estaciones</summary>
       <div id="panel-stations" class="station-list"></div>
       <section class="panel" id="panel-measurements"></section>
-      <section class="panel">
-        <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Historial reciente</h2></div>
-          <a class="link" href="#/avisos">Centro de avisos</a></div>
-        <div id="panel-history" class="alerts"></div>
-      </section>
+      ${panelDocumentation()}
     </details>`;
 
   resetStationDetails();
@@ -940,6 +1029,10 @@ export async function renderPanel(root) {
       $('#panel-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
+      // La evolución se ve sin desplegar nada; el detalle de estación queda abajo.
+      $('#panel-charts', root).innerHTML = data.devices.length
+        ? data.devices.map((item) => renderStationCard(item, { chartsOnly: true })).join('')
+        : '<p class="empty">Todavía no hay estaciones que mostrar.</p>';
       $('#panel-history', root).innerHTML = visible(data.alerts).length
         ? visible(data.alerts).map((alert) => renderAlertRow(alert, { technical: canEdit() })).join('')
         : `<p class="empty">No hay avisos recientes.</p>${caveatBlock(caveat)}`;

@@ -189,10 +189,12 @@ test('stale local temperature is never described as a current risk or an all-cle
 });
 
 test('rendered state cards distinguish last contact from stale measurements', () => {
+  // Las lecturas antiguas se piden explícitamente: en el panel ya están en la
+  // cabecera, pero el componente tiene que seguir sepa distinguirlas.
   const html = renderStateCards([item({ status: {
     connectivity: 'online', dataFreshness: 'stale', lastValidData: '2026-01-01T08:00:00Z',
     lastContact: '2026-01-01T10:00:00Z', batteryLevel: 'ok',
-  } })]);
+  } })], new Date(), { readings: true });
   assert.match(html, /datos antiguos/i);
   // Las lecturas antiguas permanecen visibles, con tono de aviso y su título
   // cambiado; los riesgos, en cambio, no se estiman con datos viejos.
@@ -204,8 +206,21 @@ test('rendered state cards distinguish last contact from stale measurements', ()
 });
 
 test('state cards render the seven main cards with advice', () => {
-  const html = renderStateCards([item()]);
+  const html = renderStateCards([item()], new Date(), { readings: true });
   for (const title of ['Temperatura actual', 'Humedad actual', 'Riesgo de helada', 'Riesgo de calor', 'Riesgo de tormenta', 'Última comunicación', 'Estado de la estación']) {
+    assert.match(html, new RegExp(title));
+  }
+  assert.match(html, /state-action/);
+});
+
+test('sin lectura repetida el estado se queda en las cinco decisiones', () => {
+  // La cabecera del panel ya muestra temperatura y humedad: repetirlas aquí
+  // obligaba a repasar el mismo número cuatro veces por pantalla.
+  const html = renderStateCards([item()]);
+  assert.doesNotMatch(html, /Temperatura actual/);
+  assert.doesNotMatch(html, /Humedad actual/);
+  for (const title of ['Riesgo de helada', 'Riesgo de calor', 'Riesgo de tormenta',
+    'Última comunicación', 'Estado de la estación']) {
     assert.match(html, new RegExp(title));
   }
   assert.match(html, /state-action/);

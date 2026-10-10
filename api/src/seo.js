@@ -5,11 +5,12 @@ export const PUBLIC_PAGES = {
   '/tiempo-local': ['Tiempo local en Huéscar | TecRural', 'Temperatura y humedad medidas en un punto del casco urbano, con hora de lectura y estado de actualización.'],
   '/comparacion-aemet': ['Mediciones locales y AEMET | TecRural', 'Compara observaciones dentro de una ventana temporal compatible; las fuentes se muestran por separado cuando no hay pareja.'],
   '/evolucion': ['Evolución de las mediciones | TecRural', 'Consulta la evolución reciente de temperatura y humedad con datos reales disponibles, sin interpolar mediciones ausentes.'],
+  '/vias': ['Tres formas de empezar | TecRural', 'Ver la demostración simulada, entrar con tu correo o consultar una instalación: tres caminos distintos con resultados distintos.'],
   '/fincas': ['Medición meteorológica para fincas | TecRural', 'Explora la utilidad de medir en una finca y declara tu interés en una futura instalación, sin compromiso automático.'],
-  '/herramientas': ['Herramientas agrícolas y acceso | TecRural', 'Explora las herramientas de TecRural y solicita acceso. La publicidad es opcional e independiente del registro.'],
+  '/herramientas': ['Herramientas agrícolas y acceso | TecRural', 'Herramientas para consultar y entender las mediciones de tus estaciones. Requieren entrar con tu correo y que el equipo conceda el acceso.'],
   '/demo-agricola': ['Demostración agrícola simulada | TecRural', 'Explora escenarios simulados de frío, calor y diferencias entre puntos. No son lecturas actuales ni resultados de clientes.'],
   '/preguntas': ['Preguntas sobre microestaciones | TecRural', 'Alcance de las mediciones, fuentes externas, avisos orientativos y acceso a TecRural.'],
-  '/solicitar-piloto': ['Solicita acceso gratuito | TecRural', 'Cuéntanos tu municipio, actividad e interés para tramitar el acceso. El registro no solicita automáticamente una llamada o instalación.'],
+  '/solicitar-piloto': ['Consultar una instalación | TecRural', 'Revisamos tu solicitud y te contactamos para estudiarla. No da acceso por sí solo ni programa una instalación automática.'],
 };
 export const SITEMAP_PATHS = [...Object.keys(PUBLIC_PAGES), '/privacidad', '/aviso-legal', '/cookies', '/contacto'];
 const escape = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);

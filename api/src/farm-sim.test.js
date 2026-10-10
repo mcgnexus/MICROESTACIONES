@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   SIM_SCENARIOS, scenarioById, buildScenario, coldestGap, clockLabel, formatDuration,
   firstCrossing, heatStressNote, interpolate, initialSimulationState, renderSimulationResult,
-  sampleSeries, thresholdIntervals, totalMinutes,
+  sampleSeries, thresholdIntervals, totalMinutes, renderSimulationShell,
 } from '../public/js/farm-sim.js';
 
 const cold = scenarioById('noche-fria');
@@ -17,11 +17,16 @@ test('the three scenarios are simulated and clearly labelled as such', () => {
   for (const scenario of SIM_SCENARIOS) {
     assert.ok(scenario.series.length >= 1);
     assert.ok(scenario.series.every((definition) => definition.control.length >= 2));
-    assert.match(scenario.intro, /simulad/i);
   }
-  const html = renderSimulationResult(cold, 2);
-  assert.match(html, /ilustrativa/);
-  assert.match(html, /simulado/);
+  // La simulación se declara una vez, con etiqueta persistente, y no en cada
+  // párrafo: el origen sigue siendo visible sin depender de leer el detalle.
+  const shell = renderSimulationShell();
+  assert.match(shell, /data-origin="simulated"/);
+  assert.match(shell, />Simulación</);
+  // Y la etiqueta va antes que la explicación: se ve sin desplegar nada.
+  assert.ok(shell.indexOf('data-origin="simulated"') < shell.indexOf('Qué es exactamente esta demostración'));
+  // El detalle plegado sigue declarando que no hay avisos reales ni envíos.
+  assert.match(shell, /no crean avisos reales, no envían mensajes/);
 });
 
 test('interpolating control points stays inside the declared range', () => {
@@ -60,9 +65,11 @@ test('the cold scenario distinguishes forecast, observed descent and local thres
   assert.equal(labels.length, 2);
   assert.match(labels[0], /Previsión externa/);
   assert.match(labels[1], /Descenso observado/);
+  // Las etiquetas ya no arrastran el qualified «(simulado)»: lo declara una vez
+  // la insignia del escenario, no cada fila del resultado.
   const html = renderSimulationResult(cold, 2);
-  assert.match(html, /Previsión externa \(ilustrativa\)/);
-  assert.match(html, /Descenso observado \(simulado\)/);
+  assert.match(html, /Previsión externa/);
+  assert.match(html, /Descenso observado/);
   assert.match(html, /Umbral local/);
   assert.match(html, /2,0 °C/);
   // Las dos curvas son distintas: la previsión ilustrativa no replica lo medido.
@@ -151,7 +158,7 @@ test('the interaction stays local: no API, no alerts, no messages', async () => 
   assert.doesNotMatch(source, /api\s*\(/);
   assert.doesNotMatch(source, /\/api\//);
   assert.doesNotMatch(source, /INSERT INTO|alert_rules|notification_outbox/);
-  assert.match(source, /los avisos que ves aquí son simulados/);
+  assert.match(source, /los avisos que ves aquí son simulados/i);
   assert.match(source, /solo existen en esta demostración/);
   // Lo simulado se declara como tal en la taxonomía y no se usa fuera de aquí.
   const { classifyNotice, NOTICE_CATEGORIES } = await import('../public/js/notice-taxonomy.js');

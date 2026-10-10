@@ -53,7 +53,7 @@
           { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están dentro de la ventana temporal configurada. Si no hay pareja, ambas lecturas se muestran por separado." } },
           { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
           { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
-          { "@type": "Question", "name": "¿Cómo obtengo acceso gratuito?", "acceptedAnswer": { "@type": "Answer", "text": "Puedes solicitar acceso mediante el formulario para que el equipo lo tramite, o pedir un enlace desde Entrar y verificar tu correo para crear una cuenta gratuita. Ninguna vía solicita automáticamente una llamada ni programa una instalación." } }
+          { "@type": "Question", "name": "¿Cuál es la diferencia entre las tres formas de empezar?", "acceptedAnswer": { "@type": "Answer", "text": "Ver la demostración no requiere registro y muestra escenarios simulados. Entrar da acceso inmediato a tu propia sesión mediante un enlace de correo de un solo uso. Consultar una instalación es la única vía que revisa el equipo, y hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación." } }
         ]
       }
     ]
@@ -73,8 +73,9 @@
     </nav>
     <nav id="public-nav" class="topnav" aria-label="Página pública">
       <a href="#/tiempo-local">Tiempo local</a>
+      <a href="#/vias">Cómo empezar</a>
       <a href="#/fincas">Medir en finca</a>
-      <a class="nav-access" href="#/solicitar-piloto">Acceso gratuito</a>
+      <a class="nav-access" href="#/solicitar-piloto">Consultar instalación</a>
       <a href="#/entrar">Entrar</a>
     </nav>
     <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>.</p>
@@ -92,7 +93,36 @@
         <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
         <h1>Tiempo local ahora</h1>
         <p class="landing-lead">Temperatura y humedad medidas en un punto del casco urbano. La lectura describe ese emplazamiento; no representa exactamente toda la ciudad ni tu finca.</p>
-        <div class="landing-actions"><a class="cta" href="#/tiempo-local">Consultar el tiempo local</a><a class="cta secondary" href="#/herramientas">Explorar todas las herramientas</a></div>
+        <div class="landing-actions"><a class="cta" href="#/vias">Ver las tres formas de empezar</a><a class="cta secondary" href="#/herramientas">Explorar todas las herramientas</a></div>
+      </section>
+
+      <section id="vias" class="landing-section">
+        <p class="eyebrow">CÓMO EMPEZAR</p>
+        <h2>Tres caminos distintos, con resultados distintos</h2>
+        <p class="section-intro">Según lo que quieras hacer, te lleva a una cosa o a otra. No hacen falta los tres y ninguno programa nada por su cuenta.</p>
+        <div class="vias-grid">
+          <article class="via-card">
+            <p class="eyebrow">SIN REGISTRARTE</p>
+            <h3>Ver la demostración</h3>
+            <p class="via-outcome"><strong>Resultado:</strong> ves tres escenarios simulados y mueves el umbral de aviso. No creas cuenta, no Envías nada y ningún dato sale de tu navegador.</p>
+            <p class="hint">Los datos son ilustrativos: no proceden de ninguna estación ni finca real.</p>
+            <p><a class="via-link" href="#/demo-agricola">Ver la demostración</a></p>
+          </article>
+          <article class="via-card">
+            <p class="eyebrow">ACCESO INMEDIATO</p>
+            <h3>Entrar con tu correo</h3>
+            <p class="via-outcome"><strong>Resultado:</strong> entras tú mismo, sin esperar a nadie. Escribes tu correo, recibes un enlace de un solo uso y en cuanto lo confirmas ya tienes acceso gratuito a la sesión de demostración.</p>
+            <p class="hint">Sin contraseña. Si prefieres que te lo tramite el equipo, usa la tercera vía.</p>
+            <p><a class="via-link" href="#/entrar">Entrar</a></p>
+          </article>
+          <article class="via-card">
+            <p class="eyebrow">REVISADO POR EL EQUIPO</p>
+            <h3>Consultar una instalación</h3>
+            <p class="via-outcome"><strong>Resultado:</strong> revisamos tu solicitud y te contactamos para estudiarla. No es automático: hasta que te escribamos no hay acceso concedido.</p>
+            <p class="hint">Enviar el formulario no programa una instalación ni reserva ninguna visita.</p>
+            <p><a class="via-link" href="#/solicitar-piloto">Consultar una instalación</a></p>
+          </article>
+        </div>
       </section>
 
       <section id="comparacion-aemet" class="landing-section">
@@ -131,16 +161,16 @@
       <section id="herramientas" class="landing-section">
         <p class="eyebrow">ACCESO AMPLIADO</p>
         <h2>Más seguimiento para tu finca</h2>
-        <p class="section-intro">El acceso ampliado reúne herramientas para consultar y entender las mediciones de tus estaciones.</p>
+        <p class="section-intro">El acceso ampliado reúne herramientas para consultar y entender las mediciones de tus estaciones. Para usarlo hacen falta las dos piezas: entrar con tu correo y que el equipo conceda el acceso a alguna estación.</p>
         <div class="tools-preview">
           <article><span aria-hidden="true">📈</span><div><h3>Histórico y evolución</h3><p>Revisa mediciones anteriores y sus tendencias.</p><a href="#/estaciones">Abrir histórico · requiere acceso</a></div></article>
           <article><span aria-hidden="true">🔔</span><div><h3>Avisos y seguimiento</h3><p>Consulta avisos, estado de conexión y calidad de los datos.</p><a href="#/avisos">Abrir avisos · requiere acceso</a></div></article>
           <article><span aria-hidden="true">📍</span><div><h3>Estaciones y fincas</h3><p>Organiza tus ubicaciones y consulta el punto medido.</p><a href="#/panel">Abrir panel · requiere acceso</a></div></article>
         </div>
-        <a class="access-link" href="#/solicitar-piloto">Solicitar acceso gratuito</a>
+        <a class="access-link" href="#/vias">Ver las tres formas de empezar</a>
       </section>
 
-      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-title="Solicita acceso gratuito" data-lead-description="Cuéntanos de tu actividad y zona. Revisaremos la solicitud y te contactaremos para tramitar el acceso; el envío no programa una instalación automática." data-lead-success="Solicitud recibida. Revisaremos el acceso y te contactaremos."></section>
+      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-title="Consultar una instalación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
 
       <section id="preguntas" class="landing-section">
         <p class="eyebrow">PREGUNTAS FRECUENTES</p>
@@ -149,7 +179,7 @@
           <details><summary>¿Qué mide la tarjeta del tiempo local?</summary><p>Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no se presenta como representativa de cada calle o finca.</p></details>
           <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están dentro de la ventana configurada. Si no hay pareja, no mostramos una diferencia directa.</p></details>
           <details><summary>¿La lectura del casco representa mi finca?</summary><p>No necesariamente. Hondonadas, vegas y zonas altas pueden tener condiciones distintas según su emplazamiento y las condiciones del momento. Medir en la finca permite observar ese punto concreto.</p></details>
-          <details><summary>¿Cómo obtengo acceso gratuito?</summary><p>Puedes solicitar acceso mediante el formulario para que el equipo lo tramite, o pedir un enlace desde <a href="#/entrar">Entrar</a> y verificar tu correo para crear una cuenta gratuita. Ninguna vía solicita automáticamente una llamada ni programa una instalación.</p></details>
+          <details><summary>¿Cuál es la diferencia entre las tres formas de empezar?</summary><p><a href="#/demo-agricola">Ver la demostración</a> no requiere registro y muestra datos simulados. <a href="#/entrar">Entrar</a> da acceso inmediato a tu propia sesión con un enlace de correo. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única que revisa el equipo: hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación.</p></details>
           <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Se muestran avisos oficiales y riesgo estimado. Una detección local precisa requeriría sensores adicionales.</p></details>
         </div>
       </section>
@@ -215,7 +245,7 @@
     <a href="#/cuenta" data-mobile-nav="account"><span aria-hidden="true">●</span>Cuenta</a>
   </nav>
   <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
-  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación. Las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. Las previsiones externas se identifican por su proveedor; no se calculan predicciones meteorológicas propias. Las alertas propias son orientativas, no avisos oficiales.</p>
+  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación; las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. No se calculan predicciones meteorológicas propias. Cada dato lleva su etiqueta de procedencia: «Medido», «Previsión», «Calculado» o «Simulación», con su proveedor y su hora.</p>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

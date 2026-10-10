@@ -379,6 +379,7 @@ const PATH_ROUTES = {
   '/como-funciona': '#/como-funciona', '/zonas': '#/zonas', '/alertas': '#/alertas',
   '/tiempo-local': '#/tiempo-local', '/comparacion-aemet': '#/comparacion-aemet', '/evolucion': '#/evolucion',
   '/fincas': '#/fincas', '/herramientas': '#/herramientas', '/preguntas': '#/preguntas',
+  '/vias': '#/vias', '/como-empezar': '#/vias',
   '/demo-agricola': '#/demo-agricola', '/demo': '#/demo-agricola', '/demostracion': '#/demo-agricola',
   '/acceso-gratuito': '#/solicitar-piloto', '/solicitar-piloto': '#/solicitar-piloto', '/entrar': '#/entrar',
 };

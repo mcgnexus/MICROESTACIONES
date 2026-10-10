@@ -16,8 +16,9 @@ const acquisition = (() => {
 })();
 
 export const LEAD_FORM_HTML = `
-  <div class="section-heading"><div><p class="eyebrow">SOLICITUD</p><h2 data-lead-title></h2></div></div>
-  <p class="hint" data-lead-description>Déjanos tus datos y revisaremos la solicitud de acceso.</p>
+<div class="section-heading"><div><p class="eyebrow">SOLICITUD</p><h2 data-lead-title></h2></div></div>
+    <p class="hint" data-lead-description>Déjanos tus datos y revisaremos la solicitud.</p>
+    <p class="hint"><strong>Esta no es la vía de acceso inmediato.</strong> Para entrar ahora mismo con tu correo, usa <a href="#/entrar">Entrar</a>. Y para ver un ejemplo sin registrarte, está la <a href="#/demo-agricola">demostración</a>.</p>
   <form class="rule-form" data-lead-form>
     <label>Tu nombre<input name="name" required minlength="2" maxlength="120" autocomplete="name"></label>
     <label>Teléfono de WhatsApp<input name="phone" required inputmode="tel" maxlength="30" autocomplete="tel" placeholder="+34 600 000 000"></label>

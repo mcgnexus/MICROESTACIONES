@@ -5,7 +5,7 @@ import { sinceText } from './farm-cards.js';
 import { mountFarmSimulation, renderSimulationShell } from './farm-sim.js';
 
 export const PUBLIC_SECTIONS = new Set([
-  'tiempo-local', 'comparacion-aemet', 'evolucion', 'fincas', 'demo-agricola', 'herramientas',
+  'tiempo-local', 'vias', 'comparacion-aemet', 'evolucion', 'fincas', 'demo-agricola', 'herramientas',
   'preguntas', 'solicitar-piloto', 'acceso-gratuito', 'zonas', 'alertas', 'como-funciona', 'microclimas',
 ]);
 export const PRIVATE_SECTIONS = new Set(['panel', 'estaciones', 'avisos', 'admin', 'cuenta']);
@@ -18,6 +18,7 @@ const PUBLIC_SECTION_ALIASES = {
   'solicitar-acceso': 'solicitar-piloto',
   demo: 'demo-agricola',
   demostracion: 'demo-agricola',
+  empezar: 'vias',
 };
 
 // Desplaza la vista a una sección pública de la portada.

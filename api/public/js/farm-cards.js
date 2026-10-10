@@ -331,8 +331,11 @@ const worst = (assessments) => assessments.some((entry) => entry.tone === 'alert
   : assessments.some((entry) => entry.tone === 'warn') ? 'warn'
     : assessments.some((entry) => entry.tone === 'ok') ? 'ok' : 'muted';
 
-// Tarjetas de la primera pantalla: dos lecturas y cinco estados.
-export function renderStateCards(devices, now = new Date()) {
+// Tarjetas de la primera pantalla. La temperatura y la humedad crudas ya están
+// en la cabecera del panel y vuelven como evolución en los gráficos: repetirlas
+// aquí obligaba a repasar el mismo número cuatro veces. `readings: true` las
+// recupera para quien necesite la lectura junto a los estados.
+export function renderStateCards(devices, now = new Date(), { readings = false } = {}) {
   if (!devices.length) return '<p class="empty">Todavía no hay estaciones que mostrar.</p>';
   const primary = devices[0];
   const frost = assessFrost(primary);
@@ -364,9 +367,12 @@ export function renderStateCards(devices, now = new Date()) {
       : value == null ? 'Comprueba la conexión antes de usar estos datos.'
         : readingsFresh ? 'Sin acción.' : 'No la tomes como tiempo actual.',
   });
+  const readingCards = readings
+    ? `${reading('🌡️', 'Temperatura actual', 'Última temperatura', temperature, '°C', lastSeen, sensors.temperature !== false)}
+    ${reading('💧', 'Humedad actual', 'Última humedad', humidity, '%', lastSeen, sensors.humidity !== false)}`
+    : '';
   return `<div class="state-grid">
-    ${reading('🌡️', 'Temperatura actual', 'Última temperatura', temperature, '°C', lastSeen, sensors.temperature !== false)}
-    ${reading('💧', 'Humedad actual', 'Última humedad', humidity, '%', lastSeen, sensors.humidity !== false)}
+    ${readingCards}
     ${stateCard({ icon: '❄️', title: 'Riesgo de helada', tone: frost.tone, value: frost.value, since: frost.since, meaning: frost.meaning, action: frost.action, nature: frost.nature })}
     ${stateCard({ icon: '🔥', title: 'Riesgo de calor', tone: heat.tone, value: heat.value, since: heat.since, meaning: heat.meaning, action: heat.action, nature: heat.nature })}
     ${stateCard({ icon: '⛈️', title: 'Riesgo de tormenta', tone: storm.tone, value: storm.value, since: storm.since, meaning: storm.meaning, action: storm.action, nature: storm.nature })}
