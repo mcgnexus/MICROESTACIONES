@@ -350,6 +350,60 @@ export async function releaseDirectives(client, deviceId, { batteryMv = null, id
   return released.length;
 }
 
+// ---- Ventana de desconexión prevista ---------------------------------------
+// La conectividad puede venir de un hotspot móvil con horario conocido (p. ej.
+// clases de lunes a viernes de 16:30 a 18:00). Durante esa franja el detector
+// de sistema de conectividad NO evalúa: la caída es esperada, no un incidente.
+// Semántica: una condición abierta ANTES de la ventana se mantiene (si la
+// estación llevaba sin comunicar desde la mañana, el aviso sigue ahí); al
+// terminar la ventana, la pasada siguiente evalúa con normalidad y el retorno
+// del equipo cierra el aviso por recuperación automática.
+const WEEKDAY_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+export function parseOfflineWindow(env = process.env) {
+  const days = String(env.OFFLINE_WINDOW_DAYS ?? '1-5').trim();
+  const start = String(env.OFFLINE_WINDOW_START ?? '16:30').trim();
+  const end = String(env.OFFLINE_WINDOW_END ?? '18:00').trim();
+  const timeZone = String(env.OFFLINE_WINDOW_TZ ?? 'Europe/Madrid').trim();
+  // Sin días o sin extremos no hay ventana: el detector se evalúa siempre.
+  if (!days || !start || !end) return null;
+  const daySet = new Set();
+  for (const part of days.split(',')) {
+    const range = part.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      for (let d = Number(range[1]); d <= Number(range[2]); d++) daySet.add(d);
+    } else if (/^\d+$/.test(part)) {
+      daySet.add(Number(part));
+    }
+  }
+  const toMinutes = (value) => {
+    const m = value.match(/^(\d{1,2}):(\d{2})$/);
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+  const startMin = toMinutes(start);
+  const endMin = toMinutes(end);
+  if (!daySet.size || startMin == null || endMin == null) return null;
+  return { daySet, startMin, endMin, timeZone };
+}
+
+export function inOfflineWindow(now = new Date(), env = process.env) {
+  const window = parseOfflineWindow(env);
+  if (!window) return false;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: window.timeZone, weekday: 'short',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (type) => parts.find((part) => part.type === type)?.value;
+  const weekday = WEEKDAY_INDEX[get('weekday')];
+  const hour = Number(get('hour'));
+  const minute = Number(get('minute'));
+  if (weekday == null || Number.isNaN(hour) || Number.isNaN(minute)) return false;
+  if (!window.daySet.has(weekday)) return false;
+  const minutes = hour * 60 + minute;
+  // [inicio, fin): a la hora de fin exacta ya se vuelve a evaluar.
+  return minutes >= window.startMin && minutes < window.endMin;
+}
+
 // ---- Pasada periódica: detectores de sistema -------------------------------
 // Sin communication: se mide el silencio del equipo contra el umbral sembrado.
 // Batería: se usa la última medida validada y el umbral de la configuración.
@@ -366,6 +420,8 @@ export async function evaluateSystemRules(now = new Date(), { client = sql } = {
       WHERE d.active = true
       ORDER BY d.id`;
     const outcomes = [];
+    // La caída prevista (hotspot con horario) no es un incidente de conectividad.
+    const connectivityPaused = inOfflineWindow(now);
 
     for (const device of devices) {
       const config = device.config ?? {};
@@ -378,7 +434,8 @@ export async function evaluateSystemRules(now = new Date(), { client = sql } = {
         WHERE device_id = ${device.id} AND system AND metric = 'connectivity' FOR UPDATE`;
 
       // Sin comunicación: el valor es el silencio acumulado en segundos.
-      if (netRule) {
+      // En la ventana prevista no se evalúa: el estado de la regla queda tal cual.
+      if (netRule && !connectivityPaused) {
         // Si nunca ha contactado, el silencio se cuenta desde el aprovisionamiento:
         // una estación que no llega a enviar tampoco queda invisible al detector.
         const lastContact = device.lastContact ?? device.createdAt;
