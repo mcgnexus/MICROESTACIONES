@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { renderDemoDetails } from '../public/js/panel.js';
+import { renderDemoDetails } from '../public/js/demo-analysis.js';
 
 const read = async (name) => readFile(new URL(name, import.meta.url), 'utf8');
 const view = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');

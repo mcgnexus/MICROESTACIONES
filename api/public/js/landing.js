@@ -1,5 +1,5 @@
 // Rutas y secciones de la web pública. La portada no pide sesión; el panel sí.
-import { api, escapeText, numberText, dateText, makeChart } from './ui.js';
+import { api, escapeText, numberText, dateText, timeText, makeChart } from './ui.js';
 import { mountLeadForms } from './leads.js';
 import { sinceText } from './farm-cards.js';
 import { mountFarmSimulation, renderSimulationShell } from './farm-sim.js';
@@ -81,27 +81,48 @@ export function renderPublicZones(stations) {
     const aemetObservation = comparison?.aemet || station.aemet?.observation;
     const localValue = comparison?.local?.temperatureC ?? station.temperatureC;
     const localAt = comparison?.local?.observedAt || station.observedAt;
+    // La pareja con AEMET puede ser anterior a la última lectura de la estación.
+    // El servidor lo declara con `isLatestLocal`; si falta (respuesta antigua en
+    // caché), se deduce comparando las horas. Mientras la última lectura no tenga
+    // pareja, la comparación se presenta como histórica para no ofrecer dos
+    // valores «actuales» distintos en la misma pantalla.
+    const latestAt = station.temperatureObservedAt || station.observedAt || null;
+    const pairIsHistorical = comparison?.state === 'matched'
+      && (comparison.isLatestLocal === false
+        || (comparison.local?.observedAt && latestAt
+          && new Date(comparison.local.observedAt).getTime() < new Date(latestAt).getTime()));
     const aemetValue = aemetObservation?.temperatureC ?? station.aemet?.observation?.temperatureC;
     const aemetAt = aemetObservation?.observedAt;
     const localLabel = comparison?.local?.location || station.zone || station.name;
     const locationKind = station.locationType === 'urbano' ? 'zona urbana'
       : station.locationType === 'finca' ? 'finca' : null;
     const where = [station.zone, station.name, locationKind].filter(Boolean).join(' · ');
-    const localState = station.temperatureFreshness === 'stale' ? 'Dato antiguo'
-      : station.connectivity === 'offline' ? 'Estación sin conexión'
-        : station.temperatureFreshness === 'unknown' ? 'Sin dato válido' : 'Medición reciente';
+    const localState = pairIsHistorical ? 'Pareja con AEMET · no es la última lectura'
+      : station.temperatureFreshness === 'stale' ? 'Dato antiguo'
+        : station.connectivity === 'offline' ? 'Estación sin conexión'
+          : station.temperatureFreshness === 'unknown' ? 'Sin dato válido' : 'Medición reciente';
     const aemetStatus = station.aemet?.observationStatus;
     const aemetState = aemetStatus === 'unconfigured' ? 'No configurada'
       : aemetStatus === 'unavailable' ? 'Consulta no disponible'
         : aemetStatus === 'stale' ? 'Respuesta antigua' : null;
-    const diff = comparison?.state === 'matched' && comparison.differenceC != null
+    const diffValue = comparison?.state === 'matched' && comparison.differenceC != null
       ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
       : 'No calculada';
+    // Si la pareja es anterior a la última lectura, la diferencia se fecha: no
+    // describe el «ahora» sino el momento emparejado.
+    const diff = pairIsHistorical && comparison?.state === 'matched'
+      ? `a las ${timeText(localAt)} · ${diffValue}`
+      : diffValue;
     const diffTone = comparison?.state === 'matched'
       ? (comparison.differenceC > 0 ? 'más cálida' : comparison.differenceC < 0 ? 'más fría' : 'igual')
       : null;
     const windowNote = comparison?.state !== 'matched'
       ? `Sin pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min`
+      : null;
+    // La última lectura permanece como único valor «actual» (lo muestra la
+    // tarjeta del tiempo local): aquí se dice que aún no tiene pareja.
+    const latestNoPairNote = pairIsHistorical && latestAt
+      ? `La última lectura${station.temperatureC != null ? ` (${numberText(station.temperatureC, 1)} °C a las ${timeText(latestAt)})` : ''} todavía no tiene pareja con AEMET.`
       : null;
     const proximity = comparison?.proximity || aemetObservation?.proximity || station.aemet?.observation?.proximity;
     const metadata = proximity ? `<details class="comparison-metadata"><summary>Distancia y altitud</summary>
@@ -126,6 +147,7 @@ export function renderPublicZones(stations) {
         <strong>${escapeText(diff)}</strong>
         ${diffTone ? `<span>microestación ${diffTone} · pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min</span>` : ''}
         ${windowNote ? `<span>${escapeText(windowNote)}</span>` : ''}
+        ${latestNoPairNote ? `<span>${escapeText(latestNoPairNote)}</span>` : ''}
       </div>
       ${metadata}
     </article>`;

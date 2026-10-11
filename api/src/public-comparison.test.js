@@ -85,3 +85,34 @@ test('la distancia y la altitud se ofrecen en un desplegable', () => {
   assert.match(html, /4,2 km entre emplazamientos/);
   assert.match(html, /coordenadas AEMET/);
 });
+
+// F5 · P2: cuando la pareja con AEMET es anterior a la última lectura, la
+// comparación se fecha (no describe el «ahora») y se dice que la última lectura
+// aún no tiene pareja. Así solo hay un valor «actual»: el de la tarjeta hero.
+test('una pareja anterior a la última lectura se presenta como histórica', () => {
+  const html = renderPublicZones([station({
+    temperatureC: 16.3, temperatureObservedAt: '2026-10-07T21:47:00Z',
+    comparison: {
+      ...station().comparison,
+      isLatestLocal: false,
+      local: { temperatureC: 18.2, observedAt: '2026-10-07T20:07:00Z', location: 'Huéscar' },
+      differenceC: 0.5,
+    },
+  })]);
+  // La diferencia va fechada y la lectura local se marca como pareja, no actual.
+  assert.match(html, /a las \d{2}:\d{2} · \+0,5 °C/);
+  assert.match(html, /Pareja con AEMET · no es la última lectura/);
+  // Y se declara que la última lectura (16,3 °C a las 21:47) no tiene pareja.
+  assert.match(html, /La última lectura \(16,3 °C a las \d{2}:\d{2}\) todavía no tiene pareja con AEMET/);
+});
+
+test('cuando la pareja es la última lectura no se marca como histórica', () => {
+  const html = renderPublicZones([station({
+    temperatureObservedAt: '2026-10-07T12:05:00Z',
+    comparison: { ...station().comparison, isLatestLocal: true },
+  })]);
+  assert.match(html, /\+1,1 °C/);
+  assert.doesNotMatch(html, /a las \d{2}:\d{2} · \+1,1 °C/);
+  assert.doesNotMatch(html, /todavía no tiene pareja/);
+  assert.doesNotMatch(html, /no es la última lectura/);
+});

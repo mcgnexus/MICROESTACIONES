@@ -26,6 +26,14 @@ export const dayText = (value) => {
   if (Number.isNaN(date.getTime())) return '—';
   return `${two(date.getDate())}/${two(date.getMonth() + 1)}/${date.getFullYear()}`;
 };
+// Solo la hora: para referirse a un momento concreto del mismo día sin repetir
+// la fecha entera («a las 20:07»). El día completo lo dan dateText/dayText.
+export const timeText = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${two(date.getHours())}:${two(date.getMinutes())}`;
+};
 
 /**
  * Frescura en palabras para los resúmenes: «hace 5 min».

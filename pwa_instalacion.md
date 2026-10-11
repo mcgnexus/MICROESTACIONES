@@ -18,6 +18,7 @@ Base: `manifest.webmanifest`, `service-worker.js` (`tecrural-shell-v4`), `app.js
 - Mostrar instrucciones apropiadas para **Android, iPhone y escritorio**.
 - Un botón de instalación solo aparece cuando puede ejecutar una **acción real**; en otros casos, instrucciones verificadas.
 - Ofrecer instalar **después** de consultar datos o crear la cuenta; sin bloquear la visita.
+- El aviso iOS vive en el contenido (bajo la tarjeta del tiempo), no en la cabecera fija: la cabecera debe dejar el activo principal visible en la primera pantalla móvil. Es descartable y el cierre se persiste en el navegador.
 - La instalación **no** es un permiso para comunicaciones comerciales.
 - Razón comunicada: volver al tiempo local con facilidad.
 

@@ -262,12 +262,20 @@ main{max-width:1240px;margin:clamp(18px,3vw,36px) auto;padding:0 clamp(12px,2.2v
 .footnote{max-width:1180px;margin:12px auto 30px;padding:0 22px;color:var(--c-muted);font-size:11px;line-height:1.5}
 .mobile-tab-bar{display:none}
 .pwa-install-hint{margin-top:18px;padding:11px 13px;border:1px solid #d6e9e1;border-radius:11px;background:#f4faf6;color:#486b59;font-size:12px;line-height:1.5}
-.topbar .pwa-install-hint{order:4;flex-basis:100%;margin:0;padding:8px 11px;font-size:11px}
+/* El aviso iOS vive en el contenido, bajo la tarjeta hero: en la cabecera
+   fija ocupaba una fila propia y empujaba el activo de la página fuera de la
+   primera pantalla en móvil. */
+.pwa-install-hint{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.pwa-install-hint .hint-dismiss{min-height:0;padding:8px 12px;font-size:13px;color:var(--c-primary-dark);white-space:nowrap}
 @media(max-width:760px){
   .topbar{padding:8px 12px;gap:7px 10px}
   .topbar-right{margin-left:auto;gap:6px}.topbar-right .chip{max-width:145px;overflow:hidden;text-overflow:ellipsis}
   .topnav{order:3;display:flex;width:100%;margin:0;flex-wrap:wrap;row-gap:4px;justify-content:flex-start}
   .topnav a{flex:0 0 auto;padding:7px 10px}
+  /* En móvil solo caben la CTA y el acceso en una fila: los enlaces medios
+     del embudo se saltan (siguen accesibles scrollando y en la barra inferior
+     de la app). Así la cabecera no pasa de ~94 px en 390. */
+  #public-nav .nav-optional{display:none}
   main{margin:17px auto 24px;padding:0 11px 104px}
   .page-heading{align-items:flex-start;flex-direction:column;gap:10px}
   .period-label{max-width:none;width:100%}
@@ -347,7 +355,6 @@ td.row-actions button,td button{padding:6px 10px;font-size:15px}
 .weather-attribution{font-size:12px}
 .footnote{font-size:14px}
 .pwa-install-hint{font-size:15px}
-.topbar .pwa-install-hint{font-size:14px}
 .mobile-tab-bar a{font-size:12px}
 .mobile-tab-bar a>span{font-size:24px}
 .mobile-tab-bar .icon{width:24px;height:24px}
@@ -410,11 +417,13 @@ td.row-actions button,td button{padding:6px 10px;font-size:15px}
 .weather-hours>div{font-size:13px}
 .weather-hourly summary{font-size:14px}
 
-/* Navegación en móvil: los enlaces bajan a 13px y la barra pasa a dos filas en
-   lugar de desplazarse en horizontal. Se declara DESPUÉS de la escala
-   tipográfica global porque, con la misma especificidad, esta gana por orden:
-   antes, los 16px globales anulaban los 12px del bloque móvil y la barra
-   quedaba más ancha que la pantalla, con «Entrar» fuera de vista. */
+/* Navegación en móvil: los enlaces bajan a 13px y la barra se queda en una
+   fila (los enlaces medios se ocultan con .nav-optional); si aun así no
+   caben —pantallas muy estrechas— la barra se pliega en dos filas en lugar
+   de desplazarse en horizontal. Se declara DESPUÉS de la escala tipográfica
+   global porque, con la misma especificidad, esta gana por orden: antes, los
+   16px globales anulaban los 13px del bloque móvil y la barra quedaba más
+   ancha que la pantalla, con «Entrar» fuera de vista. */
 @media(max-width:760px){
   .topnav a{font-size:13px;padding:8px 9px}
 }
@@ -627,7 +636,17 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .landing-view{padding-bottom:28px}
 .public-first-section{max-width:1040px;margin-top:24px;padding:28px 30px;border:1px solid #dce8df;border-radius:22px;background:linear-gradient(145deg,#f8fcf8,#fff);box-shadow:0 12px 36px #153b2b0d}
 .public-first-section h1{font-size:clamp(30px,5vw,48px);letter-spacing:-.04em;line-height:1.05;margin-bottom:12px}
-.public-first-section>.landing-lead{max-width:740px;margin:0 0 18px;text-align:left;font-size:16px}
+/* Un solo bloque hero: la tarjeta abre el bloque y el titular y la entradilla
+   van justo debajo, con un ritmo común, en lugar de quedar sueltos. */
+.public-hero{display:grid;gap:14px}
+.public-hero>.landing-lead{max-width:740px;margin:0;text-align:left;font-size:16px}
+.public-hero>.landing-actions{margin-top:4px}
+/* Nota técnica de la portada: plegada y solo en la vista pública, para no
+   repetirla al pie de todas las secciones privadas (que ya tienen su propia
+   documentación en el panel). */
+.landing-footnote{margin:26px 0 4px;padding:0 4px;max-width:1120px}
+.landing-footnote summary{cursor:pointer;color:var(--c-primary);font-weight:650;font-size:14px}
+.landing-footnote .footnote{margin:10px 0 0;padding:0;max-width:none}
 .landing-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
 .public-loading{min-height:52px;display:flex;align-items:center;gap:10px;color:#617267;font-size:14px}
 .loading-dot{width:10px;height:10px;border-radius:var(--r-round);background:#3b8b5d;box-shadow:0 0 0 5px #3b8b5d1a;animation:public-pulse 1.2s ease-in-out infinite alternate}
@@ -838,7 +857,13 @@ input[data-search]{max-width:360px;margin:0 0 12px;display:block}
 .connection-notice { position: sticky; top: 0; z-index: 1000; margin: 0; padding: 12px 16px; background: #fff1b8; color: #382900; border-bottom: 2px solid #806000; line-height: 1.4; overflow-wrap: anywhere; }
 button, .button-link, input:not([type="checkbox"]), select { min-height: 44px; }
 button:disabled { opacity: .65; cursor: wait; }
-:focus-visible { outline: 3px solid #1766b0; outline-offset: 3px; }
+/* El anillo marca el foco de teclado real: los objetivos programáticos
+   (tabindex="-1": tarjeta del tiempo, encabezados de sección, <main> del
+   salto) reciben foco para orientar, no para tabular. */
+[tabindex="-1"]:focus { outline: none; }
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, summary:focus-visible,
+dialog:focus-visible, [tabindex="0"]:focus-visible { outline: 3px solid var(--focus, #1766b0); outline-offset: 3px; }
 [data-prospects] summary { padding: 12px 0; cursor: pointer; overflow-wrap: anywhere; }
 .data-offline .metric { border: 2px dashed #806000; }
 /* En móvil, al mostrarse el aviso fijo, la barra superior deja de fijarse para

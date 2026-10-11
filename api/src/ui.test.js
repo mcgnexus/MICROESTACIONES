@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, chartScale, pressureMbar, pressureText, shortDate, trendWindows, trendWindowRows, trendPeriodLabel, validationBadge, verificationBadge } from '../public/js/ui.js';
 import { renderStationCard } from '../public/js/panel.js';
 
@@ -324,4 +325,16 @@ test('chart cards expose detail attributes when a key is provided', () => {
   const svg = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1, null, { key: 'station-9' });
   assert.match(svg, /data-detail-key="station-9" data-detail-metric="temperatureC" data-detail-source="local"/);
   assert.match(svg, /role="button" tabindex="0"/);
+});
+
+test('la portada no usa emoji decorativos: los iconos salen del set propio', async () => {
+  const html = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
+  // Emoji pictográficos (U+1F300–U+1FAFF, U+2600–U+27BF con variation selector):
+  // cada sistema operativo los dibuja distinto y rompen la uniformidad del SVG.
+  assert.doesNotMatch(html, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u);
+  // Las tres tarjetas de «Lo que ocurre en el casco…» usan el mismo patrón.
+  const farm = html.slice(html.indexOf('id="fincas"'), html.indexOf('</section>', html.indexOf('id="fincas"')));
+  for (const name of ['frost', 'heat', 'humidity']) {
+    assert.match(farm, new RegExp(`data-icon="${name}"`), `falta el icono ${name} en la sección de fincas`);
+  }
 });

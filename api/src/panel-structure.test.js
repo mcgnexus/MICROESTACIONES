@@ -134,19 +134,27 @@ test('la cabecera sitúa la estación, su tipo y el permiso antes del resumen', 
   assert.match(source, /setPanelContext\(root, lastDevices\)/);
 });
 
-test('el análisis del periodo se parte entre el resumen y el detalle', () => {
-  assert.match(source, /export function renderDemoOverview\(data\)/);
-  assert.match(source, /export function renderDemoDetails\(data\)/);
+test('el análisis del periodo se parte entre el resumen y el detalle', async () => {
+  // El análisis vive en su propio módulo, cargado bajo demanda (F6).
+  const analysis = await readFile(new URL('../public/js/demo-analysis.js', import.meta.url), 'utf8');
+  assert.match(analysis, /export function renderDemoOverview\(data\)/);
+  assert.match(analysis, /export function renderDemoDetails\(data\)/);
   // El resumen visible lleva las métricas del periodo; lo que documenta el
   // cálculo, las coberturas y la comparación externa, no.
-  const overview = source.slice(source.indexOf('export function renderDemoOverview'),
-    source.indexOf('export function renderDemoDetails'));
+  const overview = analysis.slice(analysis.indexOf('export function renderDemoOverview'),
+    analysis.indexOf('export function renderDemoDetails'));
   assert.match(overview, /demoMetricCard/);
   assert.doesNotMatch(overview, /dailyTemperature/);
   assert.doesNotMatch(overview, /dewPoint/);
-  const details = source.slice(source.indexOf('export function renderDemoDetails'),
-    source.indexOf('// Orden de lectura del panel'));
+  const details = analysis.slice(analysis.indexOf('export function renderDemoDetails'));
   assert.match(details, /dailyTemperature/);
   assert.match(details, /dewPoint/);
   assert.match(details, /panelDocumentation/);
+});
+
+test('el análisis del periodo se carga bajo demanda, no en el panel base', () => {
+  // El panel no incrusta el análisis: lo importa solo cuando hace falta.
+  assert.match(source, /import\('\.\/demo-analysis\.js'\)/);
+  assert.doesNotMatch(source, /export function renderDemoOverview/);
+  assert.doesNotMatch(source, /export function renderDemoDetails/);
 });

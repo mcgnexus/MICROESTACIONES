@@ -116,3 +116,31 @@ test('el tamaño móvil de los enlaces no lo anula la escala tipográfica global
   assert.ok(mobile, 'falta una regla móvil de .topnav a posterior a la escala global');
   assert.equal(mobile[1], '13');
 });
+
+test('en móvil la navegación pública se queda en una fila sin esconder el acceso', async () => {
+  const [html, css] = await Promise.all([readView('index.html'), read('app.css')]);
+  // Solo caben la CTA y el acceso: los enlaces medios del embudo se saltan.
+  const publicNav = html.slice(html.indexOf('<nav id="public-nav"'), html.indexOf('</nav>', html.indexOf('<nav id="public-nav"')));
+  assert.match(publicNav, /<a href="#\/tiempo-local">/);
+  assert.match(publicNav, /<a class="nav-access" href="#\/solicitar-piloto">/);
+  assert.match(publicNav, /<a href="#\/entrar">/);
+  assert.equal((publicNav.match(/class="nav-optional"/g) || []).length, 2);
+  // Y la regla móvil existe en el mismo bloque que plega la barra.
+  const mobileNav = css.split('@media(max-width:760px){')
+    .find((part) => part.includes('.topnav{order:3'));
+  assert.match(mobileNav, /#public-nav \.nav-optional\{display:none\}/);
+});
+
+test('el aviso de instalación iOS vive en el contenido y su cierre se persiste', async () => {
+  const [html, app] = await Promise.all([readView('index.html'), read('app.js')]);
+  const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+  assert.doesNotMatch(header, /ios-install-hint/);
+  const landing = html.slice(html.indexOf('<section id="landing-view">'));
+  const hintAt = landing.indexOf('id="ios-install-hint"');
+  assert.ok(hintAt > -1, 'el aviso iOS debe vivir en la portada');
+  // Bajo la tarjeta hero: la tarjeta sigue siendo el primer píxel de contenido.
+  assert.ok(hintAt > landing.indexOf('id="local-weather-card"'), 'el aviso va después de la tarjeta del tiempo');
+  // Solo aparece tras consultar datos y el cierre se recuerda.
+  assert.match(app, /installEligible && !iosHintDismissed/);
+  assert.match(app, /localStorage\.setItem\(iosInstallHintKey, 'dismissed'\)/);
+});

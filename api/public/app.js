@@ -58,10 +58,27 @@ if ('serviceWorker' in navigator) {
 
 const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-if (isIos && !isStandalone) iosInstallHint.classList.remove('hidden');
+// El aviso iOS vive en el contenido (bajo la tarjeta hero), no en la cabecera
+// fija: ahí ocupaba una fila propia y empujaba el activo de la página fuera de
+// la primera pantalla en móvil. Solo aparece tras consultar datos —igual que el
+// botón «Instalar app»— y el cierre se persiste para no volver a insistir.
+const iosInstallHintKey = 'tecrural-ios-install-hint-v1';
+let iosHintDismissed = false;
+try { iosHintDismissed = localStorage.getItem(iosInstallHintKey) === 'dismissed'; } catch { /* sin almacenamiento, se decide para esta página */ }
 
-// La cabecera es fija y su alto cambia: en escritorio cabe en una fila, pero al
-// plegarse la navegación pasa a dos y el aviso de iOS añade otra línea. Se
+function offerIosInstallHint() {
+  if (isIos && !isStandalone && installEligible && !iosHintDismissed) iosInstallHint.classList.remove('hidden');
+}
+
+iosInstallHint.addEventListener('click', (event) => {
+  if (!event.target.closest('[data-dismiss-install-hint]')) return;
+  iosHintDismissed = true;
+  iosInstallHint.classList.add('hidden');
+  try { localStorage.setItem(iosInstallHintKey, 'dismissed'); } catch { /* se conserva solo en memoria */ }
+});
+
+// La cabecera es fija y su alto cambia: en escritorio cabe en una fila, pero en
+// móvil la navegación pública se pliega en dos filas en pantallas estrechas. Se
 // mide en vez de fijar un valor, y se publica como --topbar-h para que el
 // scroll-padding-top global descuente siempre lo que ocupa de verdad.
 const topbarEl = document.querySelector('.topbar');
@@ -72,8 +89,8 @@ function syncTopbarHeight() {
 }
 syncTopbarHeight();
 window.addEventListener('resize', syncTopbarHeight);
-// El navegador ya no dispara resize al plegar la navegación, pero el estado de
-// instalación y el aviso de iOS sí cambian el alto: se observa la cabecera.
+// El navegador ya no dispara resize al plegar la navegación, pero el botón de
+// instalación sí puede cambiar el alto: se observa la cabecera.
 if (typeof ResizeObserver === 'function' && topbarEl) {
   new ResizeObserver(syncTopbarHeight).observe(topbarEl);
 }
@@ -90,7 +107,11 @@ window.addEventListener('beforeinstallprompt', (event) => {
   offerInstallIfEligible();
 });
 
-window.addEventListener('tecrural:data-loaded', () => { installEligible = true; offerInstallIfEligible(); });
+window.addEventListener('tecrural:data-loaded', () => {
+  installEligible = true;
+  offerInstallIfEligible();
+  offerIosInstallHint();
+});
 
 installButton.addEventListener('click', async () => {
   if (!deferredInstallPrompt) return;

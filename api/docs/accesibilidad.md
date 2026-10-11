@@ -35,7 +35,7 @@ Se sustituyeron los grises de texto secundario que quedaban por debajo del umbra
 ## Ya conforme
 
 - `lang="es"`, `<header>/<main>/<footer>/<nav>` y enlace «Saltar al contenido».
-- Foco visible: `:focus-visible { outline: 3px solid …; outline-offset: … }`; puntos de gráfica con `tabindex` y foco propio.
+- Foco visible en controles reales (`a`, `button`, `input`, `select`, `textarea`, `summary`, `dialog`, `[tabindex="0"]`): `outline: 3px solid …; outline-offset: …`; los objetivos programáticos con `tabindex="-1"` (tarjeta del tiempo, encabezados de sección, `<main>` del salto) reciben foco sin anillo; puntos de gráfica con `tabindex` y foco propio.
 - Formularios con `<label>` envolvente; errores con `role="alert"`; cargas con `aria-live`.
 - Gráficas con resumen textual (mín./máx./prom.) y `aria-label` por punto; `role="group"` con rango de fechas.
 - `prefers-reduced-motion` respetado (incluido el indicador de carga).

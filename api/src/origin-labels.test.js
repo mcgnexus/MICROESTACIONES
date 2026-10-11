@@ -7,6 +7,8 @@ import { renderSimulationShell, renderSimulationResult, scenarioById } from '../
 const read = (name) => readFile(new URL(`../public/js/${name}`, import.meta.url), 'utf8');
 const view = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
 const panel = await read('panel.js');
+// La documentación plegable se comparte con el análisis de periodo (F6).
+const documentation = await read('panel-shared.js');
 
 // F11 · P2: la precisión sobre punto urbano, finca, fuentes, simulación y
 // validación es necesaria, pero reaparecía en introducciones, tarjetas,
@@ -76,7 +78,7 @@ test('las explicaciones largas se concentran en un bloque por panel', () => {
   // «Las alertas son orientativas, no avisos oficiales» aparecía dos veces, una
   // por panel, además de la nota global: ahora es una vez, en la documentación.
   assert.equal((panel.match(/Las alertas son orientativas, no avisos oficiales/g) || []).length, 0);
-  assert.match(panel, /Los avisos propios son orientativos y no son avisos oficiales/);
+  assert.match(documentation, /Los avisos propios son orientativos y no son avisos oficiales/);
   // Y las fuentes siguen nombradas donde se muestran.
   assert.match(panel, /Fuentes: <a href="https:\/\/open-meteo\.com\/"/);
 });

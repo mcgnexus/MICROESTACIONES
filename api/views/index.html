@@ -73,12 +73,11 @@
     </nav>
     <nav id="public-nav" class="topnav" aria-label="Página pública">
       <a href="#/tiempo-local">Tiempo local</a>
-      <a href="#/vias">Cómo empezar</a>
-      <a href="#/fincas">Medir en finca</a>
+      <a class="nav-optional" href="#/vias">Cómo empezar</a>
+      <a class="nav-optional" href="#/fincas">Medir en finca</a>
       <a class="nav-access" href="#/solicitar-piloto">Consultar instalación</a>
       <a href="#/entrar">Entrar</a>
     </nav>
-    <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>.</p>
     <div class="topbar-right">
       <span id="session-chip" class="chip hidden"></span>
       <button id="install-app" class="quiet hidden" type="button">Instalar app</button>
@@ -88,12 +87,15 @@
   <main id="main-content" tabindex="-1">
     <section id="landing-view">
       <section id="tiempo-local" class="landing-section public-first-section">
-        <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
-        <div id="local-weather-card"></div>
-        <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
-        <h1>Tiempo local ahora</h1>
-        <p class="landing-lead">Temperatura y humedad medidas en un punto del casco urbano. La lectura describe ese emplazamiento; no representa exactamente toda la ciudad ni tu finca.</p>
-        <div class="landing-actions"><a class="cta" href="#/vias">Ver las tres formas de empezar</a><a class="cta secondary" href="#/herramientas">Explorar todas las herramientas</a></div>
+        <div class="public-hero">
+          <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
+          <div id="local-weather-card"></div>
+          <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>. <button type="button" class="quiet hint-dismiss" data-dismiss-install-hint>Entendido</button></p>
+          <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
+          <h1>Tiempo local ahora</h1>
+          <p class="landing-lead">Temperatura y humedad medidas en un punto del casco urbano. La lectura describe ese emplazamiento; no representa exactamente toda la ciudad ni tu finca.</p>
+          <div class="landing-actions"><a class="cta" href="#/vias">Ver las tres formas de empezar</a><a class="cta secondary" href="#/herramientas">Explorar todas las herramientas</a></div>
+        </div>
       </section>
 
       <section id="vias" class="landing-section">
@@ -145,8 +147,8 @@
         <p>Una medición en el casco urbano es una referencia de ese punto. En una explotación pueden darse otras condiciones: una hondonada, una vega o una zona alta pueden registrar diferencias de temperatura y humedad según el relieve, la exposición, el viento y el momento.</p>
         <p>Medir en la propia finca ayuda a seguir frío, calor y humedad allí donde afectan a los cultivos o al ganado. Esas diferencias son posibilidades locales, no una regla igual para todas las parcelas.</p>
         <div class="farm-value-grid">
-          <article><span aria-hidden="true">❄️</span><h3>Frío</h3><p>Observa cómo evolucionan las temperaturas en tu emplazamiento.</p></article>
-          <article><span aria-hidden="true">☀️</span><h3>Calor</h3><p>Sigue los episodios cálidos en el punto que te interesa.</p></article>
+          <article><span class="nav-icon" data-icon="frost"></span><h3>Frío</h3><p>Observa cómo evolucionan las temperaturas en tu emplazamiento.</p></article>
+          <article><span class="nav-icon" data-icon="heat"></span><h3>Calor</h3><p>Sigue los episodios cálidos en el punto que te interesa.</p></article>
           <article><span class="nav-icon" data-icon="humidity"></span><h3>Humedad</h3><p>Consulta la humedad medida junto con la hora de cada lectura.</p></article>
         </div>
       </section>
@@ -191,6 +193,11 @@
         <p><a class="cta secondary" href="/contacto">Ver contacto</a></p>
         <p class="landing-support hidden" data-support></p>
       </section>
+
+      <details class="landing-footnote">
+        <summary>Nota técnica sobre los datos</summary>
+        <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación; las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. No se calculan predicciones meteorológicas propias. Cada dato lleva su etiqueta de procedencia: «Medido», «Previsión», «Calculado» o «Simulación», con su proveedor y su hora.</p>
+      </details>
     </section>
     <section id="login-view" class="login-card hidden">
       <p class="eyebrow">ACCESO · SIN CONTRASEÑA</p>
@@ -254,7 +261,6 @@
     <a href="#/cuenta" data-mobile-nav="account"><span class="nav-icon" data-icon="account"></span>Cuenta</a>
   </nav>
   <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-dialog-title"></dialog>
-  <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación; las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. No se calculan predicciones meteorológicas propias. Cada dato lleva su etiqueta de procedencia: «Medido», «Previsión», «Calculado» o «Simulación», con su proveedor y su hora.</p>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
