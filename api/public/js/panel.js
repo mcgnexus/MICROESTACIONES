@@ -183,7 +183,7 @@ function forecastBlock(item, key) {
   if (!rows.length) return '';
   const provider = days.length ? 'AEMET' : 'Open-Meteo';
   return `<div class="detail-block"><h4>Previsión de ${title.toLowerCase()} · ${provider}</h4><div class="weather-days">${rows
-    .map((row) => `<div class="weather-day"><strong>${escapeText(row.when)}</strong><span>${escapeText(row.text)}</span></div>`).join('')}</div></div>`;
+    .map((row) => `<div class="weather-day"><strong>${escapeText(row.when)}</strong><span>${row.text}</span></div>`).join('')}</div></div>`;
 }
 
 function buildLocalMetricDetail(item, metricKey) {
