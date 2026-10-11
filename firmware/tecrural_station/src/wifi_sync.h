@@ -24,7 +24,6 @@ void disconnect();
 bool isConnected();
 bool uploadBatch(uint32_t timeout_ms);
 bool fetchConfig(uint32_t timeout_ms);
-uint32_t failures();
 int lastUploadStatus();
 
 }  // namespace WiFiSync

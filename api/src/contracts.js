@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 // El contrato admite lecturas fuera del rango físico: la detección de valores
 // extraños (y su conservación en raw_payload) la hace el pipeline de validación.
+// device_id es opcional: la identidad real viene del token (req.deviceId) y el
+// INSERT siempre usa esa. El firmware nuevo lo omite para ahorrar bytes por
+// registro; el antiguo todavia lo envia y se sigue comprobando si viene.
 export const measurementSchema = z.object({
   device_id: z.string().min(1).max(80),
   sequence: z.number().int().min(0).max(4294967295),
@@ -21,7 +24,7 @@ export const measurementSchema = z.object({
   flags: z.number().int().min(0).max(255),
   alert: z.number().int().min(0).max(2),
 }).partial({
-  temp_c: true, hum_pct: true, press_pa: true, batt_mv: true, lux: true, source: true, config_version: true,
+  device_id: true, temp_c: true, hum_pct: true, press_pa: true, batt_mv: true, lux: true, source: true, config_version: true,
 }).strict();
 
 // Un registro sin ningun canal no tiene nada que guardar, pero rechazarlo aqui

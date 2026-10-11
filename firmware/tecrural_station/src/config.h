@@ -25,9 +25,7 @@ void loadDefaults();
 bool loadFromFlash();
 bool saveToFlash();
 bool applyServerJson(const char* json, size_t len);
-bool dirty();
 bool validate(const StationConfig& c);
-void markServerValues();
 const StationConfig& current();
 
 }

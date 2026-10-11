@@ -8,7 +8,6 @@ namespace {
 
 Preferences prefs;
 StationConfig config;
-bool server_dirty = false;
 
 const char* NS = "tecrural";
 const char* KEY_CFG = "cfg";
@@ -92,15 +91,6 @@ bool saveToFlash() {
   return ok;
 }
 
-void markServerValues() {
-  server_dirty = true;
-  saveToFlash();
-}
-
-bool dirty() {
-  return server_dirty;
-}
-
 const StationConfig& current() {
   return config;
 }
@@ -138,7 +128,6 @@ bool applyServerJson(const char* json, size_t len) {
   if (!validate(candidate)) return false;
 
   config = candidate;
-  server_dirty = true;
   return saveToFlash();
 }
 

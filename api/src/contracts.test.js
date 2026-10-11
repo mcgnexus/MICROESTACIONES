@@ -18,6 +18,16 @@ test('measurement contract rejects malformed payloads and unexpected fields', ()
   assert.equal(measurementSchema.safeParse({ ...base, api_key: 'not-allowed' }).success, false);
 });
 
+// El firmware nuevo omite device_id (la identidad real es la del token); el
+// antiguo lo envia y el endpoint sigue comprobando la coincidencia si viene.
+test('device_id is optional per record and stays verifiable when present', () => {
+  const { device_id: _omitted, ...withoutDevice } = base;
+  assert.equal(measurementSchema.safeParse(withoutDevice).success, true);
+  assert.equal(measurementSchema.safeParse({ ...base, device_id: 'esp32c3-01' }).success, true);
+  assert.equal(measurementSchema.safeParse({ ...base, device_id: 'otro-device' }).success, true,
+    'el schema acepta cualquier device_id; la coincidencia con el token la comprueba el endpoint');
+});
+
 // El registro sin canales no se rechaza en el contrato: hacerlo tumbaria el
 // lote entero y dejaria a la estacion bloqueada. Se descarta en el endpoint.
 test('a record without any channel is flagged as empty instead of rejected', () => {

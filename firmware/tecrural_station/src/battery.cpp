@@ -12,6 +12,10 @@ namespace {
 
 #if BATTERY_MONITOR_ENABLED
 constexpr adc_channel_t kAdcChannel = ADC_CHANNEL_1;
+// En el ESP32-C3, GPIO1 == ADC1_CH1. Si se cambia PIN_BATTERY_ADC en
+// battery.h, ajustar kAdcChannel aqui: este assert obliga a revisarlo.
+static_assert(PIN_BATTERY_ADC == 1,
+              "PIN_BATTERY_ADC cambio: revisar kAdcChannel (GPIO1=CH1, GPIO2=CH2, GPIO3=CH3, GPIO4=CH4)");
 constexpr adc_atten_t kAtten = ADC_ATTEN_DB_12;
 adc_oneshot_unit_handle_t adc_handle = nullptr;
 adc_cali_handle_t cali_handle = nullptr;
@@ -119,7 +123,10 @@ bool isCritical() {
   // Do not block alerts or double the sampling interval while voltage sensing is disabled.
   return false;
 #else
-  return last_raw_mv <= (uint16_t)ConfigStore::current().battery_critical_mv;
+  // Igual que isLow(): sin lectura (0) no se puede afirmar que la bateria este
+  // critica. Tratar un fallo del ADC como bateria critica suprimiria alertas
+  // prioritarias (helada/ola de calor), que es el fail-safe equivocado.
+  return last_raw_mv > 0 && last_raw_mv <= (uint16_t)ConfigStore::current().battery_critical_mv;
 #endif
 }
 

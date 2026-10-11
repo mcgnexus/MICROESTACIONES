@@ -7,6 +7,7 @@
 #include "src/timekeeper.h"
 #include "src/wifi_sync.h"
 #include "src/power.h"
+#include "src/sync_policy.h"
 
 namespace {
 
@@ -25,9 +26,16 @@ constexpr uint32_t kAlertSyncCooldownS = 900;
 #define TECRURAL_MIN_AWAKE_MS 300
 #endif
 
+// Espera de host USB al arrancar (para ver el primer log por serie). En campo,
+// sin ordenador conectado, esta espera se agota siempre y gasta bateria en cada
+// despertar: compilar con -DTECRURAL_SERIAL_WAIT_MS=0.
+#ifndef TECRURAL_SERIAL_WAIT_MS
+#define TECRURAL_SERIAL_WAIT_MS 5000
+#endif
+
 RTC_DATA_ATTR uint32_t last_sync_attempt_stamp = 0;
-RTC_DATA_ATTR bool last_sync_was_uptime = false;
 RTC_DATA_ATTR bool has_attempted_sync = false;
+RTC_DATA_ATTR uint8_t failed_upload_cycles = 0;
 
 void printHeader(const char* reason) {
   Serial.println();
@@ -73,29 +81,21 @@ void printMeasurement(const Measurement& m) {
                             : m.alert == ALERT_WARNING ? "AVISO" : "ninguna");
 }
 
-bool cooldownElapsed(uint32_t stamp, bool stamp_is_uptime, uint32_t cooldown_s) {
-  if (!has_attempted_sync) return true;
-  if (stamp == 0) return true;
-  // Sellos de bases distintas (epoch vs uptime) no son comparables: sincronizar.
-  if (last_sync_was_uptime != stamp_is_uptime) return true;
-  return (stamp - last_sync_attempt_stamp) >= cooldown_s;
+bool cooldownElapsed(uint32_t elapsed_stamp, uint32_t cooldown_s) {
+  return SyncPolicy::elapsed(has_attempted_sync, elapsed_stamp, last_sync_attempt_stamp, cooldown_s);
 }
 
 // Red de seguridad: no dejar acumular mas de estas lecturas sin subir aunque el
 // reloj o el cooldown se comporten de forma inesperada (se observo un retraso de
 // ~52 min en el que el chip desperto 9 veces sin intentar sincronizar).
-constexpr uint32_t kSyncBurstRecords = 6;
-
-bool syncDue(uint32_t stamp, bool stamp_is_uptime) {
-  if (!ConfigStore::current().sync_enabled) return false;
-  const uint32_t pending = Store::count();
-  if (pending == 0) return false;
-  if (pending >= kSyncBurstRecords) return true;  // ~30 min de datos: subir ya
-  return cooldownElapsed(stamp, stamp_is_uptime, ConfigStore::current().sync_interval_s);
+bool syncDue(uint32_t elapsed_stamp) {
+  return SyncPolicy::due(ConfigStore::current().sync_enabled, Store::count(),
+    has_attempted_sync, elapsed_stamp, last_sync_attempt_stamp,
+    ConfigStore::current().sync_interval_s, failed_upload_cycles);
 }
 
-bool alertSyncDue(uint32_t stamp, bool stamp_is_uptime) {
-  return cooldownElapsed(stamp, stamp_is_uptime, kAlertSyncCooldownS);
+bool alertSyncDue(uint32_t elapsed_stamp) {
+  return cooldownElapsed(elapsed_stamp, kAlertSyncCooldownS);
 }
 
 void runCycle() {
@@ -110,7 +110,9 @@ void runCycle() {
                                                         : TimeKeeper::now();
   m.timestamp = stamp;
   if (quality != TIME_NO_REFERENCE) m.flags |= FLAG_TIME_VALID;
-  const bool stamp_is_uptime = (quality == TIME_NO_REFERENCE);
+  // La planificación usa tiempo transcurrido (incluye deep sleep), nunca la
+  // hora UTC que fetchConfig puede corregir hacia delante o hacia atrás.
+  const uint32_t elapsed_stamp = TimeKeeper::uptimeSeconds();
 
   // Una lectura sin ningun canal valido (sensor caido en este ciclo) no es una
   // medicion: no hay nada que guardar. El servidor ahora la confirmaria sin
@@ -144,15 +146,20 @@ void runCycle() {
     Serial.println("[riesgo] alerta prioritaria activa");
   }
 
-  bool must_connect = syncDue(stamp, stamp_is_uptime);
+  bool must_connect = syncDue(elapsed_stamp);
+  Serial.printf("[sync] transcurrido=%lu ultimo_intento=%lu pendientes=%u fallos=%u toca=%s\n",
+                (unsigned long)elapsed_stamp, (unsigned long)last_sync_attempt_stamp,
+                (unsigned)Store::count(), (unsigned)failed_upload_cycles,
+                must_connect ? "si" : "no");
   if (risk_allowed && !must_connect) {
-    must_connect = alertSyncDue(stamp, stamp_is_uptime);
+    must_connect = alertSyncDue(elapsed_stamp);
     if (must_connect) Serial.println("[wifi] envio extraordinario por alerta");
   }
 
   if (must_connect) {
-    last_sync_attempt_stamp = stamp;
-    last_sync_was_uptime = stamp_is_uptime;
+    const uint32_t pending_before = Store::count();
+    int cycle_status = 0;
+    last_sync_attempt_stamp = elapsed_stamp;
     has_attempted_sync = true;
 
     if (WiFiSync::connect(kWifiConnectTimeoutMs)) {
@@ -175,10 +182,26 @@ void runCycle() {
         Serial.println("[wifi] reintento de subida");
         delay(500);
       }
+      cycle_status = WiFiSync::lastUploadStatus();
       WiFiSync::fetchConfig(kWifiHttpTimeoutMs);
       WiFiSync::disconnect();
     } else {
       Serial.println("[wifi] sin conexion: se conservan las lecturas");
+    }
+    failed_upload_cycles = SyncPolicy::failedCycles(failed_upload_cycles,
+      pending_before, Store::count(), cycle_status);
+    Serial.printf("[sync] HTTP=%d cola=%u->%u ciclos_sin_progreso=%u\n", cycle_status,
+                  (unsigned)pending_before, (unsigned)Store::count(),
+                  (unsigned)failed_upload_cycles);
+    if (SyncPolicy::restartDue(failed_upload_cycles)) {
+      // La cola LittleFS no se borra. Persistir tiempo despierto antes del reset.
+      Serial.println("[sync] tres ciclos sin progreso: reinicio de recuperacion, cola conservada");
+      TimeKeeper::advance(0);
+      failed_upload_cycles = 0;
+      has_attempted_sync = false;
+      Serial.flush();
+      delay(300);
+      ESP.restart();
     }
   }
 
@@ -209,11 +232,13 @@ void runCycle() {
 
 void setup() {
   Serial.begin(115200);
+#if TECRURAL_SERIAL_WAIT_MS > 0
   const uint32_t serial_wait_started = millis();
-  while (!Serial && millis() - serial_wait_started < 5000) {
+  while (!Serial && millis() - serial_wait_started < TECRURAL_SERIAL_WAIT_MS) {
     delay(10);
   }
   delay(200);
+#endif
 
 #if TECRURAL_BOOT_DIAG_MS > 0
   {

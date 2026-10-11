@@ -26,10 +26,13 @@ void setSystemClock(uint32_t epoch) {
 // Reloj de respaldo: hora de compilacion del firmware (__DATE__/__TIME__).
 // Esta red bloquea NTP (UDP/123); sin un reloj valido, mbedTLS rechaza el
 // certificado TLS de Vercel por "aun no valido" y la subida falla.
-uint32_t makeEpoch(int year, int month, int day, int hour, int minute, int second) {
-  static const int kMonthDays[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+constexpr uint32_t makeEpoch(int year, int month, int day, int hour, int minute, int second) {
+  const int kMonthDays[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
   const long y = year - 1970;
-  long days = y * 365 + (y + 3) / 4 + kMonthDays[month - 1] + (day - 1);
+  // Bisiestos transcurridos desde 1970 hasta el ano anterior: (y + 1) / 4.
+  // La variante (y + 3) / 4 sumaba un dia de mas en anos year%4 == 0 o 3
+  // (p. ej. todo 2027 y 2028 habria ido con +1 dia).
+  long days = y * 365 + (y + 1) / 4 + kMonthDays[month - 1] + (day - 1);
   if (month > 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) days += 1;
   return (uint32_t)(days * 86400L + hour * 3600L + minute * 60L + second);
 }
@@ -57,6 +60,19 @@ time_t buildEpoch() {
   return (time_t)(makeEpoch(year, month, day, hour, minute, second) -
                   (uint32_t)(kBuildTzOffsetHours * 3600));
 }
+
+// Fechas de referencia verificadas contra el epoch Unix. El caso de 2027
+// protege especificamente la correccion de bisiestos (antes daba +1 dia).
+static_assert(makeEpoch(1970, 1, 1, 0, 0, 0) == 0UL, "epoch base");
+static_assert(makeEpoch(2024, 3, 1, 0, 0, 0) == 1709251200UL, "2024 bisiesto, marzo");
+static_assert(makeEpoch(2025, 6, 15, 0, 0, 0) == 1749945600UL, "2025");
+static_assert(makeEpoch(2026, 10, 11, 0, 0, 0) == 1791676800UL, "2026");
+static_assert(makeEpoch(2027, 1, 1, 0, 0, 0) == 1798761600UL, "2027 antes bisiesto-correccion fallaba");
+static_assert(makeEpoch(2027, 6, 15, 0, 0, 0) == 1813017600UL, "2027");
+static_assert(makeEpoch(2028, 1, 1, 0, 0, 0) == 1830297600UL, "2028 antes bisiesto-correccion fallaba");
+static_assert(makeEpoch(2028, 3, 1, 12, 30, 0) == 1835526600UL, "2028 bisiesto con hora");
+// Limitacion conocida: la formula es juliana (cada 4 anos), asi que trata 2100
+// como bisiesto y a partir del 01/03/2100 iria con +1 dia. Fuera de horizonte.
 
 }  // namespace
 
@@ -196,7 +212,9 @@ void advance(uint32_t sleep_seconds) {
     base_epoch = now() + sleep_seconds;
   }
   boot_millis = millis();
-  uptime_base = up;
+  // El contador debe incluir el sueño: millis() vuelve a cero en cada despertar.
+  // Sin esto no sirve para programar sincronizaciones independientes del reloj UTC.
+  uptime_base = up + sleep_seconds;
 
   Store::saveTimeState({ref_epoch, base_epoch, uptime_base});
 }

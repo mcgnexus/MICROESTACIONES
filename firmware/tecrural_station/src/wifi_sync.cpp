@@ -11,7 +11,6 @@
 
 namespace {
 
-uint32_t failure_counter = 0;
 int last_upload_status = 0;
 constexpr size_t kMaxPayloadBytes = 6000;
 volatile uint8_t last_disconnect_reason = 0;
@@ -21,6 +20,23 @@ volatile uint8_t last_disconnect_reason = 0;
 // estado del que solo sale reiniciando el chip por completo.
 RTC_DATA_ATTR uint8_t consecutive_wifi_failures = 0;
 constexpr uint8_t kMaxConsecutiveWifiFailures = 8;
+
+// Instante (tiempo transcurrido, incluye sleep) de la ultima conexion exitosa.
+// Si fue hace poco, el hotspot del movil sigue estando ahi con altisima
+// probabilidad: se salta el escaneo y se asocia directo. Si el hotspot acabe de
+// desaparecer, este ciclo paga un intento directo corto (~8 s) y a partir del
+// siguiente vuelve al escaneo barato.
+RTC_DATA_ATTR uint32_t last_connect_ok_stamp = 0;
+RTC_DATA_ATTR bool has_connect_ok = false;
+constexpr uint32_t kFastPathMinWindowS = 900;
+constexpr uint32_t kFastPathAttemptMs = 8000;
+
+bool scanSkipDue(uint32_t now_stamp) {
+  if (!has_connect_ok) return false;
+  const uint32_t window_s = 2 * ConfigStore::current().sync_interval_s;
+  return (uint32_t)(now_stamp - last_connect_ok_stamp) <
+         (window_s > kFastPathMinWindowS ? window_s : kFastPathMinWindowS);
+}
 
 void noteWifiFailure() {
   if (consecutive_wifi_failures < 255) ++consecutive_wifi_failures;
@@ -113,22 +129,32 @@ bool connect(uint32_t timeout_ms) {
 
   // El punto de acceso suele ser un hotspot movil que desaparece al quedarse
   // inactivo. Si el SSID no esta en el aire no tiene sentido esperar el timeout
-  // completo de asociacion: se listan las redes y se sale enseguida.
-  const int visible = WiFi.scanNetworks();
-  bool ssid_visible = false;
-  Serial.printf("[wifi] %d redes visibles en 2.4 GHz\n", visible);
-  for (int i = 0; i < visible; ++i) {
-    Serial.printf("    SSID \"%s\" (%d dBm)%s\n", WiFi.SSID(i).c_str(),
-                  (int)WiFi.RSSI(i),
-                  WiFi.SSID(i) == WIFI_SSID ? "  <- COINCIDE con SSID configurado" : "");
-    if (WiFi.SSID(i) == WIFI_SSID) ssid_visible = true;
-  }
-  WiFi.scanDelete();
-  if (!ssid_visible) {
-    failure_counter++;
-    Serial.println("[wifi] SSID configurado no visible; no se intenta asociar");
-    noteWifiFailure();
-    return false;
+  // completo de asociacion: se listan las redes y se sale enseguida. Pero si la
+  // ultima conexion exitosa fue hace poco, se salta el escaneo (~2-4 s) y se
+  // asocia directo con un presupuesto corto.
+  const uint32_t now_stamp = TimeKeeper::uptimeSeconds();
+  const bool fast_path = scanSkipDue(now_stamp);
+  if (fast_path) {
+    Serial.println("[wifi] conexion reciente: se omite el escaneo, asociacion directa");
+  } else {
+    // 120 ms por canal: escaneo completo ~1,6 s (por defecto serian ~4 s).
+    // Suficiente para un hotspot a pocos metros.
+    const int visible = WiFi.scanNetworks(false, false, false, 120);
+    bool ssid_visible = false;
+    Serial.printf("[wifi] %d redes visibles en 2.4 GHz\n", visible);
+    for (int i = 0; i < visible; ++i) {
+      Serial.printf("    SSID \"%s\" (%d dBm)%s\n", WiFi.SSID(i).c_str(),
+                    (int)WiFi.RSSI(i),
+                    WiFi.SSID(i) == WIFI_SSID ? "  <- COINCIDE con SSID configurado" : "");
+      if (WiFi.SSID(i) == WIFI_SSID) ssid_visible = true;
+    }
+    WiFi.scanDelete();
+    if (!ssid_visible) {
+      has_connect_ok = false;
+      Serial.println("[wifi] SSID configurado no visible; no se intenta asociar");
+      noteWifiFailure();
+      return false;
+    }
   }
 
   // Causa clasica de "veo la red pero no asocio" en el ESP32-C3: potencia de
@@ -136,15 +162,18 @@ bool connect(uint32_t timeout_ms) {
   // tramas de asociacion. Se reduce la potencia y se reintenta hasta 3 veces.
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
-  uint32_t start = millis();
+  // En ruta rápida el presupuesto de asociacion se acota: si el hotspot acabe de
+  // desaparecer, no tiene sentido quemar el timeout completo (25 s) despierto.
+  const uint32_t attempt_budget_ms = fast_path ? kFastPathAttemptMs : timeout_ms;
+  const uint32_t start = millis();
   bool connected = false;
-  for (int attempt = 0; attempt < 3 && !connected && millis() - start < timeout_ms; ++attempt) {
+  for (int attempt = 0; attempt < 3 && !connected && millis() - start < attempt_budget_ms; ++attempt) {
     if (attempt > 0) {
       WiFi.disconnect(false);
       delay(150);
     }
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED && millis() - start < timeout_ms) {
+    while (WiFi.status() != WL_CONNECTED && millis() - start < attempt_budget_ms) {
       delay(100);
     }
     connected = WiFi.status() == WL_CONNECTED;
@@ -156,12 +185,13 @@ bool connect(uint32_t timeout_ms) {
                     (unsigned)consecutive_wifi_failures);
     }
     consecutive_wifi_failures = 0;
+    last_connect_ok_stamp = now_stamp;
+    has_connect_ok = true;
     Serial.printf("[wifi] conectado en %lus, IP %s, gw %s, rssi %d\n",
                   (millis() - start) / 1000, WiFi.localIP().toString().c_str(),
                   WiFi.gatewayIP().toString().c_str(), (int)WiFi.RSSI());
     return true;
   }
-  failure_counter++;
   Serial.printf("[wifi] fallo de conexion tras %lus (motivo %u: %s)\n",
                 (millis() - start) / 1000, (unsigned)last_disconnect_reason,
                 disconnectReasonText(last_disconnect_reason));
@@ -212,7 +242,8 @@ bool uploadBatch(uint32_t timeout_ms) {
       continue;
     }
     JsonObject o = arr.add<JsonObject>();
-    o["device_id"] = DEVICE_ID;
+    // device_id omitido: la identidad real va en el token Bearer y el servidor
+    // inserta con ella. Quitarlo ahorra ~22 bytes por registro de lote.
     o["sequence"] = rec.sequence;
     o["ts"] = rec.ts;
     o["quality"] = rec.quality;
@@ -257,6 +288,12 @@ bool uploadBatch(uint32_t timeout_ms) {
       delay(1000);
     }
   }
+  if (!dns_ok) {
+    // Código local de diagnóstico, no respuesta HTTP del servidor.
+    last_upload_status = -100;
+    Serial.println("[wifi] DNS agotado: no se inicia HTTPS, cola conservada (codigo local -100)");
+    return false;
+  }
 
   WiFiClientSecure tls;
   tls.useBuiltinCACertBundle();
@@ -264,7 +301,6 @@ bool uploadBatch(uint32_t timeout_ms) {
   http.setConnectTimeout((int32_t)timeout_ms);
   http.setTimeout((uint16_t)timeout_ms);
   if (!http.begin(tls, apiUrl(SERVER_PATH_UPLOAD))) {
-    failure_counter++;
     Serial.println("[wifi] no se pudo inicializar HTTPS para subir el lote");
     return false;
   }
@@ -281,7 +317,6 @@ bool uploadBatch(uint32_t timeout_ms) {
   http.end();
 
   if (code < 200 || code >= 300) {
-    failure_counter++;
     Serial.printf("[wifi] envio fallo (HTTP %d) tras %lu ms, tls=%d (%s), se conservan %u lecturas\n",
                   code, (unsigned long)post_ms, tls_err, tls_msg, (unsigned)Store::count());
     if (response.length() > 0) {
@@ -296,7 +331,6 @@ bool uploadBatch(uint32_t timeout_ms) {
 
   JsonDocument ack_doc;
   if (deserializeJson(ack_doc, response)) {
-    failure_counter++;
     Serial.printf("[wifi] respuesta sin confirmacion legible (HTTP %d), se conservan %u lecturas\n",
                   code, (unsigned)Store::count());
     return false;
@@ -304,7 +338,6 @@ bool uploadBatch(uint32_t timeout_ms) {
 
   JsonObject ack = ack_doc.as<JsonObject>();
   if (ack.isNull() || !ack["ack_through"].is<uint32_t>()) {
-    failure_counter++;
     Serial.printf("[wifi] servidor no confirmo secuencias (HTTP %d), se conservan %u lecturas\n",
                   code, (unsigned)Store::count());
     return false;
@@ -312,7 +345,6 @@ bool uploadBatch(uint32_t timeout_ms) {
 
   const uint32_t acked_through = ack["ack_through"].as<uint32_t>();
   if (acked_through != last_sent_sequence) {
-    failure_counter++;
     Serial.printf("[wifi] confirmacion inesperada (%lu; esperado %lu), se conservan las lecturas\n",
                   (unsigned long)acked_through, (unsigned long)last_sent_sequence);
     return false;
@@ -338,7 +370,6 @@ bool fetchConfig(uint32_t timeout_ms) {
   http.setConnectTimeout((int32_t)timeout_ms);
   http.setTimeout((uint16_t)timeout_ms);
   if (!http.begin(tls, apiUrl(SERVER_PATH_CONFIG))) {
-    failure_counter++;
     Serial.println("[wifi] no se pudo inicializar HTTPS para consultar la configuracion");
     return false;
   }
@@ -348,7 +379,6 @@ bool fetchConfig(uint32_t timeout_ms) {
   int code = http.GET();
   if (code != 200) {
     http.end();
-    failure_counter++;
     Serial.printf("[wifi] config no disponible (HTTP %d)\n", code);
     return false;
   }
@@ -368,14 +398,9 @@ bool fetchConfig(uint32_t timeout_ms) {
   if (ok) {
     Serial.println("[wifi] configuracion remota aplicada");
   } else {
-    failure_counter++;
     Serial.println("[wifi] configuracion remota rechazada (validacion)");
   }
   return ok;
-}
-
-uint32_t failures() {
-  return failure_counter;
 }
 
 // Ultimo codigo HTTP devuelto por la subida (0 si no hubo respuesta util).

@@ -417,7 +417,9 @@ async function confirmConfigVersion(client, deviceId, version) {
 app.post('/api/measurements', requireDevice, async (req, res) => {
   const parsed = z.array(measurementSchema).min(1).max(32).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_measurements', details: parsed.error.issues });
-  if (parsed.data.some((record) => record.device_id !== req.deviceId)) {
+  // device_id es opcional (la identidad real es la del token); si un registro
+  // lo trae, debe coincidir. El firmware nuevo lo omite, el antiguo lo envia.
+  if (parsed.data.some((record) => record.device_id !== undefined && record.device_id !== req.deviceId)) {
     return res.status(403).json({ error: 'device_identity_mismatch' });
   }
   // Un registro sin ningun canal (sensor caido en ese ciclo) no se guarda, pero
