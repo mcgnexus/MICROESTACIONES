@@ -87,12 +87,22 @@ function leadRow(lead) {
     lead.cropOrLivestock,
     INTEREST_LABELS[lead.interest] || lead.interest,
   ].filter(Boolean).join(' · ');
+  // La modalidad la declara el origen: una consulta de instalación no depende
+  // de que el visitante abriera el desplegable. Los registros anteriores al
+  // contrato por canales se etiquetan como legado, sin reinterpretarlos.
+  const legacy = !lead.requestType && !lead.preferredChannel;
+  const requestType = lead.requestType === 'installation_info'
+    ? '<span class="badge badge-valid">Consulta de instalación</span>'
+    : lead.requestType === 'pilot' ? '<span class="badge badge-muted">Piloto</span>'
+      : legacy ? '<span class="badge badge-muted">Legado · sin modalidad declarada</span>' : '';
+  const channelBadge = lead.preferredChannel
+    ? `<span class="badge badge-muted">${lead.preferredChannel === 'whatsapp' ? 'WhatsApp' : 'Email'}</span>` : '';
   const campaign = lead.campaign?.source || lead.campaign?.campaign
     ? `<div class="alert-detail">captación: ${escapeText([lead.campaign.source, lead.campaign.campaign].filter(Boolean).join(' · '))}</div>`
     : '';
   const followUp = lead.nextContactAt ? `<div class="alert-detail">próximo contacto: ${dateText(lead.nextContactAt)}</div>` : '';
   return `<tr>
-    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div>${campaign}</td>
+    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div>${requestType}${channelBadge}${campaign}</td>
     <td>${escapeText(lead.zone || '—')}<div class="alert-detail">${escapeText(detail || '—')}</div>${followUp}</td>
     <td>${dateText(lead.createdAt)}</td>
     <td><select data-lead-status="${lead.id}">${LEAD_STATUSES.map((status) =>

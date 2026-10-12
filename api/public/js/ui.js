@@ -174,12 +174,23 @@ export function verificationBadge(verification = {}) {
 const BATTERY = { ok: 'Batería correcta', low: 'Batería baja', critical: 'Batería crítica', unknown: 'Batería no medida' };
 export const batteryLabel = (level) => BATTERY[level] || 'Batería no medida';
 
-// Soporte telefónico público (llega en /api/v1/public-config al arrancar).
+// Soporte público (llega en /api/v1/public-config al arrancar). WhatsApp y
+// teléfono son números independientes: uno puede estar configurado y el otro no.
+export function whatsappLink(number) {
+  const digits = String(number || '').replace(/\D/g, '');
+  if (!digits) return '';
+  const message = 'Hola, me interesa una microestación TecRural para mi finca. Está en el municipio de…';
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+}
+
 export function supportText() {
   const phone = session.support?.supportPhone;
-  if (!phone) return '';
-  const tel = String(phone).replace(/[^\d+]/g, '');
-  return `¿Prefieres hablar? Llámanos al <a href="tel:${escapeText(tel)}">${escapeText(phone)}</a>.`;
+  const tel = phone ? String(phone).replace(/[^\d+]/g, '') : '';
+  const parts = [];
+  if (phone) parts.push(`¿Prefieres hablar? Llámanos al <a href="tel:${escapeText(tel)}">${escapeText(phone)}</a>.`);
+  const wa = whatsappLink(session.support?.supportWhatsapp);
+  if (wa) parts.push(`O <a href="${escapeText(wa)}" target="_blank" rel="noopener">escríbenos por WhatsApp</a> con tu municipio.`);
+  return parts.join(' ');
 }
 
 export function renderSupport(root = document) {

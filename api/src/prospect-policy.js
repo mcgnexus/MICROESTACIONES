@@ -6,6 +6,8 @@ export function filterProspects(rows, filters = {}) {
     && (!filters.status || r.status === filters.status)
     && (!filters.verified || r.verified === (filters.verified === 'yes'))
     && (!filters.permission || Object.values(r.commercial).some(Boolean) === (filters.permission === 'yes'))
+    && (!filters.request_type || r.requestType === filters.request_type)
+    && (!filters.preferred_channel || r.preferredChannel === filters.preferred_channel)
     && (!filters.installation || r.installationInterest));
 }
 export function authorizedExport(rows, channel) {

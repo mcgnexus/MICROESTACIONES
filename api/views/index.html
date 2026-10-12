@@ -167,7 +167,7 @@
         <a class="access-link" href="#/vias">Ver cómo empezar</a>
       </section>
 
-      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-title="Consultar una instalación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
+      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-request-type="installation_info" data-lead-title="Consultar una instalación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
 
       <section id="preguntas" class="landing-section">
         <p class="eyebrow">PREGUNTAS FRECUENTES</p>
@@ -205,7 +205,8 @@
       <form id="magic-form">
         <label>Correo electrónico<input name="email" type="email" autocomplete="email" required></label>
         <button type="submit">Enviar enlace de acceso</button>
-        <p class="hint">El acceso es gratuito y no requiere casillas adicionales.</p>
+        <label class="check"><input type="checkbox" name="newsletter"> Quiero recibir novedades y ofertas por email (opcional). Puedes darte de baja cuando quieras. Consulta la <a href="/privacidad">Política de privacidad</a>.</label>
+        <p class="hint">El acceso es gratuito y no requiere casillas adicionales: sin marcar la casilla solo verificamos tu correo.</p>
         <p id="magic-status" class="hint" role="status" aria-live="polite"></p>
       </form>
       <div id="magic-sent" class="hidden">

@@ -30,7 +30,7 @@ import analyticsRouter, { countMetric, markMetric, metricFailure } from './analy
 import { PUBLIC_PAGES, publicMetadata, siteOrigin, sitemapXml } from './seo.js';
 import { completedAgriculturalProfile } from './analytics-policy.js';
 import {
-  leadSchema, isHoneypot, leadRateLimitKeys, leadColumns,
+  leadSchema, isHoneypot, leadRateLimitKeys, leadColumns, leadContactKey,
   commercialConsentChannels, serviceConsentChannels,
 } from './leads.js';
 import { enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
@@ -221,12 +221,19 @@ app.post('/api/auth/magic/verify', csrfGuard, async (req, res) => {
           WHERE id = ${account.subscriber.id}`;
       }
       // La casilla de novedades se aplicó al pedir el enlace; aquí se registra
-      // como consentimiento vigente con la versión actual del texto.
+      // como consentimiento vigente con la versión actual del texto. Salvo que
+      // el permiso estuviera retirado: un enlace antiguo no vuelve a conceder
+      // lo que la persona revocó después de pedirlo.
       if (link.commercialConsent) {
-        await recordConsent(tx, {
-          subscriberId: account.subscriber.id, purpose: 'commercial', channel: 'email',
-          action: 'granted', source: 'magic_link', ip, userAgent,
-        });
+        const [lastConsent] = await tx`SELECT action FROM consent_records
+          WHERE subscriber_id = ${account.subscriber.id} AND purpose = 'commercial' AND channel = 'email'
+          ORDER BY recorded_at DESC, id DESC LIMIT 1`;
+        if (lastConsent?.action !== 'revoked') {
+          await recordConsent(tx, {
+            subscriberId: account.subscriber.id, purpose: 'commercial', channel: 'email',
+            action: 'granted', source: 'magic_link', ip, userAgent,
+          });
+        }
       }
       await audit(tx, req, 'access.magic_link', 'subscriber', String(account.subscriber.id),
         null, { created: account.status === 'created', return_path: link.returnPath });
@@ -251,28 +258,36 @@ app.post('/api/auth/logout', async (req, res) => {
 });
 
 // Captación pública de fincas: el CTA principal de la web llega aquí sin sesión.
-// Se limita por IP y teléfono, y el campo trampa descarta envíos automáticos sin
-// delatar el filtro. El consentimiento es obligatorio en el contrato.
+// Se limita por IP y contacto (email o WhatsApp), y el campo trampa descarta
+// envíos automáticos sin delatar el filtro. El consentimiento es obligatorio.
 app.post('/api/v1/leads', async (req, res) => {
   const parsed = leadSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
   if (isHoneypot(parsed.data)) return res.status(201).json({ received: true });
-  const keys = leadRateLimitKeys(req.ip || req.socket.remoteAddress, parsed.data.phone);
+  const keys = leadRateLimitKeys(req.ip || req.socket.remoteAddress, parsed.data);
   if (await consumeLoginAttempt(sql, keys, 5)) return res.status(429).json({ error: 'too_many_requests' });
   const lead = leadColumns(parsed.data);
   const ip = req.ip || req.socket.remoteAddress || null;
   const userAgent = String(req.get('user-agent') || '').slice(0, 200) || null;
   // El alta y sus consentimientos se guardan juntos: la solicitud (servicio) es
   // obligatoria; las novedades y ofertas solo si la casilla venía marcada.
+  // La deduplicación se apoya en el canal y el contacto normalizado, no solo en
+  // el nombre: dos personas distintas con el mismo nombre no colisionan. Solo se
+  // comparan los contactos informados, sin casar NULL con NULL.
+  const contactKey = `lead:${leadContactKey(parsed.data) ?? 'sin-contacto'}`;
+  const byPhone = lead.phone ? sql`phone = ${lead.phone}` : null;
+  const byEmail = lead.email ? sql`email = ${lead.email}` : null;
+  const sameContact = byPhone && byEmail ? sql`(${byPhone} OR ${byEmail})`
+    : (byPhone || byEmail || sql`false`);
   const inserted = await sql.begin(async (tx) => {
-    await tx`SELECT pg_advisory_xact_lock(hashtext(${`lead:${lead.phone}`}))`;
-    const [duplicate] = await tx`SELECT id FROM farm_leads WHERE phone = ${lead.phone}
-      AND created_at > now() - interval '24 hours' AND name = ${lead.name}
-      AND email IS NOT DISTINCT FROM ${lead.email} AND interest IS NOT DISTINCT FROM ${lead.interest}`;
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${contactKey}))`;
+    const [duplicate] = await tx`SELECT id FROM farm_leads
+      WHERE created_at > now() - interval '24 hours' AND name = ${lead.name}
+        AND ${sameContact}`;
     if (duplicate) return false;
-    const [created] = await tx`INSERT INTO farm_leads (name, phone, email, activity, zone, crop_or_livestock, interest,
+    const [created] = await tx`INSERT INTO farm_leads (name, preferred_channel, request_type, phone, email, activity, zone, crop_or_livestock, interest,
         notes, consent, consent_at, source, campaign)
-      VALUES (${lead.name}, ${lead.phone}, ${lead.email}, ${lead.activity}, ${lead.zone},
+      VALUES (${lead.name}, ${lead.preferred_channel}, ${lead.request_type}, ${lead.phone}, ${lead.email}, ${lead.activity}, ${lead.zone},
         ${lead.crop_or_livestock}, ${lead.interest}, ${lead.notes}, true, now(), ${lead.source},
         ${tx.json(lead.campaign)}) RETURNING id`;
     for (const channel of serviceConsentChannels(parsed.data)) {
@@ -290,7 +305,9 @@ app.post('/api/v1/leads', async (req, res) => {
     const subject = { leadId: inserted, acquisition: lead.campaign };
     await markMetric(sql, 'access_requested', subject).catch(metricFailure);
     if (parsed.data.commercial_consent) await markMetric(sql, 'commercial_authorized', subject).catch(metricFailure);
-    if (lead.interest === 'futura_instalacion') await markMetric(sql, 'installation_interest', subject).catch(metricFailure);
+    // El interés en instalación lo declara la modalidad del envío: una consulta
+    // desde la acción de finca cuenta aunque no se abra el desplegable.
+    if (lead.request_type === 'installation_info') await markMetric(sql, 'installation_interest', subject).catch(metricFailure);
     if (completedAgriculturalProfile({ municipality: lead.zone, activity: lead.activity, cropOrLivestock: lead.crop_or_livestock, interest: lead.interest })) {
       await markMetric(sql, 'agricultural_profile_completed', subject).catch(metricFailure);
     }
@@ -1053,6 +1070,24 @@ if (!isServerless) {
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const siteUrl = siteOrigin(process.env.PUBLIC_SITE_URL);
+
+// Enlace de WhatsApp de contacto: número comercial propio (SUPPORT_WHATSAPP),
+// que no se supone igual al teléfono de voz. Sin número configurado, sin enlace.
+export const WHATSAPP_MESSAGE = 'Hola, me interesa una microestación TecRural para mi finca. Está en el municipio de…';
+
+export function supportWhatsappLink(env = process.env) {
+  const digits = String(env.SUPPORT_WHATSAPP || '').replace(/\D/g, '');
+  if (!digits) return null;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`;
+}
+
+const supportWhatsappBlock = () => {
+  const url = supportWhatsappLink();
+  if (!url) return '';
+  return `<p><a class="cta secondary" href="${url}" target="_blank" rel="noopener">Escribir por WhatsApp</a></p>
+  <p class="hint">El mensaje se abre redactado: completa tu municipio y envíalo.</p>`;
+};
+
 // El HTML fuente vive en views/ (fuera de public/ para que Vercel no lo sirva
 // estático en '/' sin las referencias con hash). El build lo procesa a
 // public/dist/index.html; sin build, se sirve el fuente tal cual.
@@ -1070,7 +1105,9 @@ const renderPage = async (file) => {
   return html
     .replaceAll('__SITE_URL__', siteUrl)
     .replaceAll('__SUPPORT_PHONE__', process.env.SUPPORT_PHONE || '')
-    .replaceAll('__SUPPORT_WHATSAPP__', process.env.SUPPORT_WHATSAPP || '');
+    .replaceAll('__SUPPORT_WHATSAPP__', process.env.SUPPORT_WHATSAPP || '')
+    // Bloque condicional: sin número configurado, el marcador desaparece.
+    .replaceAll('<!--SUPPORT_WHATSAPP-->', supportWhatsappBlock());
 };
 
 // SEO: robots y sitemap con el dominio real del despliegue.

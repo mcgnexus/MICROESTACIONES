@@ -1,0 +1,8 @@
+import{d,e as s}from"./chunk-IDTT5QG6.js";var m={medido:"valid",aceptada:"valid",rejected:"invalid",forecast:"warn",calculated:"muted",simulated:"muted",status:"muted"},i={medido:"Medido",forecast:"Previsi\xF3n",calculated:"Calculado",simulated:"Simulaci\xF3n",status:"Estado"},c={medido:"Medici\xF3n directa de la microestaci\xF3n. Aceptada por los controles autom\xE1ticos de rango, marcas del equipo y hora: eso no demuestra calibraci\xF3n ni exactitud.",forecast:"Previsi\xF3n de un proveedor externo. A\xFAn no ha ocurrido y no procede de esta estaci\xF3n.",calculated:"Valor derivado por una f\xF3rmula a partir de otros datos. No es una observaci\xF3n.",simulated:"Valor ilustrativo de la demostraci\xF3n. No procede de ninguna estaci\xF3n ni finca existente.",status:"Estado observado de la estaci\xF3n o del canal. No es una previsi\xF3n."},g=a=>({aemet:"AEMET",openmeteo:"Open-Meteo",open_meteo:"Open-Meteo"})[String(a||"").toLowerCase()]||"";function v(a,{provider:o=null,observedAt:e=null,extra:n=""}={}){let t=i[a]?a:"status",r=t==="forecast"?g(o):"",l=`${i[t]}${r?` ${r}`:""}`,u=e?` \xB7 ${s(e)}`:"",p=`${c[t]}${u}${n?` ${n}`:""}`;return`<span class="badge badge-${m[t]||"muted"} origin-badge" data-origin="${t}"
+    title="${d(p)}">${d(l)}</span>`}function f(a){let o=(a||[]).filter(e=>e&&i[e.kind]);return o.length<2?"":`<details class="origin-legend">
+    <summary>Qu\xE9 significa cada etiqueta</summary>
+    <dl>${o.map(e=>`<div>
+      <dt>${v(e.kind,{provider:e.provider})}</dt>
+      <dd>${d(e.text||c[e.kind])}</dd>
+    </div>`).join("")}</dl>
+  </details>`}export{v as a,f as b};

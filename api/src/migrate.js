@@ -566,6 +566,30 @@ const upgrades = [
    EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
   `CREATE INDEX IF NOT EXISTS audit_logs_actor_idx ON audit_logs(actor_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, target_id, created_at DESC)`,
+
+  // Cambio 5: el contacto de la solicitud puede ser email o WhatsApp. Uno de
+  // los dos es obligatorio y el canal elegido se guarda para responder ahí.
+  `ALTER TABLE farm_leads ALTER COLUMN phone DROP NOT NULL`,
+  `ALTER TABLE farm_leads ADD COLUMN IF NOT EXISTS preferred_channel text CHECK (preferred_channel IS NULL OR preferred_channel IN ('email','whatsapp'))`,
+  `DO $$ BEGIN
+     ALTER TABLE farm_leads ADD CONSTRAINT farm_leads_contact_check CHECK (phone IS NOT NULL OR email IS NOT NULL);
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+
+  // Cambio 6: modalidad declarada de la solicitud y actividad sin valor por
+  // defecto. Las filas antiguas quedan con request_type NULL (desconocida):
+  // no se reconstruye una intención que nunca se declaró.
+  `ALTER TABLE farm_leads ADD COLUMN IF NOT EXISTS request_type text CHECK (request_type IS NULL OR request_type IN ('installation_info','pilot'))`,
+  `ALTER TABLE farm_leads ALTER COLUMN activity DROP NOT NULL`,
+  `ALTER TABLE farm_leads ALTER COLUMN activity DROP DEFAULT`,
+
+  // Cambio 10: el contacto no solo debe existir, debe tener valor real. Los
+  // registros antiguos conservan su teléfono obligatorio y siguen cumpliendo.
+  `ALTER TABLE farm_leads DROP CONSTRAINT IF EXISTS farm_leads_contact_check`,
+  `DO $$ BEGIN
+     ALTER TABLE farm_leads ADD CONSTRAINT farm_leads_contact_check
+       CHECK (coalesce(nullif(btrim(phone),''), nullif(btrim(email),'')) IS NOT NULL);
+   EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS farm_leads_contact_idx ON farm_leads (coalesce(phone,''), coalesce(email,''), created_at DESC)`,
 ];
 
 // Semilla de datos derivados: estado operativo y versión 1 de configuración.

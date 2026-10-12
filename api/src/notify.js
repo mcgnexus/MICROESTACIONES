@@ -106,9 +106,9 @@ export function renderVerificationMessage({ code, ttlMinutes = 10 }) {
 // Confirmación al visitante que deja sus datos: no hace falta crear cuenta.
 export function renderLeadConfirmation({ name }) {
   const body = [
-    `${name ? `${name}, ` : ''}hemos recibido tu solicitud de piloto de TecRural.`,
+    `${name ? `${name}, ` : ''}hemos recibido tu solicitud en TecRural.`,
     '',
-    'No necesitas crear ninguna cuenta todavía. Te contactaremos por WhatsApp o teléfono para conocer tu finca y explicarte los siguientes pasos.',
+    'No necesitas crear ninguna cuenta todavía. Te contactaremos por el canal que hayas elegido para conocer tu finca y explicarte los siguientes pasos.',
     '',
     'Si no has solicitado esto, puedes ignorar este mensaje.',
   ].join('\n');
@@ -116,19 +116,24 @@ export function renderLeadConfirmation({ name }) {
 }
 
 // Aviso interno: resume la solicitud para que administración contacte al lead.
-export function renderLeadNotice({ name, phone, email, activity, zone, interest, notes }) {
+// El contacto puede ser solo email o solo WhatsApp: cada línea aparece si hay dato.
+export function renderLeadNotice({ name, preferred_channel, request_type, phone, email, activity, zone, interest, notes }) {
+  const CHANNEL_LABELS = { email: 'Email', whatsapp: 'WhatsApp' };
+  const REQUEST_LABELS = { installation_info: 'Consulta de instalación', pilot: 'Entrada en el piloto' };
   const lines = [
-    'Nueva solicitud de piloto en la web.',
+    'Nueva solicitud en la web.',
     '',
     `Nombre: ${name}`,
-    `Teléfono: ${phone}`,
+    request_type ? `Modalidad: ${REQUEST_LABELS[request_type] || request_type}` : null,
+    preferred_channel ? `Canal preferido: ${CHANNEL_LABELS[preferred_channel] || preferred_channel}` : null,
+    phone ? `Teléfono (WhatsApp): ${phone}` : null,
     email ? `Email: ${email}` : null,
+    zone ? `Municipio: ${zone}` : null,
     activity ? `Actividad: ${activity}` : null,
-    zone ? `Zona: ${zone}` : null,
     interest ? `Interés principal: ${interest}` : null,
     notes ? `Notas: ${notes}` : null,
   ].filter(Boolean);
-  return { subject: `Nueva solicitud de piloto · ${name}`, body: lines.join('\n') };
+  return { subject: `Nueva solicitud · ${name}`, body: lines.join('\n') };
 }
 
 // Encola la confirmación al visitante (si dejó email) y el aviso interno, que va

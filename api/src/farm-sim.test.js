@@ -203,6 +203,7 @@ test('the post-exploration prompt asks for municipality, crop or livestock and f
   assert.match(source, /municipio, tu cultivo o tu ganado/);
   assert.match(source, /interés en una futura instalación/);
   assert.match(source, /data-lead-embed/, 'reutiliza el formulario público de captación');
-  assert.match(source, /futura_instalacion/, 'precarga el interés de futura instalación');
+  // La exploración declara la modalidad, no el problema agronómico.
+  assert.match(source, /request_type"\]\[value="installation_info"\]/, 'precarga la modalidad de instalación');
   assert.match(source, /no programa ninguna instalación/);
 });

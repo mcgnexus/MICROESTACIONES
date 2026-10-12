@@ -427,8 +427,10 @@ export function mountFarmSimulation(root = document) {
   const revealLead = () => {
     if (state.explored || !leadBlock) return;
     state.explored = true;
-    const interest = leadBlock.querySelector('select[name="interest"]');
-    if (interest) interest.value = 'futura_instalacion';
+    // La exploración declara interés de instalación: lo marca la modalidad del
+    // envío, no el desplegable de problemas agronómicos.
+    const requestType = leadBlock.querySelector('input[name="request_type"][value="installation_info"]');
+    if (requestType) requestType.checked = true;
     leadBlock.classList.remove('hidden');
   };
 

@@ -7,11 +7,13 @@ import { markMetric, metricFailure } from './analytics.js';
 import { csvCell } from './csv.js';
 import { revokeCommercialConsent } from './consent.js';
 import { COMMERCIAL_STATES, filterProspects, authorizedExport } from './prospect-policy.js';
+import { REQUEST_TYPES } from './leads.js';
 
 async function list() {
   const rows = await sql`SELECT 'subscriber' AS kind, s.id::text AS id, s.email AS name, s.email,
       (SELECT address FROM subscriber_contacts c WHERE c.subscriber_id = s.id AND channel = 'whatsapp' LIMIT 1) AS whatsapp,
-      p.municipality, p.activity, p.interest, s.email_verified_at IS NOT NULL AS verified,
+      p.municipality, p.activity, p.interest, NULL AS preferred_channel, NULL AS request_type,
+      s.email_verified_at IS NOT NULL AS verified,
       s.active AS account_active, s.acquisition AS origin, s.created_at,
       t.status, t.notes, t.next_action, t.next_action_at,
       coalesce(t.installation_interest, p.interest = 'futura_instalacion') AS installation_interest, t.retain_until
@@ -19,9 +21,10 @@ async function list() {
     LEFT JOIN prospect_tracking t ON t.subscriber_id = s.id
     UNION ALL
     SELECT 'lead', l.id::text, l.name, l.email, l.phone, l.zone, l.activity, l.interest,
+      l.preferred_channel, l.request_type,
       false, NULL::boolean, jsonb_build_object('source', l.source, 'campaign', l.campaign), l.created_at,
       t.status, coalesce(t.notes, l.admin_notes), t.next_action, t.next_action_at,
-      coalesce(t.installation_interest, l.interest = 'futura_instalacion'), t.retain_until
+      coalesce(t.installation_interest, l.request_type = 'installation_info', l.interest = 'futura_instalacion'), t.retain_until
     FROM farm_leads l LEFT JOIN prospect_tracking t ON t.lead_id = l.id`;
   const consents = await sql`SELECT DISTINCT ON (subscriber_id, lead_id, channel)
     subscriber_id, lead_id, channel, action FROM consent_records WHERE purpose = 'commercial'
@@ -39,7 +42,8 @@ const router = Router();
 const filtersSchema = z.object({ municipality: z.string().max(160).optional(), activity: z.string().max(40).optional(),
   interest: z.string().max(40).optional(), status: z.enum(COMMERCIAL_STATES).optional(),
   verified: z.enum(['yes', 'no']).optional(), permission: z.enum(['yes', 'no']).optional(),
-  installation: z.literal('yes').optional(), channel: z.enum(['email', 'whatsapp']).optional() }).strict();
+  installation: z.literal('yes').optional(), channel: z.enum(['email', 'whatsapp']).optional(),
+  request_type: z.enum(REQUEST_TYPES).optional(), preferred_channel: z.enum(['email', 'whatsapp']).optional() }).strict();
 router.get('/', async (req, res) => {
   const parsed = filtersSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_filters' });
@@ -51,8 +55,14 @@ router.get('/export', async (req, res) => {
   const rows = authorizedExport(filterProspects(await list(), parsed.data), parsed.data.channel);
   // Deduplicación por dirección del canal, aunque haya cuenta y solicitud.
   const unique = [...new Map(rows.map((r) => [r[parsed.data.channel].toLowerCase().replace(/\s/g, ''), r])).values()];
-  const csv = [['Nombre', 'Contacto', 'Municipio', 'Actividad', 'Interés', 'Estado'],
-    ...unique.map((r) => [r.name, r[parsed.data.channel], r.municipality, r.activity, r.interest, r.status])]
+  // Canal y modalidad se exportan; los registros antiguos van etiquetados como
+  // legado en vez de reinterpretarse con un canal que no declararon.
+  const REQUEST_LABELS = { installation_info: 'Consulta de instalación', pilot: 'Piloto' };
+  const CHANNEL_LABELS = { email: 'Email', whatsapp: 'WhatsApp' };
+  const csv = [['Nombre', 'Contacto', 'Municipio', 'Actividad', 'Interés', 'Canal preferido', 'Modalidad', 'Estado'],
+    ...unique.map((r) => [r.name, r[parsed.data.channel], r.municipality, r.activity, r.interest,
+      r.preferredChannel ? CHANNEL_LABELS[r.preferredChannel] : 'Legado', 
+      r.requestType ? REQUEST_LABELS[r.requestType] : 'Legado', r.status])]
     .map((row) => row.map(csvCell).join(',')).join('\r\n');
   await audit(sql, req, 'prospect.export', 'system', null, null, { filters: parsed.data, count: unique.length });
   res.set('Cache-Control', 'no-store').attachment('contactos-autorizados.csv').type('text/csv').send(`\uFEFF${csv}`);

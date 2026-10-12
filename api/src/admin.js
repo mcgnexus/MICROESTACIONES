@@ -9,7 +9,7 @@ import { hashPassword, randomToken } from './security.js';
 import { dispatchOutbox, sendWhatsApp, sendEmail } from './notify.js';
 import { runScheduledPasses, schedulerConfig, schedulerState, SCHEDULER_MIN_INTERVAL_MS } from './scheduler.js';
 import { httpLimits } from './http-limits.js';
-import { LEAD_STATUSES } from './leads.js';
+import { LEAD_STATUSES, REQUEST_TYPES } from './leads.js';
 import { SERVICE_STATUSES, servicePayload } from './services.js';
 import { runRetention } from './retention.js';
 import { MESSAGE_TTL_MINUTES } from './message-ttl.js';
@@ -251,12 +251,16 @@ router.patch('/pilot-requests/:subscriberId/:requestId', csrfGuard, async (req, 
 
 router.get('/leads', async (req, res) => {
   const status = LEAD_STATUSES.includes(req.query.status) ? req.query.status : null;
+  const requestType = REQUEST_TYPES.includes(req.query.request_type) ? req.query.request_type : null;
+  const preferredChannel = ['email', 'whatsapp'].includes(req.query.preferred_channel) ? req.query.preferred_channel : null;
   const [rows, commercial] = await Promise.all([
     sql`SELECT l.id::text AS id, l.id AS numeric_id, l.name, l.phone, l.email, l.activity, l.zone,
-        l.crop_or_livestock, l.interest, l.notes, l.admin_notes, l.consent, l.consent_at, l.status,
+        l.request_type, l.preferred_channel, l.crop_or_livestock, l.interest, l.notes, l.admin_notes, l.consent, l.consent_at, l.status,
         l.source, l.campaign, l.next_contact_at, l.created_at, l.updated_at
       FROM farm_leads l
-      ${status ? sql`WHERE l.status = ${status}` : sql``}
+      WHERE (${status}::text IS NULL OR l.status = ${status})
+        AND (${requestType}::text IS NULL OR l.request_type = ${requestType})
+        AND (${preferredChannel}::text IS NULL OR l.preferred_channel = ${preferredChannel})
       ORDER BY l.created_at DESC LIMIT 500`,
     commercialBySubject(),
   ]);
@@ -331,7 +335,7 @@ router.post('/leads/:id/activate', csrfGuard, async (req, res) => {
   if (!Number.isInteger(leadId) || leadId < 1) return res.status(400).json({ error: 'invalid_id' });
   const parsed = activateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
-  const [lead] = await sql`SELECT id::text AS id, name, phone, status, campaign, zone, activity, crop_or_livestock, interest FROM farm_leads WHERE id = ${leadId}`;
+  const [lead] = await sql`SELECT id::text AS id, name, phone, status, campaign, zone, activity, request_type, crop_or_livestock, interest FROM farm_leads WHERE id = ${leadId}`;
   if (!lead) return res.status(404).json({ error: 'lead_not_found' });
   const [existing] = await sql`SELECT id FROM subscribers WHERE email = ${parsed.data.email}`;
   if (existing) return res.status(409).json({ error: 'email_already_registered' });

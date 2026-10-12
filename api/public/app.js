@@ -1,4 +1,4 @@
-import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport, mountCharts } from './js/ui.js';
+import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport, mountCharts, whatsappLink } from './js/ui.js';
 import { initAnalyticsChoice, homeMetric, lockedMetric } from './js/analytics.js';
 import { mountIcons } from './js/icons.js';
 import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, initLanding } from './js/landing.js';
@@ -406,20 +406,26 @@ function renderMagicView() {
     $('#magic-sent-email').textContent = lastSentEmail;
   }
   const phone = session.support?.supportPhone;
-  const whatsapp = session.support?.supportWhatsapp;
-  const contact = [phone && `teléfono ${phone}`, whatsapp && whatsapp !== phone && `WhatsApp ${whatsapp}`]
-    .filter(Boolean).join(' · ');
-  $('[data-magic-support]', notice).textContent = contact ? `¿Dudas? Escríbenos: ${contact}.` : '';
+  const waUrl = whatsappLink(session.support?.supportWhatsapp);
+  const contact = [
+    phone && `teléfono <a href="tel:${phone.replace(/[^\d+]/g, '')}">${phone}</a>`,
+    waUrl && `<a href="${waUrl}" target="_blank" rel="noopener">WhatsApp</a>`,
+  ].filter(Boolean).join(' · ');
+  $('[data-magic-support]', notice).innerHTML = contact ? `¿Dudas? Escríbenos: ${contact}.` : '';
 }
 
 // Estado de reenvío: 60 s de espera entre envíos.
 let resendCooldown = 0;
 let resendTimer = null;
 let lastSentEmail = '';
+// La elección de novedades vive fuera del formulario: al ocultarse este, el
+// reenvío y el «cambiar correo» deben conservar lo que se marcó.
+let magicNewsletter = false;
 
 function startResendCooldown() {
   resendCooldown = 60;
   lastSentEmail = $('#magic-form input[name="email"]').value.trim();
+  magicNewsletter = $('#magic-form input[name="newsletter"]').checked;
   $('#magic-form').classList.add('hidden');
   $('#magic-sent').classList.remove('hidden');
   $('#magic-sent-email').textContent = lastSentEmail;
@@ -466,6 +472,7 @@ function showFormAgain() {
   $('#magic-status').textContent = '';
   $('#magic-error').textContent = '';
   $('#magic-form input[name="email"]').value = lastSentEmail;
+  $('#magic-form input[name="newsletter"]').checked = magicNewsletter;
 }
 
 // Enviar enlace: pasa a estado "enviado" con cuenta atrás y opción de cambiar correo.
@@ -486,6 +493,7 @@ $('#magic-form').addEventListener('submit', async (event) => {
         email: data.get('email'),
         next: pendingReturn,
         acquisition,
+        commercial_consent: data.get('newsletter') === 'on',
       }),
     });
     startResendCooldown();
@@ -526,6 +534,8 @@ $('#magic-resend').addEventListener('click', async () => {
         email: lastSentEmail,
         next: pendingReturn,
         acquisition,
+        // El reenvío conserva la elección de novedades de esta solicitud.
+        commercial_consent: magicNewsletter,
       }),
     });
     startResendCooldown();

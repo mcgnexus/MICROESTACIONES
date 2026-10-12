@@ -12,6 +12,8 @@ export async function mountProspects(root) {
       <label>Verificación<select name="verified"><option value="">Todas</option><option value="yes">Correo verificado</option><option value="no">Sin verificar</option></select></label>
       <label>Permiso comercial<select name="permission"><option value="">Todos</option><option value="yes">Autorizado</option><option value="no">Sin permiso</option></select></label>
       <label>Instalación<select name="installation"><option value="">Todos</option><option value="yes">Con interés</option></select></label>
+      <label>Modalidad<select name="request_type"><option value="">Todas</option>${options({ installation_info: 'Consulta de instalación', pilot: 'Piloto' })}</select></label>
+      <label>Canal preferido<select name="preferred_channel"><option value="">Todos</option>${options({ email: 'Email', whatsapp: 'WhatsApp' })}</select></label>
       <button>Aplicar filtros</button>
     </form>
     <div class="row-actions"><label>Canal de exportación<select data-channel><option value="email">Correo</option><option value="whatsapp">WhatsApp</option></select></label>
@@ -27,6 +29,7 @@ export async function mountProspects(root) {
       <summary>${e(r.name)} · ${e(r.municipality || 'Sin municipio')} · ${e(states[r.status])}</summary>
       <p>${r.verified ? 'Correo verificado' : 'Sin verificar'} · Cuenta: ${r.accountActive == null ? 'sin cuenta' : r.accountActive ? 'activa' : 'inactiva'}</p>
       <p>Contacto: ${e(r.email || '')} ${e(r.whatsapp || '')}. Permiso comercial: ${e(Object.keys(r.commercial).filter((c) => r.commercial[c]).join(', ') || 'ninguno')}</p>
+      <p>Canal preferido: ${e(r.preferredChannel === 'whatsapp' ? 'WhatsApp' : r.preferredChannel === 'email' ? 'Email' : 'Legado · sin declarar')} · Modalidad: ${e(r.requestType === 'installation_info' ? 'Consulta de instalación' : r.requestType === 'pilot' ? 'Piloto' : 'Legado · sin declarar')}</p>
       <p>Origen: ${e(JSON.stringify(r.origin || {}))} · Registro: ${dateText(r.createdAt)}</p>
       <form data-edit="${r.kind}/${r.id}" class="rule-form">
         <label>Estado comercial<select name="status">${Object.entries(states).map(([key, label]) => `<option value="${key}" ${r.status === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>

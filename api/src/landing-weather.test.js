@@ -94,11 +94,20 @@ test('the day graph only draws supplied real points and has an explicit empty st
   assert.match(html, /Humedad · últimas 24 horas/);
   assert.match(html, /8/);
   assert.match(html, /62/);
+  // Al pie de la muestra de 24 h va el paso al histórico ampliado: mismo
+  // destino declarado que el CTA del hero (vuelve a esta sección tras entrar).
+  assert.match(html, /href="#\/entrar" data-return="evolucion">Ver el histórico ampliado/);
+  // Los periodos del panel se nombran como capacidad, no como datos
+  // garantizados: las series cubren desde la puesta en servicio.
+  assert.match(html, /7 y 30 d[íi]as/);
+  assert.match(html, /puesta en servicio/);
   // Una muestra de hace más de 24 h no entra en la ventana.
   const old = { history: [{ observedAt: new Date(now - 30 * 60 * 60_000).toISOString(), temperatureC: 1 }] };
   assert.match(renderDayHistory(old, now), /No hay suficientes mediciones reales/);
   assert.match(renderDayHistory({ history: [] }, now), /No hay suficientes mediciones reales/);
   assert.doesNotMatch(renderDayHistory({ history: [] }, now), /chart-box/);
+  // Sin gráfica no hay CTA colgando: el estado vacío se queda como estaba.
+  assert.doesNotMatch(renderDayHistory({ history: [] }, now), /Ver el histórico ampliado/);
 });
 
 test('public landing has loading containers and a single access request form, without sample readings', async () => {

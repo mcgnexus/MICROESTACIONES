@@ -191,9 +191,15 @@ CREATE INDEX IF NOT EXISTS login_rate_limits_updated_idx ON login_rate_limits(up
 CREATE TABLE IF NOT EXISTS farm_leads (
   id bigserial PRIMARY KEY,
   name text NOT NULL,
-  phone text NOT NULL,
+  -- El contacto puede ser email o WhatsApp: uno de los dos es obligatorio,
+  -- y el canal elegido se guarda para saber dónde responder.
+  phone text,
+  preferred_channel text CHECK (preferred_channel IS NULL OR preferred_channel IN ('email','whatsapp')),
+  -- Modalidad declarada: consulta de instalación o entrada en el piloto.
+  request_type text CHECK (request_type IS NULL OR request_type IN ('installation_info','pilot')),
   email text,
-  activity text NOT NULL DEFAULT 'agricultura' CHECK (activity IN ('agricultura','ganaderia','mixta','otra')),
+  -- La actividad solo se guarda si la persona la declaró: NULL no es agricultor.
+  activity text CHECK (activity IS NULL OR activity IN ('agricultura','ganaderia','mixta','otra')),
   zone text,
   crop_or_livestock text,
   interest text CHECK (interest IS NULL OR interest IN ('heladas','calor','tormentas','viento','humedad','general','futura_instalacion')),
@@ -208,9 +214,13 @@ CREATE TABLE IF NOT EXISTS farm_leads (
   campaign jsonb NOT NULL DEFAULT '{}'::jsonb,
   next_contact_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  -- Al menos un contacto con valor real (no solo no nulo): el formato completo
+  -- se valida en servidor, aquí se garantiza que hay algo que atender.
+  CONSTRAINT farm_leads_contact_check CHECK (coalesce(nullif(btrim(phone),''), nullif(btrim(email),'')) IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS farm_leads_status_idx ON farm_leads(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS farm_leads_contact_idx ON farm_leads (coalesce(phone,''), coalesce(email,''), created_at DESC);
 
 CREATE TABLE IF NOT EXISTS metric_daily (
   day date NOT NULL, event text NOT NULL, bucket text NOT NULL,

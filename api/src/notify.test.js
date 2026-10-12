@@ -69,14 +69,25 @@ test('lead confirmation tells the visitor no account is needed yet', () => {
 
 test('internal lead notice summarises how to contact the visitor', () => {
   const { subject, body } = renderLeadNotice({
-    name: 'María', phone: '+34600123456', email: 'finca@example.test',
+    name: 'María', preferred_channel: 'whatsapp', phone: '+34600123456', email: 'finca@example.test',
     activity: 'agricultura', zone: 'Huéscar', interest: 'heladas', notes: 'Cereal',
   });
   assert.match(subject, /María/);
+  assert.match(body, /Canal preferido: WhatsApp/);
   assert.match(body, /\+34600123456/);
   assert.match(body, /finca@example.test/);
   assert.match(body, /Huéscar/);
   assert.match(body, /heladas/);
+});
+
+test('internal lead notice works with a single channel and no phone', () => {
+  const { body } = renderLeadNotice({
+    name: 'Juan', preferred_channel: 'email', email: 'juan@example.test', zone: 'Puebla de Don Fadrique',
+  });
+  assert.match(body, /Canal preferido: Email/);
+  assert.match(body, /juan@example\.test/);
+  assert.match(body, /Municipio: Puebla de Don Fadrique/);
+  assert.doesNotMatch(body, /Teléfono/);
 });
 
 test('quiet hours cover windows that cross midnight', () => {
