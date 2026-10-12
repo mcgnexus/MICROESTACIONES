@@ -29,6 +29,7 @@
 
 import { evaluateSystemRules } from './alert-engine.js';
 import { dispatchOutbox } from './notify.js';
+import { sql } from './db.js';
 
 // Tope de frecuencia que respeta el plan contratado: por debajo no se ejecuta.
 export const SCHEDULER_MIN_INTERVAL_MS = 30_000;
@@ -70,6 +71,49 @@ export function schedulerConfig(env = process.env) {
 
 let inFlight = null;
 const lastRun = { system: 0, outbox: 0 };
+
+// ----- Latido del planificador ---------------------------------------------
+// Orígenes que pueden ejecutar el mantenimiento. El latido se persiste para
+// poder comprobar en producción qué disparador está activo, sin depender de
+// estado en memoria que se pierde en cada cold start de Vercel.
+export const HEARTBEAT_SOURCES = ['external', 'timer', 'admin', 'traffic'];
+
+// Umbrales derivados de la cadencia esperada del disparador externo. `stale` y
+// `blocked` son avisos de diagnóstico, no límites duros.
+export function heartbeatConfig(env = process.env) {
+  const expected = Number(env.EXPECTED_SCHEDULER_INTERVAL_S);
+  const expectedIntervalS = Number.isFinite(expected) && expected > 0 ? expected : 180;
+  const blocked = Number(env.OUTBOX_BLOCKED_S);
+  const blockedAfterS = Number.isFinite(blocked) && blocked > 0 ? blocked : 900;
+  return { expectedIntervalS, staleAfterS: Math.max(3 * expectedIntervalS, 300), blockedAfterS };
+}
+
+// Resumen compacto: no se guarda la lista entera de cambios de detectores.
+function heartbeatSummary(result = {}) {
+  return {
+    durationMs: result.durationMs ?? null,
+    skipped: result.skipped ?? [],
+    system: Array.isArray(result.system) ? result.system.length : (result.system ?? null),
+    outbox: result.outbox ?? null,
+  };
+}
+
+// Latido best-effort: nunca propaga el error, para no tumbar la pasada si la
+// tabla aún no existe (por ejemplo, antes de aplicar la migración).
+export async function recordSchedulerHeartbeat({ source, result = {}, now = new Date(), client = sql } = {}) {
+  if (!HEARTBEAT_SOURCES.includes(source)) return false;
+  const summary = JSON.stringify(heartbeatSummary(result));
+  try {
+    await client`INSERT INTO scheduler_heartbeat (source, last_run_at, duration_ms, result, updated_at)
+      VALUES (${source}, ${now}, ${result.durationMs ?? null}, ${summary}::jsonb, ${now})
+      ON CONFLICT (source) DO UPDATE SET
+        last_run_at = ${now}, duration_ms = ${result.durationMs ?? null},
+        result = ${summary}::jsonb, updated_at = ${now}`;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Estado observable, para pruebas y para el diagnóstico de administración.
 export function schedulerState() {
@@ -136,11 +180,12 @@ export async function runScheduledPasses({
 }
 
 // Temporizadores del proceso largo. Devuelve la función que los detiene.
-export function startScheduler({ config = schedulerConfig(), logger = console } = {}) {
+export function startScheduler({ config = schedulerConfig(), logger = console, onRun } = {}) {
   const timers = [];
   const kick = (label) => {
     runScheduledPasses({ config, logger })
-      .then((result) => {
+      .then(async (result) => {
+        if (onRun) { try { await onRun(result); } catch { /* el latido no debe tumbar la pasada */ } }
         const parts = [];
         if (result.system) parts.push(`detectores: ${Array.isArray(result.system) ? `${result.system.length} cambios` : 'ok'}`);
         if (result.outbox) {
@@ -174,12 +219,14 @@ export function startScheduler({ config = schedulerConfig(), logger = console } 
 // Se monta ANTES de las rutas (si se monta después, la ruta que responde se come
 // la petición y el middleware nunca se ejecuta). Nunca bloquea la respuesta.
 export function schedulerRequestTick({
-  config = schedulerConfig(), logger = console, runSystem, runOutbox,
+  config = schedulerConfig(), logger = console, runSystem, runOutbox, onRun,
 } = {}) {
   return function tick(req, res, next) {
     next();
     if (!config.requestTickEnabled) return;
     if (!req.path.startsWith('/api/')) return;
-    runScheduledPasses({ config, logger, runSystem, runOutbox }).catch(() => {});
+    runScheduledPasses({ config, logger, runSystem, runOutbox })
+      .then((result) => { if (onRun) Promise.resolve(onRun(result)).catch(() => {}); })
+      .catch(() => {});
   };
 }

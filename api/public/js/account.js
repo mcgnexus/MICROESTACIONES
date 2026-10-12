@@ -75,11 +75,60 @@ function channelBlock(channel, contact, available) {
   </div>`;
 }
 
+// Etiquetas de categorías de aviso (mismas claves que el servidor).
+const PUBLIC_CATEGORY_LABELS = {
+  frost: 'Heladas', heat: 'Calor', storm: 'Tormentas',
+  wind: 'Viento', humidity: 'Humedad', general: 'General',
+};
+
+// Suscripción explícita a los avisos públicos de una estación habilitada.
+// Consultar datos o gráficos nunca suscribe: solo el botón de alta, y cada
+// estación muestra su ubicación general, categorías, canal, estado y última
+// medición (datos públicos; sin acceso a datos privados de terceros).
+function publicAlertsBlock(options, me) {
+  if (!options) return '';
+  const { stations = [], subscriptions = [], interest = { joined: false } } = options;
+  const verifiedChannels = [
+    { key: 'email', label: 'Correo' },
+    { key: 'whatsapp', label: 'WhatsApp' },
+  ].filter((channel) => (me.contacts || []).some((contact) => contact.channel === channel.key && contact.verified && contact.optedIn));
+
+  const cards = stations.map((station) => {
+    const active = subscriptions.find((sub) => sub.deviceId === station.id && sub.active);
+    const controls = active
+      ? `<p class="hint">Suscrito por ${active.channel === 'email' ? 'correo' : 'WhatsApp'} a: ${active.categories.map((key) => PUBLIC_CATEGORY_LABELS[key] ?? key).join(', ')}.</p>
+         <button type="button" data-public-cancel="${escapeText(station.id)}" data-channel="${active.channel}">Cancelar suscripción</button>
+         <button type="button" data-public-test="${escapeText(station.id)}" data-channel="${active.channel}">Enviar prueba</button>`
+      : verifiedChannels.length
+        ? `<form data-public-form="${escapeText(station.id)}" class="rule-form">
+            <label>Canal<select name="channel">${verifiedChannels.map((channel) =>
+              `<option value="${channel.key}">${channel.label}</option>`).join('')}</select></label>
+            <fieldset><legend>Categorías</legend>${station.categories.map((key) =>
+              `<label class="check"><input type="checkbox" name="category" value="${key}" checked> ${PUBLIC_CATEGORY_LABELS[key] ?? key}</label>`).join('')}</fieldset>
+            <button type="submit">Activar avisos de esta estación</button>
+          </form>`
+        : '<p class="hint">Verifica un contacto más arriba para poder suscribirte a esta estación.</p>';
+    return `<div class="public-station">
+      <div class="section-heading"><div><h3>${escapeText(station.name)}</h3>
+        <p class="hint">Zona: ${escapeText(station.zone || 'no indicada')} · Última medición: ${station.lastDataAt ? dateText(station.lastDataAt) : 'sin datos'}</p></div></div>
+      ${controls}
+    </div>`;
+  }).join('');
+
+  const interestBlock = stations.length ? '' : `<div class="public-interest">
+    <p class="hint">El servicio de avisos públicos todavía no tiene estaciones habilitadas.</p>
+    ${interest.joined
+      ? '<p class="hint">Estás en la lista de interés. Te avisaremos cuando se active.</p>'
+      : '<button type="button" data-public-interest>Apuntarme a la lista de interés</button>'}
+  </div>`;
+
+  return `${cards}${interestBlock}<p class="hint" data-public-hint></p>`;
+}
+
 // Ofrece reutilizar el correo de acceso ya confirmado como destinatario de
 // avisos, sin volver a pedir un código. Solo aparece si todavía no hay un
 // contacto de correo verificado.
-function emailReuseBlock(me, byChannel) {
-  const emailContact = byChannel.email;
+function emailReuseBlock(me, byChannel) {  const emailContact = byChannel.email;
   if (!me.emailVerifiedAt || (emailContact && emailContact.verified)) return '';
   return `<div class="contact-verify">
     <p class="hint">Tu correo de acceso ya está confirmado. Puedes usarlo para los avisos sin volver a verificarlo.</p>
@@ -168,6 +217,7 @@ export async function renderAccount(root) {
   const availability = me.channelAvailability || {};
   const prefs = await api('/api/v1/alert-preferences').then((result) => result.preferences).catch(() => null)
     || DEFAULT_PREFS;
+  const publicOptions = await api('/api/v1/public-alerts/options').catch(() => null);
 
   root.innerHTML = `
     <div class="page-heading"><div><p class="eyebrow">CUENTA</p><h1>${escapeText(me.email)}</h1></div></div>
@@ -183,6 +233,9 @@ export async function renderAccount(root) {
         : ''}
       ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key], availability[channel.key])).join('')}
       ${emailReuseBlock(me, byChannel)}
+      <div class="section-heading"><div><h3>Avisos públicos de estación</h3></div></div>
+      <p class="hint">Suscríbete expresamente a los avisos de una estación habilitada por TecRural. Consultar datos o gráficos no suscribe a nadie, y el acceso a una estación privada es otra cosa.</p>
+      ${publicAlertsBlock(publicOptions, me)}
       <div class="section-heading"><div><h3>Preferencias efectivas</h3></div></div>
       <p class="hint">No todos necesitan lo mismo: un almendro teme la helada y el ganado el calor. Elige aquí tus avisos.</p>
       <form data-prefs-form class="rule-form">
@@ -349,6 +402,80 @@ export async function renderAccount(root) {
     }
   };
 
+  const publicError = (message) => {
+    const hint = $('[data-public-hint]', root);
+    if (hint) hint.textContent = message;
+    else error(message);
+  };
+  const publicErrorFrom = (err) => {
+    const messages = {
+      station_not_found: 'Esa estación no existe.',
+      station_not_enabled: 'Esa estación no tiene avisos públicos habilitados.',
+      account_not_verified: 'Confirma primero tu correo de acceso.',
+      contact_not_verified: 'Verifica y autoriza el contacto de ese canal antes de suscribirte.',
+      subscription_not_found: 'No hay suscripción activa para esa estación y canal.',
+    };
+    return messages[err.message] ?? `No se pudo completar: ${err.message}`;
+  };
+
+  for (const form of root.querySelectorAll('[data-public-form]')) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error('');
+      const deviceId = form.dataset.publicForm;
+      const data = new FormData(form);
+      const categories = [...form.querySelectorAll('input[name="category"]:checked')].map((input) => input.value);
+      try {
+        await api('/api/v1/public-alerts/subscribe', {
+          method: 'POST',
+          body: JSON.stringify({ device_id: deviceId, channel: data.get('channel'), categories }),
+        });
+        await refresh();
+      } catch (err) {
+        error(publicErrorFrom(err));
+      }
+    });
+  }
+  for (const button of root.querySelectorAll('[data-public-cancel]')) {
+    button.addEventListener('click', async () => {
+      error('');
+      try {
+        await api('/api/v1/public-alerts/unsubscribe', {
+          method: 'POST',
+          body: JSON.stringify({ device_id: button.dataset.publicCancel, channel: button.dataset.channel }),
+        });
+        await refresh();
+      } catch (err) {
+        error(publicErrorFrom(err));
+      }
+    });
+  }
+  for (const button of root.querySelectorAll('[data-public-test]')) {
+    button.addEventListener('click', async () => {
+      error('');
+      try {
+        await api('/api/v1/public-alerts/test', {
+          method: 'POST',
+          body: JSON.stringify({ device_id: button.dataset.publicTest, channel: button.dataset.channel }),
+        });
+        publicError('Prueba en cola: llegará etiquetada como PRUEBA, nunca como un episodio real.');
+      } catch (err) {
+        error(publicErrorFrom(err));
+      }
+    });
+  }
+  const interestButton = $('[data-public-interest]', root);
+  if (interestButton) {
+    interestButton.addEventListener('click', async () => {
+      error('');
+      try {
+        await api('/api/v1/public-alerts/interest', { method: 'POST', body: JSON.stringify({}) });
+        await refresh();
+      } catch (err) {
+        error(publicErrorFrom(err));
+      }
+    });
+  }
   const reuseEmail = $('[data-reuse-email]', root);
   if (reuseEmail) {
     reuseEmail.addEventListener('click', async () => {

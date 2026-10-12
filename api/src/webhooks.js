@@ -159,8 +159,10 @@ export async function applyProviderStatus(client, { providerMessageId, status, n
     return { updated: rows.length, status: 'sent' };
   }
 
+  const detail = error ? JSON.stringify({ error }) : null;
   const rows = await client`UPDATE notification_outbox
       SET status = 'failed', updated_at = ${now}, last_error = ${error || 'provider_failed'},
+          provider_detail = ${detail}::jsonb,
           claimed_by = NULL, claimed_at = NULL
     WHERE provider_message_id = ${providerMessageId}
       AND status NOT IN ('delivered', 'cancelled', 'expired')

@@ -79,8 +79,9 @@ export async function requireStationAccess(req, res, next) {
 // Ver la estación de la demostración no suscribe a nadie a sus avisos: el
 // registro público (`viewer`) solo recibe los avisos de las estaciones que se le
 // han concedido explícitamente. Nunca los de la estación urbana que únicamente
-// tiene `publish_permission`. Tampoco se le da de alta en la cola de envíos
-// (`recipientsForDevice` solo mira `subscriber_devices` y `farm_devices`).
+// tiene `publish_permission`. La única vía de alta en la cola pública es la
+// suscripción explícita (`public_alert_subscriptions` + `public_alerts_enabled`);
+// consultar datos o gráficos no suscribe, y el centro de avisos sigue privado.
 // - admin: null (todas, para depurar).
 // - el resto: solo estaciones concedidas.
 export function alertableDeviceIds(subscriber) {

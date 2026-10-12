@@ -7,13 +7,14 @@
 // se puede demostrar qué se aceptó y cuándo. La revocación se registra igual y,
 // al revocar, se cancelan los mensajes comerciales que aún estén en cola.
 import { messageExpiresAt } from './message-ttl.js';
+import { whatsappTemplate } from './message-templates.js';
 
 // Finalidades del tratamiento. `service` cubre lo necesario para atender la
 // solicitud y prestar el servicio; `commercial` es la publicidad opcional.
 export const CONSENT_PURPOSES = ['service', 'commercial'];
 export const CONSENT_CHANNELS = ['email', 'whatsapp'];
 export const CONSENT_ACTIONS = ['granted', 'revoked'];
-export const CONSENT_SOURCES = ['web', 'account', 'magic_link', 'admin', 'lead', 'whatsapp', 'migration'];
+export const CONSENT_SOURCES = ['web', 'account', 'magic_link', 'admin', 'lead', 'whatsapp', 'migration', 'public_alerts'];
 export const COMMERCIAL_KIND = 'commercial';
 
 // Versión del texto informativo que acompaña a la casilla. Debe coincidir con la
@@ -150,10 +151,14 @@ export async function enqueueCommercialMessage(client, {
   subscriberId = null, leadId = null, channel, address, subject, body, env = process.env,
 }) {
   if (!CONSENT_CHANNELS.includes(channel)) throw new Error('invalid_consent_channel');
+  // Las novedades por WhatsApp salen como plantilla de marketing aprobada.
+  const template = channel === 'whatsapp' ? whatsappTemplate('commercial', { env, params: [subject, body] }) : null;
   await client`INSERT INTO notification_outbox
-    (kind, subscriber_id, lead_id, channel, address, subject, body, expires_at)
+    (kind, subscriber_id, lead_id, channel, address, subject, body, expires_at,
+      template_name, template_language, template_params)
     VALUES (${COMMERCIAL_KIND}, ${subscriberId}, ${leadId}, ${channel}, ${address}, ${subject}, ${body},
-      ${messageExpiresAt(COMMERCIAL_KIND, env)})`;
+      ${messageExpiresAt(COMMERCIAL_KIND, env)}, ${template?.name ?? null}, ${template?.language ?? null},
+      ${template ? JSON.stringify(template.params) : null}::jsonb)`;
   return true;
 }
 

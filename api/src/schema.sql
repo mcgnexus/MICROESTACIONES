@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS devices (
   sensors jsonb NOT NULL DEFAULT '{"temperature":true,"humidity":true,"pressure":true,"battery":true,"lux":false}'::jsonb,
   firmware_version text,
   publish_permission boolean NOT NULL DEFAULT false,
+  -- Avisos públicos: habilitación expresa de TecRural para que cuentas
+  -- verificadas puedan suscribirse a los avisos de esta estación. Es un permiso
+  -- DISTINTO de `publish_permission` (compartir datos), nunca se deduce de él.
+  public_alerts_enabled boolean NOT NULL DEFAULT false,
   -- Documentación del emplazamiento y registro de verificación frente a una
   -- referencia: separan «aceptada por los controles automáticos» de «verificada».
   site_info jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -95,6 +99,30 @@ CREATE TABLE IF NOT EXISTS subscriber_devices (
   subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
   device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
   PRIMARY KEY (subscriber_id, device_id)
+);
+
+-- Suscripción explícita de una cuenta verificada a los avisos PÚBLICOS de una
+-- estación habilitada. Es un vínculo distinto del acceso privado
+-- (`subscriber_devices`/`farms`): solo da notificaciones, nunca acceso a datos
+-- privados ni entradas en el centro de avisos. La baja es por estación y canal.
+CREATE TABLE IF NOT EXISTS public_alert_subscriptions (
+  subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+  device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  channel text NOT NULL CHECK (channel IN ('email','whatsapp')),
+  categories text[] NOT NULL DEFAULT '{frost,heat,storm,wind,humidity,general}',
+  subscribed_at timestamptz NOT NULL DEFAULT now(),
+  unsubscribed_at timestamptz,
+  PRIMARY KEY (subscriber_id, device_id, channel)
+);
+CREATE INDEX IF NOT EXISTS public_alert_subscriptions_device_idx
+  ON public_alert_subscriptions(device_id) WHERE unsubscribed_at IS NULL;
+
+-- Lista de interés para el servicio de avisos públicos cuando aún no hay
+-- estaciones habilitadas (o el interesado quiere una estación sin avisos).
+CREATE TABLE IF NOT EXISTS public_alert_interest (
+  subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+  device_id text REFERENCES devices(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
 -- Finca: agrupa estaciones bajo un nombre que el cliente reconoce. La relación
@@ -494,7 +522,10 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, targ
 -- la fila conserva el intento, el proveedor y el error para poder reintentarlo.
 CREATE TABLE IF NOT EXISTS notification_outbox (
   id bigserial PRIMARY KEY,
-  kind text NOT NULL CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice','commercial')),
+  kind text NOT NULL CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice','commercial','subscription_test')),
+  -- Audiencia del aviso: 'private' (acceso a estación/finca) o 'public'
+  -- (suscripción pública). Null en tipos que no son de aviso.
+  audience text,
   alert_id bigint REFERENCES alerts(id) ON DELETE CASCADE,
   contact_verification_id bigint REFERENCES contact_verifications(id) ON DELETE CASCADE,
   subscriber_id bigint REFERENCES subscribers(id) ON DELETE SET NULL,
@@ -515,6 +546,14 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
   expires_at timestamptz,
   last_error text,
   provider_message_id text,
+  -- Plantilla aprobada con la que se intentó un envío de WhatsApp (nombre,
+  -- idioma y parámetros ordenados). El cuerpo de texto queda como respaldo manual.
+  template_name text,
+  template_language text,
+  template_params jsonb,
+  -- Detalle devuelto por el proveedor (código, título, mensaje) para auditar un
+  -- fallo sin convertirlo en éxito.
+  provider_detail jsonb,
   -- `sent_at` = aceptado por el proveedor (2xx). `delivered_at` = el proveedor
   -- confirmó la entrega por webhook. Son estados distintos y no se confunden.
   sent_at timestamptz,
@@ -524,5 +563,20 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 );
 CREATE INDEX IF NOT EXISTS notification_outbox_due_idx ON notification_outbox(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS notification_outbox_alert_idx ON notification_outbox(alert_id);
+CREATE INDEX IF NOT EXISTS notification_outbox_subscription_idx
+  ON notification_outbox(subscriber_id, kind, audience) WHERE kind = 'alert';
+CREATE INDEX IF NOT EXISTS notification_outbox_provider_message_idx
+  ON notification_outbox(provider_message_id) WHERE provider_message_id IS NOT NULL;
+
+-- Latido del planificador: una fila por origen (externo, temporizador, admin o
+-- tráfico). Permite comprobar qué ejecución de mantenimiento está activa en
+-- producción sin depender de estado en memoria, que se pierde en cada cold start.
+CREATE TABLE IF NOT EXISTS scheduler_heartbeat (
+  source text PRIMARY KEY CHECK (source IN ('external', 'timer', 'admin', 'traffic')),
+  last_run_at timestamptz NOT NULL,
+  duration_ms integer,
+  result jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 -- El índice comercial lo crea migrate.js después de añadir lead_id, porque en
 -- bases existentes esta tabla ya existe sin esa columna.

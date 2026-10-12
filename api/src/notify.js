@@ -5,8 +5,9 @@
 // concretos viven en whatsapp.js y email.js; sin proveedor configurado el envío no
 // se finge: queda pendiente y acaba en `failed`, visible en administración.
 import { sql } from './db.js';
-import { sendWhatsApp, whatsappProvider } from './whatsapp.js';
+import { sendWhatsApp, whatsappProvider, whatsappRequiresTemplate } from './whatsapp.js';
 import { sendEmail, emailProvider } from './email.js';
+import { whatsappTemplate, templateCategory } from './message-templates.js';
 import { isQuietHour, recipientWants } from './alert-preferences.js';
 import { COMMERCIAL_KIND, hasCommercialConsent, revokeCommercialConsent } from './consent.js';
 import { messageExpiresAt, messageTtlMinutes, isExpired } from './message-ttl.js';
@@ -170,9 +171,14 @@ export async function enqueueLeadMessages(client, lead, env = process.env) {
 // Contactos verificados y autorizados de las estaciones del dispositivo, ya sea
 // por acceso directo o por finca, filtrados por las preferencias del suscriptor.
 export async function recipientsForDevice(client, deviceId, { category = 'general', level = 2, at = new Date() } = {}) {
+  // Dos audiencias sobre la misma estación: privado (acceso a estación/finca,
+  // categorías de `alert_preferences`) y público (suscripción explícita a una
+  // estación habilitada, con sus propias categorías y canal). Consultar datos o
+  // gráficos no crea ninguna de las dos filas.
   const rows = await client`SELECT sc.subscriber_id, sc.channel, sc.address,
       p.receive_frost, p.receive_heat, p.receive_storm, p.receive_wind, p.receive_humidity,
-      p.receive_general, p.channel_whatsapp, p.channel_email, p.quiet_start, p.quiet_end
+      p.receive_general, p.channel_whatsapp, p.channel_email, p.quiet_start, p.quiet_end,
+      NULL::text[] AS public_categories
     FROM subscriber_contacts sc
     JOIN subscribers s ON s.id = sc.subscriber_id AND s.active
     LEFT JOIN alert_preferences p ON p.subscriber_id = sc.subscriber_id
@@ -181,9 +187,45 @@ export async function recipientsForDevice(client, deviceId, { category = 'genera
         SELECT subscriber_id FROM subscriber_devices WHERE device_id = ${deviceId}
         UNION
         SELECT f.subscriber_id FROM farm_devices fd JOIN farms f ON f.id = fd.farm_id WHERE fd.device_id = ${deviceId}
-      )`;
-  return rows.filter((row) => recipientWants(row, category, level, at))
-    .map((row) => ({ subscriberId: row.subscriberId, channel: row.channel, address: row.address }));
+      )
+    UNION ALL
+    SELECT sc.subscriber_id, sc.channel, sc.address,
+      p.receive_frost, p.receive_heat, p.receive_storm, p.receive_wind, p.receive_humidity,
+      p.receive_general, p.channel_whatsapp, p.channel_email, p.quiet_start, p.quiet_end,
+      pas.categories AS public_categories
+    FROM public_alert_subscriptions pas
+    JOIN devices d ON d.id = pas.device_id AND d.active AND d.public_alerts_enabled
+    JOIN subscribers s ON s.id = pas.subscriber_id AND s.active
+    JOIN subscriber_contacts sc ON sc.subscriber_id = pas.subscriber_id AND sc.channel = pas.channel
+    LEFT JOIN alert_preferences p ON p.subscriber_id = pas.subscriber_id
+    WHERE pas.unsubscribed_at IS NULL
+      AND sc.opted_in_at IS NOT NULL AND sc.opted_out_at IS NULL AND sc.verified_at IS NOT NULL`;
+
+  // Si el mismo suscriptor+canal entra por privado y por público, gana el privado:
+  // una fila por destinatario, nunca dos envíos del mismo aviso.
+  const deduped = rows.filter((row) => {
+    if (row.publicCategories == null) return true;
+    return !rows.some((other) => other.publicCategories == null
+      && other.subscriberId === row.subscriberId && other.channel === row.channel);
+  });
+
+  return deduped
+    .filter((row) => {
+      if (row.publicCategories != null) {
+        // La suscripción pública manda sus propias categorías; solo se respetan
+        // el horario silencioso y el nivel prioritario de las preferencias.
+        if (!Array.isArray(row.publicCategories) || !row.publicCategories.includes(category)) return false;
+        if (Number(level) !== 1 && isQuietHour(row.quietStart ?? row.quiet_start, row.quietEnd ?? row.quiet_end, at)) return false;
+        return true;
+      }
+      return recipientWants(row, category, level, at);
+    })
+    .map((row) => ({
+      subscriberId: row.subscriberId,
+      channel: row.channel,
+      address: row.address,
+      audience: row.publicCategories != null ? 'public' : 'private',
+    }));
 }
 
 // Encola un aviso para todos sus destinatarios. Devuelve cuántos se encolaron.
@@ -197,15 +239,29 @@ export async function enqueueAlertNotifications(client, {
       (SELECT f.name FROM farm_devices fd JOIN farms f ON f.id = fd.farm_id
         WHERE fd.device_id = d.id ORDER BY f.name LIMIT 1) AS farm_name
     FROM devices d WHERE d.id = ${deviceId}`;
+  // Parámetros de la plantilla de aviso: el mismo contenido que el mensaje largo,
+  // ordenado como la plantilla aprobada (título, finca, estación, valor, momento).
+  const alertParams = [
+    `${Number(level) === 1 ? 'ALERTA PRIORITARIA' : 'AVISO'}: ${message}`,
+    device?.farmName ?? 'Sin finca',
+    device?.name ?? 'Sin estación',
+    formatValue(metric, value) ?? 'Sin valor',
+    formatDateTime(observedAt) ?? 'Sin referencia de hora',
+  ];
   for (const recipient of recipients) {
     const { subject, body } = renderAlertMessage({
       farmName: device?.farmName ?? null, deviceName: device?.name ?? null,
       metric, value, message, level, observedAt, ageSeconds, source, category, ruleId,
     });
+    const template = recipient.channel === 'whatsapp'
+      ? whatsappTemplate('alert', { params: alertParams }) : null;
     await client`INSERT INTO notification_outbox
-      (kind, alert_id, subscriber_id, channel, address, subject, body, expires_at)
+      (kind, alert_id, subscriber_id, channel, address, subject, body, expires_at, audience,
+        template_name, template_language, template_params)
       VALUES ('alert', ${alertId}, ${recipient.subscriberId}, ${recipient.channel}, ${recipient.address}, ${subject}, ${body},
-        ${messageExpiresAt('alert')})`;
+        ${messageExpiresAt('alert')}, ${recipient.audience},
+        ${template?.name ?? null}, ${template?.language ?? null},
+        ${template ? JSON.stringify(template.params) : null}::jsonb)`;
   }
   await client`UPDATE alerts SET channel = ${recipients[0].channel} WHERE id = ${alertId}`;
   return recipients.length;
@@ -216,10 +272,14 @@ export async function enqueueVerificationCode(client, { verificationId, subscrib
   const expiresAt = Number(ttlMinutes) > 0
     ? new Date(Date.now() + Number(ttlMinutes) * 60 * 1000)
     : messageExpiresAt('contact_verification', env);
+  // Por WhatsApp el código viaja como parámetro de una plantilla de
+  // autenticación; el cuerpo de texto queda solo para el envío manual y el correo.
+  const template = channel === 'whatsapp' ? whatsappTemplate('contact_verification', { env, params: [code] }) : null;
   await client`INSERT INTO notification_outbox
-    (kind, contact_verification_id, subscriber_id, channel, address, subject, body, expires_at)
+    (kind, contact_verification_id, subscriber_id, channel, address, subject, body, expires_at,
+      template_name, template_language, template_params)
     VALUES ('contact_verification', ${verificationId}, ${subscriberId}, ${channel}, ${address}, ${subject}, ${body},
-      ${expiresAt})`;
+      ${expiresAt}, ${template?.name ?? null}, ${template?.language ?? null}, ${template ? JSON.stringify(template.params) : null}::jsonb)`;
   return true;
 }
 
@@ -255,9 +315,13 @@ export async function claimOutboxMessages({
       SELECT id FROM notification_outbox
       WHERE (status = 'pending' AND next_attempt_at <= ${now})
         AND (expires_at IS NULL OR expires_at > ${now})
-      ORDER BY CASE kind
-          WHEN 'alert' THEN 0
-          WHEN 'contact_verification' THEN 1
+      -- Primero lo que antes caduca: el código de verificación (10 min) sale por
+      -- delante del aviso (4 h) sin reglas fijas que envejezcan mal con nuevos
+      -- tipos de mensaje. A igualdad de caducidad, prioridad de tipo.
+      ORDER BY expires_at ASC NULLS LAST,
+        CASE kind
+          WHEN 'contact_verification' THEN 0
+          WHEN 'alert' THEN 1
           WHEN 'commercial' THEN 3
           ELSE 2 END,
         next_attempt_at
@@ -269,7 +333,8 @@ export async function claimOutboxMessages({
       FROM claimed
       WHERE o.id = claimed.id
     RETURNING o.id, o.kind, o.channel, o.address, o.subject, o.body, o.attempts,
-              o.alert_id, o.subscriber_id, o.lead_id, o.contact_verification_id,
+              o.alert_id, o.subscriber_id, o.lead_id, o.contact_verification_id, o.audience,
+              o.template_name, o.template_language, o.template_params,
               o.expires_at, o.claimed_by`;
 }
 
@@ -331,28 +396,58 @@ async function alertRecipientAllowed(client, row) {
   if (!state) return { ok: false, status: 'cancelled', reason: 'suscriptor eliminado', alertState: 'failed' };
   if (!state.subscriberActive) return { ok: false, status: 'cancelled', reason: 'suscriptor inactivo', alertState: 'failed' };
   if (!state.contactOk) return { ok: false, status: 'cancelled', reason: 'contacto revocado', alertState: 'failed' };
+  // Suscripción pública: además, que siga activa y la estación habilitada hoy.
+  if (row.audience === 'public') {
+    const [sub] = await client`
+      SELECT pas.unsubscribed_at, d.public_alerts_enabled, d.active
+      FROM public_alert_subscriptions pas
+      JOIN devices d ON d.id = pas.device_id
+      WHERE pas.subscriber_id = ${row.subscriberId} AND pas.channel = ${row.channel}
+        AND pas.device_id = (SELECT device_id FROM alerts WHERE id = ${row.alertId})`;
+    if (!sub || sub.unsubscribedAt) return { ok: false, status: 'cancelled', reason: 'suscripción revocada', alertState: 'failed' };
+    if (!sub.publicAlertsEnabled || !sub.active) return { ok: false, status: 'cancelled', reason: 'estación sin avisos públicos', alertState: 'failed' };
+  }
   return { ok: true };
+}
+
+// Baja de una suscripción pública: aparta los avisos pendientes de esa estación
+// que ya no están autorizados, sin tocar los privados del mismo suscriptor.
+export async function cancelPendingPublicAlerts(client, { subscriberId, deviceId }) {
+  const rows = await client`UPDATE notification_outbox o
+      SET status = 'cancelled', last_error = 'suscripción revocada', updated_at = now(),
+          claimed_by = NULL, claimed_at = NULL
+    WHERE o.kind = 'alert' AND o.audience = 'public' AND o.subscriber_id = ${subscriberId}
+      AND o.status IN ('pending', 'manual')
+      AND o.alert_id IN (SELECT id FROM alerts WHERE device_id = ${deviceId})
+    RETURNING o.id, o.alert_id`;
+  for (const row of rows) {
+    await writeAlertDelivery(client, { alertId: row.alertId, state: 'failed' });
+  }
+  return rows.length;
 }
 
 // Cada transición se escribe con su estado en texto fijo: los operadores y las
 // pruebas leen `status = 'sent'` sin depender de parámetros. Salir del estado
 // `sending` suelta siempre el reclamo del trabajador.
 async function writeOutboxStatus(client, {
-  id, status, now, workerId, reason = null, attempts = null, nextAttemptAt = null, messageId = null,
+  id, status, now, workerId, reason = null, attempts = null, nextAttemptAt = null, messageId = null, providerDetail = null,
 }) {
+  const detailJson = providerDetail ? JSON.stringify(providerDetail) : null;
   if (status === 'sent') {
     const rows = await client`UPDATE notification_outbox SET status = 'sent', sent_at = ${now},
-        provider_message_id = ${messageId}, last_error = NULL,
+        provider_message_id = ${messageId}, last_error = NULL, provider_detail = NULL,
         claimed_by = NULL, claimed_at = NULL, updated_at = ${now}
       WHERE id = ${id} AND status = 'sending' AND claimed_by = ${workerId} RETURNING id`;
     return rows.length > 0;
   } else if (status === 'manual') {
-    const rows = await client`UPDATE notification_outbox SET status = 'manual', last_error = 'envío manual pendiente',
+    const rows = await client`UPDATE notification_outbox SET status = 'manual', last_error = ${reason ?? 'envío manual pendiente'},
+        provider_detail = ${detailJson}::jsonb,
         claimed_by = NULL, claimed_at = NULL, updated_at = ${now}
       WHERE id = ${id} AND status = 'sending' AND claimed_by = ${workerId} RETURNING id`;
     return rows.length > 0;
   } else if (status === 'failed') {
     const rows = await client`UPDATE notification_outbox SET status = 'failed', attempts = ${attempts}, last_error = ${reason},
+        provider_detail = ${detailJson}::jsonb,
         claimed_by = NULL, claimed_at = NULL, updated_at = ${now}
       WHERE id = ${id} AND status = 'sending' AND claimed_by = ${workerId} RETURNING id`;
     return rows.length > 0;
@@ -369,6 +464,7 @@ async function writeOutboxStatus(client, {
   } else {
     const rows = await client`UPDATE notification_outbox SET status = 'pending', attempts = ${attempts},
         next_attempt_at = ${nextAttemptAt}, last_error = ${reason},
+        provider_detail = ${detailJson}::jsonb,
         claimed_by = NULL, claimed_at = NULL, updated_at = ${now}
       WHERE id = ${id} AND status = 'sending' AND claimed_by = ${workerId} RETURNING id`;
     return rows.length > 0;
@@ -440,12 +536,30 @@ export async function dispatchOutbox({
       continue;
     }
     // 3) Envío con el tiempo máximo del proveedor.
+    // WhatsApp automático (meta/twilio) exige plantilla aprobada: sin ella no se
+    // manda texto ni se finge envío, queda pendiente para una persona.
+    const params = Array.isArray(row.templateParams) ? row.templateParams : [];
+    const template = row.channel === 'whatsapp' ? whatsappTemplate(row.kind, { env, params }) : null;
+    if (row.channel === 'whatsapp' && whatsappRequiresTemplate(env) && !template) {
+      counts.manual += 1;
+      await writeOutboxStatus(client, {
+        id: row.id, status: 'manual', now, workerId: row.claimedBy,
+        reason: 'sin plantilla configurada', providerDetail: { error: 'template_required' },
+      });
+      continue;
+    }
     const result = row.channel === 'whatsapp'
-      ? await sendWhatsApp(row.address, row.body, env)
+      ? await sendWhatsApp(row.address, row.body, env, { template: template ? { ...template, category: templateCategory(row.kind) } : null })
       : await sendEmail(row.address, row.subject, row.body, env);
+    const providerDetail = result.ok ? null : {
+      error: result.error ?? null,
+      code: result.providerErrorCode ?? null,
+      title: result.providerErrorTitle ?? null,
+      message: result.providerErrorMessage ?? null,
+    };
     if (result.manual) {
       counts.manual += 1;
-      await writeOutboxStatus(client, { id: row.id, status: 'manual', now, workerId: row.claimedBy });
+      await writeOutboxStatus(client, { id: row.id, status: 'manual', now, workerId: row.claimedBy, providerDetail });
       continue;
     }
     // 4) Aceptado por el proveedor: estado `sent`. `delivered` llega después,
@@ -467,13 +581,13 @@ export async function dispatchOutbox({
       counts.failed += 1;
       await inTransaction(client, async (tx) => {
         const updated = await writeOutboxStatus(tx, {
-          id: row.id, status: 'failed', now, workerId: row.claimedBy, reason, attempts,
+          id: row.id, status: 'failed', now, workerId: row.claimedBy, reason, attempts, providerDetail,
         });
         if (updated) await writeAlertDelivery(tx, { alertId: row.alertId, state: 'failed' });
       });
     } else {
       await writeOutboxStatus(client, {
-        id: row.id, status: 'pending', now, workerId: row.claimedBy, reason, attempts,
+        id: row.id, status: 'pending', now, workerId: row.claimedBy, reason, attempts, providerDetail,
         nextAttemptAt: new Date(now.getTime() + backoffSeconds(attempts - 1) * 1000),
       });
     }

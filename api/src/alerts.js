@@ -7,6 +7,8 @@ import { alertAge } from './alert-engine.js';
 import { NON_COMMUNICATION_ALERT } from './alert-visibility.js';
 import { alertEngineVerified } from './env.js';
 import { renderAlertMessage, sendWhatsApp, sendEmail } from './notify.js';
+import { whatsappRequiresTemplate } from './whatsapp.js';
+import { whatsappTemplate } from './message-templates.js';
 
 const router = Router();
 
@@ -344,7 +346,10 @@ router.post('/:id/test', requireSubscriber, requireRole('admin'), csrfGuard, asy
     category: alert.category ?? 'general', ruleSnapshot: alert.ruleSnapshot ?? null,
   });
   const result = parsed.data.channel === 'whatsapp'
-    ? await sendWhatsApp(parsed.data.address, body)
+    ? (whatsappRequiresTemplate() && !whatsappTemplate('test', { params: [body] })
+        ? { ok: false, manual: true, error: 'template_required' }
+        : await sendWhatsApp(parsed.data.address, body, process.env,
+          { template: whatsappTemplate('test', { params: [body] }) }))
     : await sendEmail(parsed.data.address, subject, body);
   await audit(sql, req, 'alert.test', 'alert', String(alert.id),
     null, { channel: parsed.data.channel, ok: result.ok, error: result.error ?? null });

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import {
   SCHEDULER_MIN_INTERVAL_MS, schedulerConfig, runScheduledPasses, schedulerRequestTick,
   schedulerState, resetSchedulerState, startScheduler, outboxLimitForRequest,
+  heartbeatConfig, recordSchedulerHeartbeat, HEARTBEAT_SOURCES,
 } from './scheduler.js';
 
 const baseConfig = (over = {}) => ({
@@ -143,7 +144,7 @@ test('el middleware va montado ANTES que las rutas que responden', async () => {
   // El defecto original: los triggers estaban después de los routers, así que
   // las peticiones que respondían (dashboard incluido) nunca los alcanzaban.
   const source = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
-  const tick = source.indexOf('app.use(schedulerRequestTick())');
+  const tick = source.indexOf('app.use(schedulerRequestTick(');
   const dashboard = source.indexOf("app.get('/api/v1/dashboard'");
   const routers = source.indexOf("app.use('/api/v1/stations'");
   assert.ok(tick > 0, 'el respaldo está declarado');
@@ -163,4 +164,32 @@ test('startScheduler devuelve cómo detenerse y respeta los interruptores', () =
   assert.equal(typeof on, 'function');
   on();
   resetSchedulerState();
+});
+
+// Cambio 17: latido y umbrales del planificador.
+
+test('los umbrales del latido salen de la cadencia esperada', () => {
+  const base = heartbeatConfig({});
+  assert.equal(base.expectedIntervalS, 180);
+  assert.equal(base.staleAfterS, 540, 'stale = 3× intervalo (≥ 300 s)');
+  assert.equal(base.blockedAfterS, 900);
+  assert.equal(heartbeatConfig({ EXPECTED_SCHEDULER_INTERVAL_S: '600' }).staleAfterS, 1800);
+  assert.equal(heartbeatConfig({ EXPECTED_SCHEDULER_INTERVAL_S: '1' }).staleAfterS, 300, 'suelo de 300 s');
+  assert.equal(heartbeatConfig({ EXPECTED_SCHEDULER_INTERVAL_S: 'abc' }).expectedIntervalS, 180);
+  assert.equal(heartbeatConfig({ OUTBOX_BLOCKED_S: '120' }).blockedAfterS, 120);
+  assert.equal(heartbeatConfig({ OUTBOX_BLOCKED_S: 'x' }).blockedAfterS, 900);
+});
+
+test('el latido se persiste por origen y no propaga el error', async () => {
+  const calls = [];
+  const ok = async (strings) => { calls.push(strings.join('?')); return []; };
+  assert.equal(await recordSchedulerHeartbeat({ source: 'external', result: { durationMs: 12 }, client: ok }), true);
+  assert.match(calls[0], /INSERT INTO scheduler_heartbeat/);
+  assert.match(calls[0], /ON CONFLICT \(source\) DO UPDATE/);
+  // Un origen desconocido no escribe.
+  assert.equal(await recordSchedulerHeartbeat({ source: 'otro', client: ok }), false);
+  // Un fallo de base no tumba la pasada.
+  const boom = async () => { throw new Error('sin tabla'); };
+  assert.equal(await recordSchedulerHeartbeat({ source: 'timer', client: boom }), false);
+  assert.deepEqual(HEARTBEAT_SOURCES, ['external', 'timer', 'admin', 'traffic']);
 });

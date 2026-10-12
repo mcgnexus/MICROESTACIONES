@@ -11,6 +11,8 @@ export const MESSAGE_TTL_MINUTES = {
   lead_confirmation: 10080,
   lead_notice: 10080,
   commercial: 10080,
+  // Prueba de suscripción pública: etiquetada y de vida corta, nunca un episodio.
+  subscription_test: 15,
 };
 
 const TTL_ENV_KEYS = {

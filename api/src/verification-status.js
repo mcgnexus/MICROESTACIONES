@@ -7,6 +7,7 @@
 // exponer nunca el código ni datos de otros contactos.
 import { emailDeliveryReady } from './email.js';
 import { whatsappProvider } from './whatsapp.js';
+import { isProduction } from './env.js';
 
 // Estados visibles. `sin_codigo` es «todavía no se ha pedido nada»; `manual` es
 // el modo piloto de WhatsApp, donde el código queda pendiente de envío humano.
@@ -42,12 +43,17 @@ export function verificationState(row = {}, now = new Date()) {
 }
 
 // ¿Se puede entregar un código por este canal ahora mismo? WhatsApp solo lo
-// bloquea `disabled` (en modo manual el código queda pendiente de envío); el
-// correo depende de que haya proveedor configurado (`console` fuera de
-// producción). Sin datos, no se finge disponibilidad.
+// bloquea `disabled`; `manual` deja el código pendiente de envío humano y
+// `console` cuenta solo fuera de producción (para desarrollo, no para demostrar
+// entrega real). El correo depende de que haya proveedor configurado.
 export function channelAvailable(channel, env = process.env) {
   if (channel === 'email') return emailDeliveryReady(env);
-  if (channel === 'whatsapp') return whatsappProvider(env) !== 'disabled';
+  if (channel === 'whatsapp') {
+    const provider = whatsappProvider(env);
+    if (provider === 'disabled') return false;
+    if (provider === 'console') return !isProduction(env);
+    return true;
+  }
   return false;
 }
 

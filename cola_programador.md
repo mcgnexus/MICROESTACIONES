@@ -43,13 +43,16 @@ Base: `notification_outbox`, `notify.js` (`dispatchOutbox`), `scheduler.js`.
 
 - El correo de acceso necesita un **intento inmediato** tras persistirlo y recuperación frecuente si falla; **no** espera a un proceso diario.
 - **No** marcar un envío como realizado por el mero hecho de añadirlo a la cola.
+- Al reclamar, se ordena primero por **caducidad más próxima** (`expires_at ASC NULLS LAST`) y, a igualdad, por prioridad de tipo (verificación > aviso > confirmaciones/aviso interno > comercial). El código de verificación (10 min) sale así por delante del aviso (4 h) sin reglas fijas que envejezcan mal.
 
 ## 5. Programador periódico
 
 - Ejecutor independiente del tráfico.
 - Frecuencia inicial: **1 minuto** para recuperar entregas y comprobar tareas vencidas.
+- Objetivo del disparador externo: **≤ 3 min**, para que el código de verificación (10 min) tenga margen de varias pasadas.
 - Cada tarea AEMET mantiene su **propia cadencia** (no consultar todas cada minuto).
 - El sistema comprueba también conexión, retención y mantenimiento a sus frecuencias.
+- **Latido persistido** (`scheduler_heartbeat`): cada origen (externo, temporizador, admin, tráfico) deja `last_run_at` en cada pasada. `GET /api/v1/maintenance/status` y `admin/maintenance/limits` muestran `lastRunAt`, antigüedad y `stale` (obsoleto si supera `max(3× intervalo esperado, 300) s`). Si ningún origen está fresco, no hay planificador activo.
 
 ### Vercel
 

@@ -205,17 +205,19 @@ Los detectores de sistema (desconexión, batería) y la cola de entrega ya **no 
 | Temporizador (`startScheduler`) | proceso largo (`npm start`, Node) | `SYSTEM_EVAL_INTERVAL_S`, `OUTBOX_EVAL_INTERVAL_S`, `OUTBOX_BATCH_SIZE` |
 | `schedulerRequestTick` (respaldo, **desactivado por defecto**) | cualquier petición a `/api/…` | `SCHEDULER_REQUEST_TICK=true` lo activa |
 
-- **No hay cron de Vercel**: el plan gratuito solo admite un disparo diario y no se usa para avisos. La latencia la marca el intervalo del disparador externo (con n8n cada 5 min, entrega y desconexión tardan como mucho ese intervalo más la pasada). Sin disparador externo y sin respaldo por tráfico **no hay pasadas ni entrega**.
+- **No hay cron de Vercel**: el plan gratuito solo admite un disparo diario y no se usa para avisos. La latencia la marca el intervalo del disparador externo. **Objetivo recomendado: ≤ 3 min**, para que el código de verificación (10 min) tenga margen de varias pasadas. Sin disparador externo y sin respaldo por tráfico **no hay pasadas ni entrega**.
+- **Comprobar qué disparador está activo**: cada origen (externo, temporizador, admin o tráfico) deja un **latido persistido** (`scheduler_heartbeat`) en cada pasada. `GET /api/v1/maintenance/status` y `GET /api/v1/admin/maintenance/limits` devuelven `heartbeat.sources` con `lastRunAt`, antigüedad y `stale` (obsoleto si supera `max(3 × EXPECTED_SCHEDULER_INTERVAL_S, 300) s)`). Si ningún origen está fresco, no hay planificador activo.
 - **Presupuesto por invocación**: en serverless cada llamada procesa **una fila** de la cola por defecto (`maxDuration` 30 s). El disparo externo puede pedir más con `?outbox=N` (1–20, acotado) o repetir la llamada hasta vaciar la cola. La exclusión real la dan `FOR UPDATE SKIP LOCKED` y el bloqueo de filas de regla: repetir la llamada nunca duplica envíos ni episodios.
-- **Monitorización**: `GET /api/v1/maintenance/status` con `CRON_SECRET` devuelve recuento de la cola por estado, **antigüedad del elemento pendiente más viejo**, alertas abiertas (hasta 50) y configuración efectiva. `GET /api/v1/admin/maintenance/limits` documenta intervalos, límites HTTP, caducidades, el bloque `mechanism` (mecanismo efectivo) y el estado del planificador; `POST /api/v1/admin/maintenance/scheduler` permite dispararla a mano.
-- **Aceptación sugerida**: con diez destinatarios en cola y n8n a 5 min con `outbox=10`, toda la cola se procesa en la primera pasada; los códigos llegan antes de caducar (`MESSAGE_TTL_MINUTES`); medir la latencia por separado desde la observación, desde la recepción y desde la apertura del episodio.
+- **Prioridad de la cola**: se reclama primero lo que **antes caduca** (`expires_at ASC NULLS LAST`), con prioridad de tipo como desempate (verificación > aviso > confirmación/aviso interno > comercial). Así el código de 10 min sale por delante del aviso de 4 h.
+- **Monitorización**: `GET /api/v1/maintenance/status` con `CRON_SECRET` devuelve recuento por estado, `failed`/`expired`, **errores recientes** (tipo, canal, `last_error`, detalle, antigüedad), `blocked` (pendiente accionable más viejo que `OUTBOX_BLOCKED_S`, por defecto 900 s), el **latido por origen** y `adminNotice` (¿configurado? ¿listo? nº de destinatarios). `GET /api/v1/admin/maintenance/limits` añade intervalos, umbrales, límites HTTP, caducidades y el bloque `mechanism`; `POST /api/v1/admin/maintenance/scheduler` la dispara a mano.
+- **Aceptación sugerida**: con diez destinatarios en cola y n8n a 3 min con `outbox=10`, toda la cola se procesa en la primera pasada; los códigos llegan antes de caducar (`MESSAGE_TTL_MINUTES`); medir la latencia por separado desde la observación, desde la recepción y desde la apertura del episodio.
 - **Latencia esperada**:
-  - disparo externo (n8n cada 5 min) → hasta 5 min más la duración de la pasada;
+  - disparo externo (n8n ≤ 3 min) → hasta 3 min más la duración de la pasada;
   - reintentos fallidos → **30 s, 60 s, 120 s… hasta 1 h**, con un tope de 5 intentos.
 
 ### Programar el disparo con n8n
 
-1. Importa `docs/n8n-planificador.json` en tu n8n: dispara cada 5 min y llama a `POST /api/v1/maintenance/scheduler?outbox=10` con `Authorization: Bearer <CRON_SECRET>`.
+1. Importa `docs/n8n-planificador.json` en tu n8n: dispara cada 3 min y llama a `POST /api/v1/maintenance/scheduler?outbox=10` con `Authorization: Bearer <CRON_SECRET>`.
 2. Define la variable de entorno `TECRURAL_CRON_SECRET` en n8n con el mismo valor que `CRON_SECRET` en Vercel, y ajusta la URL si usas dominio propio.
 3. (Opcional) Importa `docs/n8n-avisos.json` para sondear `GET /api/v1/maintenance/status` cada 2 min y añadir un paso que empuje las `openAlerts` a Telegram/WhatsApp/email; un agente de IA también puede leerlas por el servidor MCP (`list_alerts`).
 4. (Recomendado como red de seguridad) Activa `SCHEDULER_REQUEST_TICK=true` en Vercel: cualquier petición a la API da un empujón a las pasadas (con el mismo tope de 60 s), de modo que si n8n se cae, el tráfico del panel mantiene el servicio.
@@ -251,6 +253,8 @@ Toda llamada externa sale con tiempo máximo en `src/http-limits.js`: `HTTP_TIME
 Para los primeros pilotos, `WHATSAPP_PROVIDER=manual`. En este modo el aviso se genera igual, pero **no se envía solo**: el mensaje queda en estado `manual` y aparece en **Administración → WhatsApp manual**, con el texto ya redactado y un enlace `wa.me`. Se envía a mano desde el teléfono y se marca **Marcar enviado** (o vía `PATCH /api/v1/admin/outbox/:id`). Así se valida la demanda sin asumir la integración de la API de WhatsApp.
 
 El **email** de confirmación y de aviso funciona de forma automática con `EMAIL_PROVIDER` (`resend` en producción). Cuando haya usuarios recurrentes, cambia `WHATSAPP_PROVIDER` a `meta` o `twilio` y la cola se enviará sola.
+
+Con `meta`/`twilio` el envío automático usa **plantillas aprobadas** (`WHATSAPP_TEMPLATE_VERIFICATION`, `_ALERT`, `_LEAD`, `_COMMERCIAL`, `_TEST` y `WHATSAPP_TEMPLATE_LANG`), porque la plataforma exige plantilla para iniciar conversación o escribir fuera de la ventana de 24 h. **Sin plantilla configurada el mensaje no se manda como texto**: queda en estado `manual` para enviarlo a mano. Cada intento guarda la plantilla, su idioma y los parámetros; un error de plantilla o destinatario queda registrado en `provider_detail` y nunca se convierte en un éxito ficticio. `console` solo vale para desarrollo: en producción no cuenta como entrega. Las categorías y precios de plantilla los confirma el proveedor al implantar.
 
 El mismo canal entrega el código de verificación de contactos. Para probar la verificación sin proveedor, activa `OTP_DEBUG=true` en desarrollo.
 - `GET /health` — comprobación de servicio y conexión a Neon.

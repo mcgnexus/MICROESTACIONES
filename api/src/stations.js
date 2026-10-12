@@ -70,6 +70,8 @@ const patchSchema = z.object({
   site_info: siteInfoSchema,
   verification: verificationSchema,
   publish_permission: z.boolean(),
+  // Avisos públicos: permiso distinto de publicar datos.
+  public_alerts_enabled: z.boolean(),
   coverage_km: z.number().gt(0).max(500),
   active: z.boolean(),
 }).partial().strict();
@@ -81,14 +83,14 @@ const createSchema = patchSchema.extend({
 
 // Fragmento reutilizable: en sql`` se inserta como SQL crudo, nunca como valor.
 const deviceCols = sql`id, name, owner, location_type, latitude, longitude, public_zone,
-  aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission,
+  aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission, public_alerts_enabled,
   site_info, verification, coverage_km, active, created_at, last_seen_at`;
 
 const deviceSelect = sql`SELECT ${deviceCols} FROM devices`;
 
 // Mismo listado calificado para el JOIN con device_status (firmware_version existe en ambas tablas).
 const deviceColsJoined = sql`d.id, d.name, d.owner, d.location_type, d.latitude, d.longitude, d.public_zone,
-  d.aemet_municipality_code, d.aemet_station_id, d.aemet_warning_area, d.altitude, d.installation_date, d.sensors, d.firmware_version, d.publish_permission,
+  d.aemet_municipality_code, d.aemet_station_id, d.aemet_warning_area, d.altitude, d.installation_date, d.sensors, d.firmware_version, d.publish_permission, d.public_alerts_enabled,
   d.site_info, d.verification, d.coverage_km, d.active, d.created_at, d.last_seen_at`;
 
 const stationSelect = sql`SELECT ${deviceColsJoined}, c.config,
@@ -393,14 +395,14 @@ router.post('/', requireSubscriber, requireRole('operator'), csrfGuard, async (r
   try {
     const row = await sql.begin(async (tx) => {
       const [created] = await tx`INSERT INTO devices (id, name, owner, location_type, latitude, longitude,
-          public_zone, aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission,
+          public_zone, aemet_municipality_code, aemet_station_id, aemet_warning_area, altitude, installation_date, sensors, firmware_version, publish_permission, public_alerts_enabled,
           site_info, verification, coverage_km, active)
         VALUES (${data.id}, ${data.name}, ${data.owner ?? null}, ${data.location_type ?? 'finca'},
           ${data.latitude ?? null}, ${data.longitude ?? null}, ${data.public_zone ?? null},
           ${data.aemet_municipality_code ?? null}, ${data.aemet_station_id ?? null}, ${data.aemet_warning_area ?? null},
           ${data.altitude ?? null}, ${data.installation_date ?? null},
           ${tx.json({ temperature: true, humidity: true, pressure: true, battery: true, lux: false, ...(data.sensors || {}) })},
-          ${data.firmware_version ?? null}, ${data.publish_permission ?? false},
+          ${data.firmware_version ?? null}, ${data.publish_permission ?? false}, ${data.public_alerts_enabled ?? false},
           ${tx.json(data.site_info ?? {})}, ${tx.json(data.verification ?? {})},
           ${data.coverage_km ?? 25}, ${data.active ?? true})
         RETURNING ${deviceCols}`;
@@ -441,7 +443,7 @@ router.patch('/:id', requireSubscriber, requireRole('operator'), csrfGuard, requ
   const patch = {};
   for (const key of ['name', 'owner', 'location_type', 'latitude', 'longitude', 'public_zone',
     'aemet_municipality_code', 'aemet_station_id', 'aemet_warning_area',
-    'altitude', 'installation_date', 'firmware_version', 'publish_permission', 'coverage_km', 'active']) {
+    'altitude', 'installation_date', 'firmware_version', 'publish_permission', 'public_alerts_enabled', 'coverage_km', 'active']) {
     if (data[key] !== undefined) patch[key] = data[key];
   }
   if (data.sensors !== undefined) {

@@ -7,7 +7,10 @@ import { requireSubscriber, requireRole, csrfGuard } from './auth.js';
 import { audit } from './audit.js';
 import { hashPassword, randomToken } from './security.js';
 import { dispatchOutbox, sendWhatsApp, sendEmail } from './notify.js';
-import { runScheduledPasses, schedulerConfig, schedulerState, SCHEDULER_MIN_INTERVAL_MS } from './scheduler.js';
+import { whatsappRequiresTemplate } from './whatsapp.js';
+import { whatsappTemplate } from './message-templates.js';
+import { runScheduledPasses, schedulerConfig, schedulerState, SCHEDULER_MIN_INTERVAL_MS, heartbeatConfig, recordSchedulerHeartbeat } from './scheduler.js';
+import { outboxSnapshot, heartbeatSnapshot, adminNoticeSnapshot } from './maintenance.js';
 import { httpLimits } from './http-limits.js';
 import { LEAD_STATUSES, REQUEST_TYPES } from './leads.js';
 import { SERVICE_STATUSES, servicePayload } from './services.js';
@@ -400,8 +403,13 @@ router.post('/subscribers/:id/test-message', csrfGuard, async (req, res) => {
   if (!contacts.length) return res.status(404).json({ error: 'contact_not_found' });
   const contact = contacts[0];
   const text = 'Prueba de TecRural: si recibes este mensaje, tus alertas de finca llegarán por este canal.';
+  // Con proveedores que exigen plantilla, la prueba usa la plantilla configurada
+  // (WHATSAPP_TEMPLATE_TEST); sin ella no se manda texto, queda como manual.
+  const template = contact.channel === 'whatsapp' ? whatsappTemplate('test', { params: [text] }) : null;
   const result = contact.channel === 'whatsapp'
-    ? await sendWhatsApp(contact.address, text)
+    ? (whatsappRequiresTemplate() && !template
+        ? { ok: false, manual: true, error: 'template_required' }
+        : await sendWhatsApp(contact.address, text, process.env, { template }))
     : await sendEmail(contact.address, 'Prueba de TecRural', text);
   await audit(sql, req, 'contact.test', 'subscriber', String(subscriberId),
     null, { channel: contact.channel, ok: result.ok, error: result.error ?? null });
@@ -416,7 +424,8 @@ router.get('/outbox', async (req, res) => {
   const status = OUTBOX_STATUSES.includes(req.query.status) ? req.query.status : null;
   const rows = await sql`SELECT id::text AS id, kind, alert_id::text AS alert_id, subscriber_id,
       channel, address, subject, body, status, attempts, next_attempt_at, last_error,
-      provider_message_id, sent_at, delivered_at, expires_at, claimed_by, created_at
+      provider_message_id, template_name, template_language, provider_detail,
+      sent_at, delivered_at, expires_at, claimed_by, created_at
     FROM notification_outbox
     ${status ? sql`WHERE status = ${status}` : sql``}
     ORDER BY created_at DESC LIMIT 200`;
@@ -478,6 +487,7 @@ router.post('/maintenance/retention', csrfGuard, async (req, res) => {
 // temporizador del proceso largo o el cron; esto sirve para verificarlo.
 router.post('/maintenance/scheduler', csrfGuard, async (req, res) => {
   const result = await runScheduledPasses({ force: true, outboxLimit: IS_SERVERLESS ? 1 : undefined });
+  await recordSchedulerHeartbeat({ source: 'admin', result });
   await audit(sql, req, 'scheduler.run', 'system', null, null, result);
   res.json(result);
 });
@@ -486,29 +496,38 @@ router.post('/maintenance/scheduler', csrfGuard, async (req, res) => {
 // secretos. Sirve para comprobar que la configuración respeta el plan contratado.
 router.get('/maintenance/limits', async (_req, res) => {
   const config = schedulerConfig();
+  const [outbox, heartbeat, adminNotice] = await Promise.all([
+    outboxSnapshot(), heartbeatSnapshot(), adminNoticeSnapshot(),
+  ]);
   res.json({
     scheduler: {
       ...config,
+      ...heartbeatConfig(),
       minIntervalMs: SCHEDULER_MIN_INTERVAL_MS,
       state: schedulerState(),
       // El mecanismo efectivo de este despliegue: el plan gratuito de Vercel
       // solo admite un cron diario y no se usa para avisos.
       mechanism: {
-        primary: 'disparador externo (n8n o cron externo) → POST /api/v1/maintenance/scheduler con CRON_SECRET cada pocos minutos',
+        primary: 'disparador externo (n8n o cron externo) → POST /api/v1/maintenance/scheduler con CRON_SECRET cada ≤ 3 min',
         vercelCron: 'no configurado: el plan gratuito solo admite un cron diario y no se usa para avisos',
         trafficTick: config.requestTickEnabled ? 'activo como respaldo' : 'inactivo (SCHEDULER_REQUEST_TICK=true para activarlo como respaldo)',
-        monitoring: 'GET /api/v1/maintenance/status con CRON_SECRET: antigüedad de la cola y alertas abiertas',
+        monitoring: 'GET /api/v1/maintenance/status con CRON_SECRET: cola, errores recientes, latido por origen y aviso al administrador',
+        identification: 'comprobar en heartbeat.sources qué origen tiene lastRunAt reciente y stale=false; si ninguno está fresco, no hay disparador activo',
       },
       expectedLatency: {
         disconnection: 'hasta el intervalo del disparador externo más la duración de la pasada',
         delivery: 'hasta el intervalo del disparador externo más el backoff del proveedor',
         retryBackoff: '30 s, 60 s, 120 s… hasta 1 h (5 intentos como máximo)',
-        note: 'Sin disparador externo ni respaldo por tráfico no hay pasadas: no hay entrega. Mide la latencia desde la observación, desde la recepción y desde la apertura del episodio por separado.',
+        note: 'Con verificación de 10 min y disparo ≤ 3 min hay margen para al menos tres pasadas. Sin disparador externo ni respaldo por tráfico no hay pasadas: no hay entrega. Mide la latencia desde la observación, desde la recepción y desde la apertura del episodio por separado.',
       },
     },
+    outbox,
+    heartbeat,
+    adminNotice,
     http: httpLimits(),
     messageTtlMinutes: MESSAGE_TTL_MINUTES,
   });
+});
 });
 
 // ---- Auditoría -------------------------------------------------------------

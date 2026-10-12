@@ -5,12 +5,12 @@
       "parameters": {
         "rule": {
           "interval": [
-            { "field": "minutes", "minutesInterval": 5 }
+            { "field": "minutes", "minutesInterval": 3 }
           ]
         }
       },
       "id": "a1b2c3d4-0000-4000-8000-000000000001",
-      "name": "Cada 5 minutos",
+      "name": "Cada 3 minutos",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [-200, 0]
@@ -37,7 +37,7 @@
     }
   ],
   "connections": {
-    "Cada 5 minutos": {
+    "Cada 3 minutos": {
       "main": [
         [
           { "node": "Ejecutar pasadas (detectores + cola)", "type": "main", "index": 0 }

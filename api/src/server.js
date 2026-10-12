@@ -23,6 +23,7 @@ import { dewPointCelsius } from './statistics.js';
 import adminRouter from './admin.js';
 import accountRouter from './account.js';
 import contactsRouter from './contacts.js';
+import publicAlertsRouter from './public-alerts.js';
 import farmsRouter from './farms.js';
 import publicRouter from './public.js';
 import { injectLandingWeather } from './landing-ssr.js';
@@ -36,12 +37,13 @@ import {
 import { enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
 import {
   runScheduledPasses, schedulerConfig, schedulerRequestTick, startScheduler,
-  outboxLimitForRequest, schedulerState,
+  outboxLimitForRequest, schedulerState, recordSchedulerHeartbeat,
 } from './scheduler.js';
 import {
   verifyMetaSignature, verifySvixSignature, verifyTwilioSignature,
   parseDeliveryEvents, applyProviderStatus,
 } from './webhooks.js';
+import { outboxSnapshot, heartbeatSnapshot, adminNoticeSnapshot } from './maintenance.js';
 import { effectiveConfig } from './device-config.js';
 import { classifyMeasurementTime } from './measurement-policy.js';
 import { normalizeAcquisition, recordConsent, latestConsent } from './consent.js';
@@ -77,7 +79,7 @@ app.use((req, res, next) => {
 // ruta que responde se come la petición y el middleware nunca se ejecuta (era el
 // defecto que ataba los detectores y la cola a las visitas al panel). Es un
 // respaldo; el mecanismo normal es el temporizador o el cron.
-app.use(schedulerRequestTick());
+app.use(schedulerRequestTick({ onRun: (result) => recordSchedulerHeartbeat({ source: 'traffic', result }) }));
 app.use('/api/v1/metrics', analyticsRouter);
 
 app.get('/health', async (_req, res) => {
@@ -310,11 +312,13 @@ app.post('/api/v1/leads', async (req, res) => {
     for (const channel of commercialConsentChannels(parsed.data)) {
       await recordConsent(tx, { leadId: created.id, purpose: 'commercial', channel, action: 'granted', source: 'lead', ip, userAgent });
     }
+    // La confirmación al visitante y el aviso interno se encolan en la MISMA
+    // transacción que crea la solicitud. Solo son INSERT en la cola —ninguna
+    // llamada al proveedor aquí—, así que la intención de envío es durable y no
+    // se pierde si la función se corta tras responder.
+    await enqueueLeadMessages(tx, parsed.data);
     return { leadId: created.id, grantedNew: false };
   });
-  // La confirmación y el aviso interno se encolan sin bloquear la respuesta: el
-  // lead ya está guardado aunque el proveedor de email todavía no esté listo.
-  if (outcome.leadId) enqueueLeadMessages(sql, parsed.data).catch((error) => console.error('aviso de lead:', error.message));
   if (outcome.grantedNew) {
     await markMetric(sql, 'commercial_authorized', { leadId: outcome.duplicateId, acquisition: lead.campaign }).catch(metricFailure);
   }
@@ -998,6 +1002,7 @@ app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/contacts', contactsRouter);
 app.use('/api/v1/farms', farmsRouter);
 app.use('/api/v1/public', publicRouter);
+app.use('/api/v1/public-alerts', publicAlertsRouter);
 app.use('/api/v1', accountRouter);
 // Servidor MCP para agentes de IA (solo lectura, token de servidor). Va antes
 // del catch-all de la SPA para que no se lo coma la ruta de páginas.
@@ -1038,36 +1043,36 @@ async function cronScheduler(req, res) {
     force: true,
     outboxLimit: outboxLimitForRequest(req.query.outbox ?? req.body?.outbox, isServerless),
   });
+  // Latido persistido: deja constancia de que el disparador externo está activo,
+  // sin depender del estado en memoria que se pierde en cada cold start.
+  await recordSchedulerHeartbeat({ source: 'external', result });
   res.json(result);
 }
 
-// Estado para el disparador externo y la monitorización (mismo secreto): cola
-// de entrega con su antigüedad, alertas abiertas para empujar donde toque y
-// configuración efectiva del planificador. Sin secretos.
+// Estado para el disparador externo y la monitorización (mismo secreto): cola de
+// entrega con su antigüedad y errores recientes, latido del planificador por
+// origen, disponibilidad del aviso al administrador, alertas abiertas y
+// configuración efectiva. Sin secretos y de solo lectura.
 async function maintenanceStatus(req, res) {
   if (!CRON_SECRET) return res.status(503).json({ error: 'cron_not_configured' });
   const provided = (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.get('x-cron-secret');
   if (!sameSecret(provided, CRON_SECRET)) return res.status(403).json({ error: 'forbidden' });
   const now = new Date();
-  const rows = await sql`SELECT status, count(*)::integer AS n, min(created_at) AS oldest
-    FROM notification_outbox GROUP BY status`;
-  const counts = Object.fromEntries(rows.map((row) => [row.status, row.n]));
-  const actionable = rows.filter((row) => ['pending', 'manual', 'sending'].includes(row.status));
-  const oldest = actionable.map((row) => row.oldest).filter(Boolean)
-    .sort((a, b) => new Date(a) - new Date(b))[0] ?? null;
-  const openAlerts = await sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name,
-      a.level, a.message, a.category, a.observed_at, a.created_at
-    FROM alerts a JOIN devices d ON d.id = a.device_id
-    WHERE a.closed_at IS NULL
-    ORDER BY a.created_at DESC LIMIT 50`;
+  const [outbox, heartbeat, adminNotice, openAlerts] = await Promise.all([
+    outboxSnapshot({ now }),
+    heartbeatSnapshot({ now }),
+    adminNoticeSnapshot(),
+    sql`SELECT a.id::text AS id, a.device_id, d.name AS device_name,
+        a.level, a.message, a.category, a.observed_at, a.created_at
+      FROM alerts a JOIN devices d ON d.id = a.device_id
+      WHERE a.closed_at IS NULL
+      ORDER BY a.created_at DESC LIMIT 50`,
+  ]);
   res.json({
     now: now.toISOString(),
-    outbox: {
-      counts,
-      actionable: actionable.reduce((sum, row) => sum + row.n, 0),
-      oldestActionableAt: oldest,
-      oldestActionableSeconds: oldest ? Math.round((now - new Date(oldest)) / 1000) : 0,
-    },
+    outbox,
+    heartbeat,
+    adminNotice,
     openAlerts: openAlerts.map((alert) => ({ ...alert, ageSeconds: Math.round((now - new Date(alert.createdAt)) / 1000) })),
     scheduler: { ...schedulerConfig(), state: schedulerState() },
   });
@@ -1079,7 +1084,11 @@ app.post('/api/v1/maintenance/scheduler', cronScheduler);
 app.get('/api/v1/maintenance/status', maintenanceStatus);
 
 if (!isServerless) {
-  const stopScheduler = startScheduler({ config: schedulerConfig() });
+  const stopScheduler = startScheduler({
+    config: schedulerConfig(),
+    // Latido del temporizador del proceso largo.
+    onRun: (result) => recordSchedulerHeartbeat({ source: 'timer', result }),
+  });
   // El temporizador se detiene si el proceso se va a cerrar con orden.
   process.once('SIGTERM', stopScheduler);
   process.once('SIGINT', stopScheduler);

@@ -98,8 +98,13 @@ function manualRow(row) {
   const text = row.body || row.subject || '';
   const expired = row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now();
   const link = digits && !expired ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
+  // Modalidad y plantilla con la que se intentó el envío automático: sin plantilla
+  // configurada, la fila queda aquí para que la envíe una persona.
+  const modality = row.templateName
+    ? `Plantilla: ${escapeText(row.templateName)}${row.templateLanguage ? ` (${escapeText(row.templateLanguage)})` : ''}`
+    : 'Sin plantilla: envío manual';
   return `<tr>
-    <td>${dateText(row.createdAt)}${row.expiresAt ? `<div class="alert-detail">${expired ? 'Caducado' : `Caduca ${dateText(row.expiresAt)}`}</div>` : ''}</td>
+    <td>${dateText(row.createdAt)}<div class="alert-detail">${modality}</div>${row.expiresAt ? `<div class="alert-detail">${expired ? 'Caducado' : `Caduca ${dateText(row.expiresAt)}`}</div>` : ''}</td>
     <td>${escapeText(row.address)}</td>
     <td><details><summary>Ver mensaje</summary><pre>${escapeText(text)}</pre></details></td>
     <td class="row-actions">

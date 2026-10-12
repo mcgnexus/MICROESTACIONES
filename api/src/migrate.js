@@ -20,6 +20,9 @@ const upgrades = [
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS sensors jsonb NOT NULL DEFAULT '{"temperature":true,"humidity":true,"pressure":true,"battery":true,"lux":false}'::jsonb`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS firmware_version text`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS publish_permission boolean NOT NULL DEFAULT false`,
+  // Cambio 18: habilitación expresa para avisos públicos. Permiso distinto de
+  // `publish_permission` (compartir datos); nunca se deduce de él.
+  `ALTER TABLE devices ADD COLUMN IF NOT EXISTS public_alerts_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS site_info jsonb NOT NULL DEFAULT '{}'::jsonb`,
   `ALTER TABLE devices ADD COLUMN IF NOT EXISTS verification jsonb NOT NULL DEFAULT '{}'::jsonb`,
 
@@ -359,6 +362,55 @@ const upgrades = [
   `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS claimed_at timestamptz`,
   `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS expires_at timestamptz`,
   `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
+  // Cambio 16: la entrega automática de WhatsApp usa plantillas aprobadas. Se
+  // guarda qué plantilla (nombre, idioma y parámetros ordenados) se intentó y el
+  // detalle que devolvió el proveedor, para auditar sin fingir éxito.
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS template_name text`,
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS template_language text`,
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS template_params jsonb`,
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS provider_detail jsonb`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_provider_message_idx
+     ON notification_outbox(provider_message_id) WHERE provider_message_id IS NOT NULL`,
+  // Cambio 17: latido del planificador por origen. Persistido para poder
+  // comprobar qué ejecución está activa en producción entre cold starts.
+  `CREATE TABLE IF NOT EXISTS scheduler_heartbeat (
+     source text PRIMARY KEY CHECK (source IN ('external', 'timer', 'admin', 'traffic')),
+     last_run_at timestamptz NOT NULL,
+     duration_ms integer,
+     result jsonb NOT NULL DEFAULT '{}'::jsonb,
+     updated_at timestamptz NOT NULL DEFAULT now())`,
+  // Cambio 18: suscripción explícita a los avisos públicos de una estación
+  // habilitada. Distinta del acceso privado (`subscriber_devices`/`farms`) y de
+  // `pilot_requests` (workflow de acceso a fincas).
+  `DO $$ BEGIN
+     CREATE TABLE public_alert_subscriptions (
+       subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+       device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       channel text NOT NULL CHECK (channel IN ('email','whatsapp')),
+       categories text[] NOT NULL DEFAULT '{frost,heat,storm,wind,humidity,general}',
+       subscribed_at timestamptz NOT NULL DEFAULT now(),
+       unsubscribed_at timestamptz,
+       PRIMARY KEY (subscriber_id, device_id, channel)
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `CREATE INDEX IF NOT EXISTS public_alert_subscriptions_device_idx
+     ON public_alert_subscriptions(device_id) WHERE unsubscribed_at IS NULL`,
+  `DO $$ BEGIN
+     CREATE TABLE public_alert_interest (
+       subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+       device_id text REFERENCES devices(id) ON DELETE SET NULL,
+       created_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  // Audiencia del aviso en la cola: distingue un aviso privado (acceso a
+  // estación/finca) de uno público (suscripción), para revalidar y cancelar sin
+  // cruzarlos. Null en tipos que no son de aviso.
+  `ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS audience text`,
+  `ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_kind_check`,
+  `ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_kind_check
+     CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice','commercial','subscription_test'))`,
+  `CREATE INDEX IF NOT EXISTS notification_outbox_subscription_idx
+     ON notification_outbox(subscriber_id, kind, audience) WHERE kind = 'alert'`,
   // Rezonda lo que ya estaba en cola sin caducidad: un aviso o un código viejo
   // no se envía. Solo se rellena lo que sigue pendiente.
   `UPDATE notification_outbox SET expires_at = created_at + CASE kind
