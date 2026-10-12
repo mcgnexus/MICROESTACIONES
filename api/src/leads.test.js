@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  leadSchema, isHoneypot, leadRateLimitKeys, leadColumns, normalizePhone, leadContact, leadContactKey,
+  leadSchema, isHoneypot, leadRateLimitKeys, leadColumns, leadContact, leadContactKey,
   commercialConsentChannels, serviceConsentChannels, REQUEST_TYPES,
   ACTIVITIES, INTERESTS, LEAD_STATUSES,
 } from './leads.js';
+import { normalizePhoneE164 } from './phone.js';
 
 const base = {
   name: 'María Pérez',
@@ -22,10 +23,27 @@ const whatsappBase = {
   phone: '+34 600 123 456',
 };
 
-test('lead contract normalizes the WhatsApp phone and strips separators', () => {
+test('el teléfono del contrato se guarda en E.164 con el país por defecto', () => {
   const parsed = leadSchema.parse({ ...whatsappBase });
   assert.equal(parsed.phone, '+34600123456');
-  assert.equal(normalizePhone('600-123.456'), '600123456');
+  // Las tres formas equivalentes resuelven al mismo número.
+  for (const value of ['600 123 456', '+34 600 123 456', '0034 600 123 456']) {
+    assert.equal(leadSchema.parse({ ...whatsappBase, phone: value }).phone, '+34600123456', value);
+  }
+  // Un número de otro país conserva su prefijo.
+  assert.equal(normalizePhoneE164('+33 6 12 34 56 78'), '+33612345678');
+});
+
+test('el país elegido interpreta un teléfono nacional y no se añade +34 a ciegas', () => {
+  const french = leadSchema.parse({ ...whatsappBase, phone: '6 12 34 56 78', phone_country: 'FR' });
+  assert.equal(french.phone, '+33612345678');
+  // Nacional español válido sin prefijo: el país por defecto lo resuelve.
+  assert.equal(normalizePhoneE164('612345678'), '+34612345678');
+  // Cadena que no valida como número: sin conversión, sin resultado.
+  assert.equal(normalizePhoneE164('123456789'), null);
+  assert.equal(leadSchema.safeParse({ ...whatsappBase, phone: '123456789' }).success, false);
+  // País no soportado por la biblioteca.
+  assert.equal(leadSchema.safeParse({ ...whatsappBase, phone_country: 'ZZ' }).success, false);
 });
 
 test('a valid lead can be submitted with email only', () => {
@@ -125,9 +143,9 @@ test('la clave de contacto va etiquetada por canal y normaliza cada lado', () =>
   assert.equal(leadContactKey({ preferred_channel: 'email', email: ' Finca@Example.test ' }), 'email:finca@example.test');
   // El email no pasa por la normalización de teléfono: conserva puntos y guiones.
   assert.equal(leadContactKey({ preferred_channel: 'email', email: 'a-b@x.test' }), 'email:a-b@x.test');
-  // Con ambos contactos, el preferido va primero; sin ninguno, no hay clave.
+  // Con ambos contactos, el preferido va primero y el teléfono se normaliza.
   assert.equal(leadContactKey({ preferred_channel: 'email', email: 'f@x.test', phone: '600123456' }),
-    'email:f@x.test|whatsapp:600123456');
+    'email:f@x.test|whatsapp:+34600123456');
   assert.equal(leadContactKey({ preferred_channel: 'email' }), null);
 });
 

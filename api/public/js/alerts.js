@@ -4,6 +4,9 @@ import {
 } from './ui.js';
 import { renderAlertsList, coverageCaveat } from './alert-copy.js';
 import { WHATSAPP_MANUAL_NOTE } from './notice-taxonomy.js';
+import {
+  alertReadiness, READINESS_CHANNELS, READINESS_CHANNEL_LABELS, READINESS_MISSING_LABELS,
+} from './alert-readiness.js';
 
 const DELIVERY_LABELS = { pending: 'pendiente', sent: 'enviado', delivered: 'entregado', failed: 'fallido', bounced: 'rebotado', manual: 'manual' };
 const CATEGORY_LABELS = { frost: 'Heladas', heat: 'Calor', storm: 'Tormentas', wind: 'Viento', humidity: 'Humedad', general: 'General' };
@@ -253,54 +256,65 @@ function ruleBody(form, deviceId) {
 // de avisos de la cuenta y señalan el siguiente paso concreto, sin insinuar
 // que no hay riesgo meteorológico: de eso responde la cobertura de datos, no
 // el estado del alta.
-export function signupSteps({ me = {}, engineVerified = true, whatsappDelivery = null } = {}) {
-  const contacts = me.contacts || [];
-  const channels = contacts.filter((contact) => contact.channel === 'email' || contact.channel === 'whatsapp');
-  const configured = channels.length > 0;
-  const authorized = channels.some((contact) => contact.optedIn);
-  const verified = channels.some((contact) => contact.verified);
-  const pendingChannels = channels.filter((contact) => !contact.verified || !contact.optedIn);
+//
+// El alta se calcula por canal y destinatario con `alertReadiness`: cada canal
+// se valora sobre el mismo contacto (verificado + autorizado + canal activo) y
+// las categorías y el terreno son pasos propios, no derivados de un contacto.
+export function signupSteps({ me = {}, engineVerified = true, whatsappDelivery = null, prefs = null, prefsKnown } = {}) {
+  const service = {
+    email: me.channelAvailability?.email ?? true,
+    whatsapp: me.channelAvailability?.whatsapp
+      ?? (whatsappDelivery ? whatsappDelivery !== 'disabled' : true),
+  };
+  const readiness = alertReadiness({ me, prefs, service, prefsKnown });
+  const contacts = (me.contacts || []).filter((contact) => contact.channel === 'email' || contact.channel === 'whatsapp');
 
   const steps = [];
 
-  if (me.stations?.length) {
-    steps.push({ key: 'station', label: 'Estación', state: 'ok',
-      detail: `${me.stations.length} estación(es) concedida(s): ${me.stations.map((s) => s.name).join(', ')}.` });
+  if (readiness.stations) {
+    steps.push({ key: 'station', label: 'Estación o finca', state: 'ok',
+      detail: 'La cuenta tiene estación o finca asociada.' });
   } else {
-    steps.push({ key: 'station', label: 'Estación', state: 'missing',
-      detail: 'Sin estación concedida no hay medición propia que pueda disparar avisos.',
+    steps.push({ key: 'station', label: 'Estación o finca', state: 'missing',
+      detail: 'Sin estación concedida ni finca no hay medición propia que pueda disparar avisos.',
       action: { href: '#/', label: 'Solicitar acceso al piloto' } });
   }
 
-  const channelNames = channels.map((c) => (c.channel === 'email' ? 'Correo' : 'WhatsApp')).join(' y ');
-  if (!configured) {
-    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'missing',
-      detail: 'No hay destinatario de avisos configurado: ni correo ni WhatsApp.',
-      action: { href: '#/cuenta', label: 'Configurar canal en Cuenta' } });
-  } else if (pendingChannels.length) {
-    const pending = pendingChannels.map((c) => (c.channel === 'email' ? 'Correo' : 'WhatsApp')).join(' y ');
-    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'pending',
-      detail: `${channelNames} configurado(s), pero falta completar ${pending}: verificación y autorización.`,
-      action: { href: '#/cuenta', label: 'Completar en Cuenta' } });
+  if (!readiness.categories.known) {
+    // No se pudieron leer las preferencias: no se declara «falta» por un error.
+    steps.push({ key: 'categories', label: 'Tipos de aviso', state: 'pending',
+      detail: 'No pudimos comprobar tus tipos de aviso ahora mismo.' });
+  } else if (readiness.categories.selected) {
+    steps.push({ key: 'categories', label: 'Tipos de aviso', state: 'ok',
+      detail: 'Has elegido al menos un tipo de aviso.' });
   } else {
-    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'ok', detail: `${channelNames} verificado(s) y autorizado(s).` });
+    steps.push({ key: 'categories', label: 'Tipos de aviso', state: 'pending',
+      detail: 'Sin tipos de aviso elegidos no habría ningún aviso que enviar.',
+      action: { href: '#/cuenta', label: 'Elegir tipos en Cuenta' } });
   }
 
-  steps.push(authorized
-    ? { key: 'optin', label: 'Autorización', state: 'ok', detail: 'Hay destinatario autorizado a recibir avisos.' }
-    : { key: 'optin', label: 'Autorización', state: configured ? 'pending' : 'missing',
-        detail: configured
-          ? 'Ningún canal está autorizado a recibir avisos: sin autorización no se envía nada.'
-          : 'Sin canal configurado no hay autorización que revisar.',
-        action: configured ? { href: '#/cuenta', label: 'Autorizar en Cuenta' } : null });
-
-  steps.push(verified
-    ? { key: 'verify', label: 'Verificación', state: 'ok', detail: 'Destinatario de avisos verificado con código.' }
-    : { key: 'verify', label: 'Verificación', state: configured ? 'pending' : 'missing',
-        detail: configured
-          ? 'Ningún destinatario verificado: los avisos solo salen a direcciones confirmadas con código.'
-          : 'Sin canal configurado no hay verificación pendiente.',
-        action: configured ? { href: '#/cuenta', label: 'Verificar en Cuenta' } : null });
+  if (!contacts.length) {
+    steps.push({ key: 'channel', label: 'Canal de contacto', state: 'missing',
+      detail: me.emailVerifiedAt
+        ? 'No hay destinatario de avisos configurado. Puedes usar tu correo de acceso, ya confirmado, para los avisos.'
+        : 'No hay destinatario de avisos configurado: ni correo ni WhatsApp.',
+      action: { href: '#/cuenta', label: 'Configurar canal en Cuenta' } });
+  } else {
+    for (const key of READINESS_CHANNELS) {
+      const channel = readiness.channels[key];
+      if (!channel.configured) continue;
+      const label = READINESS_CHANNEL_LABELS[key];
+      if (channel.ready) {
+        steps.push({ key: `channel:${key}`, label, state: 'ok',
+          detail: `${label} verificado, autorizado y con el canal activo.` });
+      } else {
+        const missing = channel.missing.map((code) => READINESS_MISSING_LABELS[code]).join(', ');
+        steps.push({ key: `channel:${key}`, label, state: 'pending',
+          detail: `${label} configurado, pero falta: ${missing}.`,
+          action: { href: '#/cuenta', label: 'Completar en Cuenta' } });
+      }
+    }
+  }
 
   // Esta verificación es la del acceso por correo de la cuenta, no la del
   // destinatario de avisos: van por separado y no se confunden aquí.
@@ -331,8 +345,8 @@ export function renderSignupSteps(steps) {
 
 // Bloque que acompaña a un centro de avisos vacío: estado del alta y siguiente
 // paso. No reemplaza a la cobertura de datos: ambas dicen cosas distintas.
-export function signupBlock({ me, engineVerified, whatsappDelivery }) {
-  const steps = signupSteps({ me, engineVerified, whatsappDelivery });
+export function signupBlock({ me, engineVerified, whatsappDelivery, prefs = null, prefsKnown } = {}) {
+  const steps = signupSteps({ me, engineVerified, whatsappDelivery, prefs, prefsKnown });
   const complete = steps.every((step) => step.state === 'ok');
   const headline = complete
     ? 'Tu alta de avisos está completa. En el periodo consultado, ninguna condición ha superado los umbrales; si esperabas un aviso, revisa la cobertura de datos de arriba.'
@@ -432,14 +446,22 @@ export async function renderAlertsCenter(root) {
         : '<p class="empty">Todavía no hay avisos cerrados.</p>';
       // Estado del alta: se explica siempre que falte algo por completar, aunque
       // ya haya avisos en pantalla; si el alta está completa y hay activos, no hace falta.
+      // Las preferencias deciden si un canal está activo y si hay tipos elegidos.
+      // Si no se pueden leer, se marca como desconocido para no declarar «falta»
+      // por un fallo transitorio.
+      const prefsResult = await api('/api/v1/alert-preferences')
+        .then((result) => ({ known: true, prefs: result.preferences }))
+        .catch(() => ({ known: false, prefs: null }));
       const steps = signupSteps({
         me: session.me, engineVerified: data.engine_verified !== false,
         whatsappDelivery: session.support?.whatsappDelivery,
+        prefs: prefsResult.prefs, prefsKnown: prefsResult.known,
       });
       const incomplete = steps.some((step) => step.state !== 'ok');
       $('[data-signup]', root).innerHTML = (open.length && !incomplete) ? '' : signupBlock({
         me: session.me, engineVerified: data.engine_verified !== false,
         whatsappDelivery: session.support?.whatsappDelivery,
+        prefs: prefsResult.prefs, prefsKnown: prefsResult.known,
       });
       $('[data-counts]', root).textContent = `${open.length} activas · ${closed.length} cerradas`
         + (data.engine_verified === false ? ' · motor de avisos sin comprobar' : '');

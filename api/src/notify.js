@@ -294,9 +294,9 @@ async function verificationStillValid(client, row) {
   if (row.contactVerificationId == null || row.subscriberId == null) {
     return { ok: false, status: 'cancelled', reason: 'verificación inexistente' };
   }
-  const digits = String(row.address).replace(/\D/g, '');
+  // Los contactos y las direcciones de cola están en E.164: se comparan tal cual.
   const sameAddress = row.channel === 'whatsapp'
-    ? sql`regexp_replace(sc.address, '[^0-9]', '', 'g') = ${digits}`
+    ? sql`sc.address = ${row.address}`
     : sql`lower(sc.address) = ${String(row.address).toLowerCase()}`;
   const [active] = await client`
     SELECT 1 AS ok
@@ -317,9 +317,8 @@ async function alertRecipientAllowed(client, row) {
   if (row.subscriberId == null) {
     return { ok: false, status: 'cancelled', reason: 'sin suscriptor', alertState: 'failed' };
   }
-  const digits = String(row.address).replace(/\D/g, '');
   const sameAddress = row.channel === 'whatsapp'
-    ? sql`regexp_replace(sc.address, '[^0-9]', '', 'g') = ${digits}`
+    ? sql`sc.address = ${row.address}`
     : sql`lower(sc.address) = ${String(row.address).toLowerCase()}`;
   const [state] = await client`
     SELECT s.active AS subscriber_active,

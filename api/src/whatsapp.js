@@ -8,6 +8,8 @@ export function whatsappProvider(env = process.env) {
   return (env.WHATSAPP_PROVIDER || 'disabled').toLowerCase();
 }
 
+// Meta espera el número internacional en dígitos, sin «+». La normalización
+// previa garantiza E.164, así que aquí solo se quita el signo.
 const digits = (address) => String(address).replace(/[^\d]/g, '');
 
 export async function sendWhatsApp(address, text, env = process.env) {

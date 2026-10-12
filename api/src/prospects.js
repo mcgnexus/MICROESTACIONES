@@ -12,6 +12,10 @@ import { REQUEST_TYPES } from './leads.js';
 async function list() {
   const rows = await sql`SELECT 'subscriber' AS kind, s.id::text AS id, s.email AS name, s.email,
       (SELECT address FROM subscriber_contacts c WHERE c.subscriber_id = s.id AND channel = 'whatsapp' LIMIT 1) AS whatsapp,
+      (SELECT (verified_at IS NOT NULL AND opted_in_at IS NOT NULL AND opted_out_at IS NULL)
+        FROM subscriber_contacts c WHERE c.subscriber_id = s.id AND channel = 'whatsapp' LIMIT 1) AS whatsapp_ready,
+      (SELECT (verified_at IS NOT NULL AND opted_in_at IS NOT NULL AND opted_out_at IS NULL)
+        FROM subscriber_contacts c WHERE c.subscriber_id = s.id AND channel = 'email' LIMIT 1) AS email_ready,
       p.municipality, p.activity, p.interest, NULL AS preferred_channel, NULL AS request_type,
       s.email_verified_at IS NOT NULL AS verified,
       s.active AS account_active, s.acquisition AS origin, s.created_at,
@@ -20,7 +24,7 @@ async function list() {
     FROM subscribers s LEFT JOIN subscriber_profiles p ON p.subscriber_id = s.id
     LEFT JOIN prospect_tracking t ON t.subscriber_id = s.id
     UNION ALL
-    SELECT 'lead', l.id::text, l.name, l.email, l.phone, l.zone, l.activity, l.interest,
+    SELECT 'lead', l.id::text, l.name, l.email, l.phone, NULL::boolean, NULL::boolean, l.zone, l.activity, l.interest,
       l.preferred_channel, l.request_type,
       false, NULL::boolean, jsonb_build_object('source', l.source, 'campaign', l.campaign), l.created_at,
       t.status, coalesce(t.notes, l.admin_notes), t.next_action, t.next_action_at,

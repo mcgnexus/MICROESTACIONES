@@ -44,7 +44,7 @@ import {
 } from './webhooks.js';
 import { effectiveConfig } from './device-config.js';
 import { classifyMeasurementTime } from './measurement-policy.js';
-import { normalizeAcquisition, recordConsent } from './consent.js';
+import { normalizeAcquisition, recordConsent, latestConsent } from './consent.js';
 import mcpRouter from './mcp.js';
 import {
   MAGIC_REQUEST_MAX_ATTEMPTS, consumeMagicLink, deliverMagicLink, issueMagicLink,
@@ -272,19 +272,33 @@ app.post('/api/v1/leads', async (req, res) => {
   // El alta y sus consentimientos se guardan juntos: la solicitud (servicio) es
   // obligatoria; las novedades y ofertas solo si la casilla venía marcada.
   // La deduplicación se apoya en el canal y el contacto normalizado, no solo en
-  // el nombre: dos personas distintas con el mismo nombre no colisionan. Solo se
-  // comparan los contactos informados, sin casar NULL con NULL.
+  // el nombre: hay que repetir el mismo nombre Y el mismo contacto preferido.
   const contactKey = `lead:${leadContactKey(parsed.data) ?? 'sin-contacto'}`;
   const byPhone = lead.phone ? sql`phone = ${lead.phone}` : null;
   const byEmail = lead.email ? sql`email = ${lead.email}` : null;
-  const sameContact = byPhone && byEmail ? sql`(${byPhone} OR ${byEmail})`
-    : (byPhone || byEmail || sql`false`);
-  const inserted = await sql.begin(async (tx) => {
+  // El contacto que declara el canal elegido es el que debe coincidir: así un
+  // envío no se asocia a otra solicitud solo por compartir teléfono o correo.
+  const samePreferredContact = (parsed.data.preferred_channel === 'whatsapp' ? byPhone : byEmail) || sql`false`;
+  const outcome = await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${contactKey}))`;
     const [duplicate] = await tx`SELECT id FROM farm_leads
       WHERE created_at > now() - interval '24 hours' AND name = ${lead.name}
-        AND ${sameContact}`;
-    if (duplicate) return false;
+        AND ${samePreferredContact}`;
+    if (duplicate) {
+      // Deduplicar no puede hacer desaparecer una autorización nueva: se registra
+      // en la solicitud existente solo lo que este envío concede, y solo si no
+      // estaba ya concedido (idempotente). Nunca se revoca por esta vía.
+      let grantedNew = false;
+      for (const channel of commercialConsentChannels(parsed.data)) {
+        const current = await latestConsent(tx, { leadId: duplicate.id, purpose: 'commercial', channel });
+        if (current?.granted) continue;
+        await recordConsent(tx, {
+          leadId: duplicate.id, purpose: 'commercial', channel, action: 'granted', source: 'lead', ip, userAgent,
+        });
+        grantedNew = true;
+      }
+      return { duplicateId: duplicate.id, grantedNew };
+    }
     const [created] = await tx`INSERT INTO farm_leads (name, preferred_channel, request_type, phone, email, activity, zone, crop_or_livestock, interest,
         notes, consent, consent_at, source, campaign)
       VALUES (${lead.name}, ${lead.preferred_channel}, ${lead.request_type}, ${lead.phone}, ${lead.email}, ${lead.activity}, ${lead.zone},
@@ -296,13 +310,16 @@ app.post('/api/v1/leads', async (req, res) => {
     for (const channel of commercialConsentChannels(parsed.data)) {
       await recordConsent(tx, { leadId: created.id, purpose: 'commercial', channel, action: 'granted', source: 'lead', ip, userAgent });
     }
-    return created.id;
+    return { leadId: created.id, grantedNew: false };
   });
   // La confirmación y el aviso interno se encolan sin bloquear la respuesta: el
   // lead ya está guardado aunque el proveedor de email todavía no esté listo.
-  if (inserted) enqueueLeadMessages(sql, parsed.data).catch((error) => console.error('aviso de lead:', error.message));
-  if (inserted) {
-    const subject = { leadId: inserted, acquisition: lead.campaign };
+  if (outcome.leadId) enqueueLeadMessages(sql, parsed.data).catch((error) => console.error('aviso de lead:', error.message));
+  if (outcome.grantedNew) {
+    await markMetric(sql, 'commercial_authorized', { leadId: outcome.duplicateId, acquisition: lead.campaign }).catch(metricFailure);
+  }
+  if (outcome.leadId) {
+    const subject = { leadId: outcome.leadId, acquisition: lead.campaign };
     await markMetric(sql, 'access_requested', subject).catch(metricFailure);
     if (parsed.data.commercial_consent) await markMetric(sql, 'commercial_authorized', subject).catch(metricFailure);
     // El interés en instalación lo declara la modalidad del envío: una consulta

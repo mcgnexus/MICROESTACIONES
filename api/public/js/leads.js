@@ -2,6 +2,22 @@
 import { api } from './ui.js';
 import { showNotice, clearNotice, setError } from './notifications.js';
 
+// La normalización de teléfonos arrastra los metadatos de países (pesados): se
+// carga de forma diferida, solo cuando se va a usar el canal de WhatsApp, para
+// no engordar la portada. Hasta entonces, el país por defecto es España.
+const DEFAULT_COUNTRY = 'ES';
+let phoneModule = null;
+const loadPhone = async () => (phoneModule ??= await import('./phone.js'));
+
+// Rellena los selectores de país del formulario con los metadatos de la
+// biblioteca, dejando España seleccionada.
+async function fillCountrySelects(form) {
+  const { countryOptions } = await loadPhone();
+  const options = countryOptions().map((country) =>
+    `<option value="${country.code}"${country.code === DEFAULT_COUNTRY ? ' selected' : ''}>${country.name} (+${country.callingCode})</option>`).join('');
+  form.querySelectorAll('select[data-phone-country]').forEach((select) => { select.innerHTML = options; });
+}
+
 // Captación de la visita (utm_* y ref). El servidor la valida de nuevo. Se lee
 // de forma defensiva para poder importar el módulo fuera del navegador.
 const acquisition = (() => {
@@ -48,12 +64,22 @@ export const LEAD_FORM_HTML = `
       <label class="check"><input type="radio" name="preferred_channel" value="whatsapp"> WhatsApp</label>
     </fieldset>
     <label data-contact-email>Correo electrónico<input name="email" type="email" maxlength="254" autocomplete="email" placeholder="tu@correo.com"></label>
-    <label data-contact-whatsapp class="hidden">Teléfono de WhatsApp<input name="phone" type="tel" inputmode="tel" maxlength="30" autocomplete="tel" placeholder="+34 600 000 000">
-      <small class="hint">Usamos este número para responderte por WhatsApp a esta solicitud.</small></label>
+    <label data-contact-whatsapp class="hidden">País del teléfono
+      <select name="phone_country" data-phone-country>
+        <option value="ES" selected>España (+34)</option>
+      </select>
+    </label>
+    <label data-contact-whatsapp class="hidden">Teléfono de WhatsApp<input name="phone" type="tel" inputmode="tel" maxlength="40" autocomplete="tel" placeholder="600 000 000">
+      <small class="hint">Usamos este número para responderte por WhatsApp a esta solicitud. El formato no garantiza que la cuenta exista: se confirma al verificar el contacto.</small></label>
     <p class="error span-all hidden" data-contact-error role="alert"></p>
     <details class="lead-details span-all"><summary>¿Quieres añadir otro canal de contacto o contarnos más? (opcional)</summary>
       <label data-secondary-email>Correo electrónico (opcional)<input name="secondary_email" type="email" maxlength="254" autocomplete="off"></label>
-      <label data-secondary-whatsapp class="hidden">Teléfono de WhatsApp (opcional)<input name="secondary_phone" type="tel" inputmode="tel" maxlength="30" autocomplete="off"></label>
+      <label data-secondary-whatsapp class="hidden">País del teléfono (opcional)
+        <select name="secondary_phone_country" data-phone-country>
+          <option value="ES" selected>España (+34)</option>
+        </select>
+      </label>
+      <label data-secondary-whatsapp class="hidden">Teléfono de WhatsApp (opcional)<input name="secondary_phone" type="tel" inputmode="tel" maxlength="40" autocomplete="off"></label>
       <label>Actividad (opcional)
         <select name="activity">
           <option value="">No indicada</option>
@@ -98,6 +124,9 @@ function setLeadChannel(form) {
   toggle('[data-contact-whatsapp]', channel === 'whatsapp');
   toggle('[data-secondary-email]', channel === 'whatsapp');
   toggle('[data-secondary-whatsapp]', channel === 'email');
+  // Los metadatos de países solo se descargan al abrir WhatsApp: la portada no
+  // paga ese peso si nadie lo usa.
+  if (channel === 'whatsapp') fillCountrySelects(form).catch(() => {});
 }
 
 export async function submitLead(event) {
@@ -150,7 +179,25 @@ export async function submitLead(event) {
     return;
   }
   const email = channel === 'email' ? data.get('email') : data.get('secondary_email');
-  const phone = channel === 'whatsapp' ? data.get('phone') : data.get('secondary_phone');
+  const rawPhone = channel === 'whatsapp' ? data.get('phone') : data.get('secondary_phone');
+  const phoneCountry = (channel === 'whatsapp' ? data.get('phone_country') : data.get('secondary_phone_country'))
+    || DEFAULT_COUNTRY;
+  // El teléfono se normaliza a E.164 con el país elegido. Un número inválido no
+  // se envía: el error aparece junto al campo y el envío no sigue.
+  const { normalizePhoneE164 } = rawPhone ? await loadPhone() : {};
+  const phone = rawPhone ? normalizePhoneE164(rawPhone, phoneCountry) : null;
+  if (rawPhone && !phone) {
+    const message = 'Ese teléfono no es válido para el país seleccionado. Revisa el prefijo o cambia el país.';
+    if (contactError) {
+      contactError.textContent = message;
+      contactError.classList.remove('hidden');
+    } else {
+      setError(scope, '[data-lead-error]', message);
+    }
+    delete form.dataset.submitting;
+    if (submit) submit.disabled = false;
+    return;
+  }
   const body = {
     name: data.get('name') ?? '',
     preferred_channel: channel,
@@ -163,7 +210,10 @@ export async function submitLead(event) {
   if (data.get('activity')) body.activity = data.get('activity');
   if (data.get('interest')) body.interest = data.get('interest');
   if (email) body.email = email;
-  if (phone) body.phone = phone;
+  if (phone) {
+    body.phone = phone;
+    body.phone_country = phoneCountry;
+  }
   for (const field of ['crop_or_livestock', 'notes']) {
     if (data.get(field)) body[field] = data.get(field);
   }

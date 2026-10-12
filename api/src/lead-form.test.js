@@ -51,6 +51,19 @@ test('cada canal muestra su campo y WhatsApp explica para qué se usa el número
   assert.match(phone, /inputmode="tel"/);
 });
 
+test('el teléfono lleva selector de país con España por defecto y se normaliza a E.164', async () => {
+  assert.match(LEAD_FORM_HTML, /name="phone_country"/);
+  assert.match(LEAD_FORM_HTML, /data-phone-country/);
+  assert.match(LEAD_FORM_HTML, /<option value="ES" selected>España \(\+34\)/);
+  // La disponibilidad de WhatsApp no se deduce del formato: se confirma en el canal.
+  assert.match(LEAD_FORM_HTML, /El formato no garantiza que la cuenta exista/);
+  const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
+  assert.match(source, /normalizePhoneE164\(rawPhone, phoneCountry\)/);
+  assert.match(source, /body\.phone_country = phoneCountry/);
+  assert.match(source, /countryOptions\(\)/, 'el selector se rellena con los metadatos');
+  assert.match(source, /Ese teléfono no es válido para el país seleccionado/);
+});
+
 test('el error de canal vacío aparece junto al campo', () => {
   assert.match(LEAD_FORM_HTML, /data-contact-error role="alert"/);
 });

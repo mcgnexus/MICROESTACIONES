@@ -37,6 +37,14 @@ test('la migración conserva los registros y endurece el contacto', () => {
   assert.doesNotMatch(migrate, /UPDATE farm_leads SET (preferred_channel|request_type)/);
 });
 
+test('la migración de teléfonos solo toca los nacionales ES válidos', () => {
+  assert.match(migrate, /await normalizeLegacyPhones\(\)/);
+  assert.match(migrate, /phone IS NOT NULL AND phone NOT LIKE '\+%'/);
+  assert.match(migrate, /channel = 'whatsapp' AND address NOT LIKE '\+%'/);
+  assert.match(migrate, /normalizePhoneE164\(row\.phone, 'ES'\)/);
+  assert.match(migrate, /normalizePhoneE164\(row\.address, 'ES'\)/);
+});
+
 test('la deduplicación usa canal y contacto, no solo el nombre', () => {
   assert.match(leads, /export function leadContactKey/);
   // El lock y la consulta de duplicados se apoyan en la clave de contacto.

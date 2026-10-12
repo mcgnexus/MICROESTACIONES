@@ -1,62 +1,129 @@
 import { $, api, escapeText, dateText, roleLabel, planLabel, session } from './ui.js';
 import { WHATSAPP_MANUAL_NOTE } from './notice-taxonomy.js';
 import { FROST_C, HEAT_C } from './farm-cards.js';
+import { DEFAULT_COUNTRY, countryOptions } from './phone.js';
+import {
+  alertReadiness, READINESS_CHANNELS, READINESS_CHANNEL_LABELS, READINESS_MISSING_LABELS,
+} from './alert-readiness.js';
+
+// Estado visible de un código de verificación: el servidor lo deriva de la cola
+// real (encolado ≠ enviado ≠ entregado) y aquí solo se traduce a texto.
+const VERIFY_STATE_TEXT = {
+  sin_codigo: 'Todavía no has pedido ningún código.',
+  queued: 'Estamos preparando tu código.',
+  manual: 'Tu código queda pendiente de envío manual durante el piloto.',
+  sent: 'Código enviado. Introdúcelo para verificar.',
+  delivered: 'Código entregado. Introdúcelo para verificar.',
+  failed: 'No se pudo enviar el código. Puedes reintentarlo.',
+  expired: 'El código ha caducado. Pide uno nuevo.',
+  verified: 'Destinatario verificado.',
+};
+const VERIFY_FINAL_STATES = ['delivered', 'failed', 'expired', 'verified'];
+const VERIFY_POLL_MS = 3000;
+const VERIFY_POLL_MAX_MS = 120000;
+
+// Sondeo acotado del estado real del código. Se corta en estados finales o a los
+// dos minutos para no castigar la API; al re-renderizar la cuenta se cancelan.
+const verifyTimers = new Map();
+function stopVerifyPolls() {
+  for (const timer of verifyTimers.values()) clearTimeout(timer);
+  verifyTimers.clear();
+}
 
 const CHANNELS = [
-  { key: 'whatsapp', label: 'WhatsApp', placeholder: '+34 600 000 000', addressLabel: 'Teléfono de WhatsApp', inputType: 'tel', autocomplete: 'tel', inputmode: 'tel' },
+  { key: 'whatsapp', label: 'WhatsApp', placeholder: '600 000 000', addressLabel: 'Teléfono de WhatsApp', inputType: 'tel', autocomplete: 'tel', inputmode: 'tel' },
   { key: 'email', label: 'Correo', placeholder: 'tu@correo.es', addressLabel: 'Correo electrónico', inputType: 'email', autocomplete: 'email', inputmode: 'email' },
 ];
 
-function channelBlock(channel, contact) {
+// Selector de país del teléfono de WhatsApp (España por defecto). El servidor
+// vuelve a validar y guarda en E.164.
+function countrySelect() {
+  return `<select name="country">${countryOptions().map((country) =>
+    `<option value="${country.code}"${country.code === DEFAULT_COUNTRY ? ' selected' : ''}>${country.name} (+${country.callingCode})</option>`).join('')}</select>`;
+}
+
+function channelBlock(channel, contact, available) {
   const optedIn = Boolean(contact?.optedIn);
   const verified = Boolean(contact?.verified);
   const status = contact
     ? `${verified ? 'verificado' : 'sin verificar'} · ${optedIn ? 'recibe avisos' : 'no recibe avisos'}`
     : 'sin configurar';
+  // Solo se ofrece verificar si el canal puede entregar el código hoy. En modo
+  // manual sigue disponible: el código queda pendiente de envío humano.
+  const canVerify = Boolean(contact) && !verified && Boolean(available);
   return `<div class="contact-block">
     <div class="section-heading"><div><h3>${channel.label}</h3><p class="hint">${escapeText(status)}</p></div></div>
     <form data-contact-form="${channel.key}" class="rule-form">
+      ${channel.key === 'whatsapp' ? `<label>País del teléfono${countrySelect()}</label>` : ''}
       <label>${channel.addressLabel}<input name="address" type="${channel.inputType}" inputmode="${channel.inputmode}" autocomplete="${channel.autocomplete}" value="${escapeText(contact?.address || '')}" placeholder="${channel.placeholder}"></label>
       <label class="check"><input type="checkbox" name="opt_in" ${optedIn ? 'checked' : ''}> Autorizar avisos por ${channel.label.toLowerCase()}</label>
       <button type="submit">Guardar</button>
     </form>
-    ${contact && !verified ? `<div class="contact-verify">
+    ${canVerify ? `<div class="contact-verify">
       <button type="button" class="quiet" data-verify="${channel.key}">Enviar código de verificación</button>
+      <button type="button" class="quiet hidden" data-resend="${channel.key}">Reenviar código</button>
       <form data-confirm-form="${channel.key}" class="rule-form hidden">
         <label>Código recibido<input name="code" inputmode="numeric" maxlength="6" pattern="\\d{6}" autocomplete="one-time-code"></label>
         <button type="submit">Confirmar código</button>
       </form>
       <p class="hint" data-verify-hint="${channel.key}"></p>
+      <p class="hint" data-verify-state="${channel.key}"></p>
     </div>` : ''}
+    ${contact && !verified && !available
+      ? `<p class="hint">La verificación por ${channel.label} no está disponible ahora mismo. Puedes guardar el contacto y verificarlo cuando el canal vuelva.</p>`
+      : ''}
   </div>`;
 }
 
-// Asistente de avisos: cuatro pasos con su estado real, para que se vea qué
-// falta sin leer un formulario largo de arriba abajo. No sustituye a los
-// controles: los ordena.
-function signupStepper(contacts, prefs) {
-  const configured = contacts.filter((contact) => contact.address);
-  const hasContact = configured.length > 0;
-  const authorized = configured.some((contact) => contact.optedIn);
-  const verified = configured.some((contact) => contact.verified);
-  const effective = Boolean(prefs) && [
-    prefs.receiveFrost, prefs.receiveHeat, prefs.receiveStorm,
-    prefs.receiveWind, prefs.receiveHumidity, prefs.receiveGeneral,
-  ].some(Boolean);
+// Ofrece reutilizar el correo de acceso ya confirmado como destinatario de
+// avisos, sin volver a pedir un código. Solo aparece si todavía no hay un
+// contacto de correo verificado.
+function emailReuseBlock(me, byChannel) {
+  const emailContact = byChannel.email;
+  if (!me.emailVerifiedAt || (emailContact && emailContact.verified)) return '';
+  return `<div class="contact-verify">
+    <p class="hint">Tu correo de acceso ya está confirmado. Puedes usarlo para los avisos sin volver a verificarlo.</p>
+    <button type="button" data-reuse-email>Usar este correo para los avisos</button>
+  </div>`;
+}
+
+// Asistente de avisos: muestra el estado real por canal, sobre el mismo
+// destinatario, y los pasos propios (tipos de aviso y estación o finca). No
+// marca como listo lo que no se ha elegido: un contacto completo no activa por
+// sí solo las categorías ni el terreno.
+function signupStepper(me, prefs) {
+  const readiness = alertReadiness({
+    me: { ...me, contacts: me.contacts || [] }, prefs, service: me.channelAvailability || {},
+  });
   const state = (ok, pending = false) => (ok ? 'ok' : pending ? 'pending' : 'missing');
-  const steps = [
-    { label: 'Contacto', state: state(hasContact),
-      detail: hasContact ? 'Hay un destinatario configurado.' : 'Añade tu WhatsApp o correo.' },
-    { label: 'Autorización', state: state(authorized, hasContact),
-      detail: !hasContact ? 'Primero hace falta un contacto.'
-        : authorized ? 'Autorizaste recibir avisos por ese canal.' : 'Marca la casilla de autorización del canal.' },
-    { label: 'Verificación', state: state(verified, hasContact),
-      detail: !hasContact ? 'Primero hace falta un contacto.'
-        : verified ? 'Destinatario verificado.' : 'Envía y confirma el código de verificación.' },
-    { label: 'Preferencias efectivas', state: state(effective, hasContact),
-      detail: !hasContact ? 'Primero hace falta un contacto.'
-        : effective ? 'Elegiste qué avisos quieres recibir.' : 'Selecciona al menos un tipo de aviso abajo.' },
-  ];
+  const steps = [];
+  for (const key of READINESS_CHANNELS) {
+    const channel = readiness.channels[key];
+    const label = READINESS_CHANNEL_LABELS[key];
+    steps.push({
+      label,
+      state: state(channel.ready, channel.configured),
+      detail: channel.ready
+        ? `Destinatario de ${label.toLowerCase()} verificado, autorizado y con el canal activo.`
+        : channel.configured
+          ? `Falta: ${channel.missing.map((code) => READINESS_MISSING_LABELS[code]).join(', ')}.`
+          : `Añade ${label.toLowerCase()} y verifícalo para recibir avisos por este canal.`,
+    });
+  }
+  steps.push({
+    label: 'Tipos de aviso',
+    state: state(readiness.categories.selected, true),
+    detail: readiness.categories.selected
+      ? 'Has elegido qué avisos quieres recibir.'
+      : 'Selecciona al menos un tipo de aviso abajo.',
+  });
+  steps.push({
+    label: 'Estación o finca',
+    state: state(readiness.stations),
+    detail: readiness.stations
+      ? 'Tu cuenta tiene estación o finca asociada.'
+      : 'Crea una finca y asóciale tu estación.',
+  });
   const tone = { ok: 'badge-valid', pending: 'badge-warn', missing: 'badge-invalid' };
   const text = { ok: 'Listo', pending: 'Pendiente', missing: 'Falta' };
   return `<ol class="signup-steps avisos-steps">${steps.map((step) =>
@@ -93,10 +160,12 @@ const DEFAULT_PREFS = {
 };
 
 export async function renderAccount(root) {
+  stopVerifyPolls();
   const me = session.me;
   const contacts = me.contacts || [];
   const byChannel = Object.fromEntries(contacts.map((contact) => [contact.channel, contact]));
   const farms = me.farms || [];
+  const availability = me.channelAvailability || {};
   const prefs = await api('/api/v1/alert-preferences').then((result) => result.preferences).catch(() => null)
     || DEFAULT_PREFS;
 
@@ -105,14 +174,15 @@ export async function renderAccount(root) {
     <p class="error" data-error role="alert"></p>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">CONFIGURACIÓN DE AVISOS</p><h2>Asistente de avisos</h2></div></div>
-      <p class="hint">Cuatro pasos: contacto → autorización → verificación → preferencias efectivas. Las alertas solo salen a contactos verificados y autorizados.</p>
-      ${signupStepper(contacts, prefs)}
+      <p class="hint">El estado se calcula por canal y destinatario: cada canal solo queda listo si, sobre el mismo contacto, está verificado y autorizado, el canal sigue activo en preferencias, hay algún tipo de aviso elegido, la cuenta tiene estación o finca y el servicio de ese canal está disponible.</p>
+      ${signupStepper(me, prefs)}
       <div class="section-heading"><div><h3>Contacto, autorización y verificación</h3></div></div>
       <p class="hint">Añade tu WhatsApp o correo, autoriza el envío y verifica la dirección. Las alertas solo salen a contactos verificados y autorizados.</p>
       ${session.support?.whatsappDelivery === 'manual'
         ? `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`
         : ''}
-      ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key])).join('')}
+      ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key], availability[channel.key])).join('')}
+      ${emailReuseBlock(me, byChannel)}
       <div class="section-heading"><div><h3>Preferencias efectivas</h3></div></div>
       <p class="hint">No todos necesitan lo mismo: un almendro teme la helada y el ganado el calor. Elige aquí tus avisos.</p>
       <form data-prefs-form class="rule-form">
@@ -224,6 +294,76 @@ export async function renderAccount(root) {
   const error = (message) => { $('[data-error]', root).textContent = message; };
   const refresh = async () => { session.me = await api('/api/v1/me'); await renderAccount(root); };
 
+  // Sondeo del estado real del código tras pedirlo: muestra preparando/enviado/
+  // entregado/fallido/caducado/verificado y habilita el reenvío cuando toca.
+  const startVerifyPoll = (key) => {
+    const startedAt = Date.now();
+    const tick = async () => {
+      let status = null;
+      try { status = await api(`/api/v1/contacts/${key}/verification`); } catch { status = null; }
+      if (status) {
+        const stateEl = $(`[data-verify-state="${key}"]`, root);
+        if (stateEl) stateEl.textContent = VERIFY_STATE_TEXT[status.state] || '';
+        const resend = $(`[data-resend="${key}"]`, root);
+        if (resend) {
+          const waitMs = status.resendAt ? new Date(status.resendAt).getTime() - Date.now() : 0;
+          resend.classList.remove('hidden');
+          resend.disabled = waitMs > 0;
+          resend.textContent = waitMs > 0 ? `Reenviar en ${Math.ceil(waitMs / 1000)} s` : 'Reenviar código';
+        }
+        if (status.state === 'verified') {
+          verifyTimers.delete(key);
+          await refresh();
+          return;
+        }
+        if (VERIFY_FINAL_STATES.includes(status.state)) {
+          verifyTimers.delete(key);
+          return;
+        }
+      }
+      if (Date.now() - startedAt > VERIFY_POLL_MAX_MS) { verifyTimers.delete(key); return; }
+      verifyTimers.set(key, setTimeout(tick, VERIFY_POLL_MS));
+    };
+    tick();
+  };
+
+  const requestCode = async (key) => {
+    error('');
+    try {
+      const result = await api(`/api/v1/contacts/${key}/verify`, { method: 'POST' });
+      const confirm = $(`[data-confirm-form="${key}"]`, root);
+      if (confirm) confirm.classList.remove('hidden');
+      const hint = $(`[data-verify-hint="${key}"]`, root);
+      if (hint) hint.textContent = result.devCode
+        ? `Código de prueba: ${result.devCode}`
+        : 'Estamos preparando tu código.';
+      startVerifyPoll(key);
+    } catch (err) {
+      if (err.message === 'channel_unavailable') {
+        error('Este canal no está disponible ahora mismo. Inténtalo más tarde.');
+      } else if (err.message === 'cooldown' || err.message === 'rate_limited') {
+        error('Espera un momento antes de pedir otro código.');
+      } else {
+        error(`No se pudo enviar el código: ${err.message}`);
+      }
+    }
+  };
+
+  const reuseEmail = $('[data-reuse-email]', root);
+  if (reuseEmail) {
+    reuseEmail.addEventListener('click', async () => {
+      error('');
+      try {
+        await api('/api/v1/account/alert-email', { method: 'POST' });
+        await refresh();
+      } catch (err) {
+        error(err.message === 'email_not_verified'
+          ? 'Tu correo de acceso aún no está confirmado.'
+          : `No se pudo usar este correo: ${err.message}`);
+      }
+    });
+  }
+
   root.querySelectorAll('[data-commercial]').forEach((input) => {
     input.addEventListener('change', async (event) => {
       const channel = event.target.dataset.commercial;
@@ -306,6 +446,7 @@ export async function renderAccount(root) {
       try {
         await api(`/api/v1/contacts/${channel.key}`, { method: 'PUT', body: JSON.stringify({
           address: data.get('address') ?? '', opt_in: data.get('opt_in') === 'on',
+          ...(channel.key === 'whatsapp' ? { country: data.get('country') || DEFAULT_COUNTRY } : {}),
         }) });
         await refresh();
       } catch (err) {
@@ -314,20 +455,10 @@ export async function renderAccount(root) {
     });
 
     const verifyButton = $(`[data-verify="${channel.key}"]`, root);
-    if (verifyButton) {
-      verifyButton.addEventListener('click', async () => {
-        error('');
-        try {
-          const result = await api(`/api/v1/contacts/${channel.key}/verify`, { method: 'POST' });
-          $(`[data-confirm-form="${channel.key}"]`, root).classList.remove('hidden');
-          $(`[data-verify-hint="${channel.key}"]`, root).textContent = result.devCode
-            ? `Código de prueba: ${result.devCode}`
-            : 'Te hemos enviado un código. Introdúcelo para verificar.';
-        } catch (err) {
-          error(`No se pudo enviar el código: ${err.message}`);
-        }
-      });
-    }
+    if (verifyButton) verifyButton.addEventListener('click', () => requestCode(channel.key));
+
+    const resendButton = $(`[data-resend="${channel.key}"]`, root);
+    if (resendButton) resendButton.addEventListener('click', () => requestCode(channel.key));
 
     const confirmForm = $(`[data-confirm-form="${channel.key}"]`, root);
     if (confirmForm) {

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { sql } from './db.js';
 import { evaluateWriteTarget, reportWriteTarget } from './env-guard.js';
+import { normalizePhoneE164 } from './phone.js';
 
 // La migración escribe esquema: no debe ejecutarse por accidente sobre producción.
 if (reportWriteTarget('migración', evaluateWriteTarget())) process.exit(1);
@@ -642,6 +643,64 @@ const seeds = [
        AND NOT EXISTS (SELECT 1 FROM consent_records c WHERE c.lead_id = l.id)`,
 ];
 
+// Cambio 11: los teléfonos guardados sin prefijo internacional se convierten a
+// E.164 solo si son números nacionales válidos de España. No se añade +34 a
+// ciegas: lo que no valida se deja intacto y se trata como legado no utilizable
+// por WhatsApp. Idempotente: repetirlo no cambia nada. Los avisos se agrupan por
+// lotes para no hacer una ida y vuelta por fila en tablas grandes.
+const PHONE_BACKFILL_BATCH = 500;
+
+function chunkRows(rows, size) {
+  const out = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
+
+async function normalizeLegacyPhones() {
+  let migrated = 0;
+  let kept = 0;
+
+  const leads = await sql`SELECT id, phone FROM farm_leads
+    WHERE phone IS NOT NULL AND phone NOT LIKE '+%'`;
+  for (const batch of chunkRows(leads, PHONE_BACKFILL_BATCH)) {
+    const ids = [];
+    const values = [];
+    for (const row of batch) {
+      const e164 = normalizePhoneE164(row.phone, 'ES');
+      if (!e164) { kept += 1; continue; }
+      ids.push(row.id);
+      values.push(e164);
+    }
+    if (!ids.length) continue;
+    await sql`UPDATE farm_leads AS l SET phone = v.value, updated_at = now()
+      FROM unnest(${ids}::bigint[], ${values}::text[]) AS v(id, value)
+      WHERE l.id = v.id`;
+    migrated += ids.length;
+  }
+
+  const contacts = await sql`SELECT id, address FROM subscriber_contacts
+    WHERE channel = 'whatsapp' AND address NOT LIKE '+%'`;
+  for (const batch of chunkRows(contacts, PHONE_BACKFILL_BATCH)) {
+    const ids = [];
+    const values = [];
+    for (const row of batch) {
+      const e164 = normalizePhoneE164(row.address, 'ES');
+      if (!e164) { kept += 1; continue; }
+      ids.push(row.id);
+      values.push(e164);
+    }
+    if (!ids.length) continue;
+    await sql`UPDATE subscriber_contacts AS c SET address = v.value, updated_at = now()
+      FROM unnest(${ids}::bigint[], ${values}::text[]) AS v(id, value)
+      WHERE c.id = v.id`;
+    migrated += ids.length;
+  }
+
+  if (migrated || kept) {
+    console.log(`teléfonos E.164: ${migrated} migrados, ${kept} legado sin tocar`);
+  }
+}
+
 // Ejecuta una sentencia intentando siempre dejar la lista utilizable:
 // schema.sql se parte por ';', que no puede aparecer en comentarios ni literales.
 async function runStatements(label, statements) {
@@ -664,6 +723,7 @@ try {
   await sql`ALTER TABLE measurements ADD CONSTRAINT measurements_sequence_check CHECK (sequence BETWEEN 0 AND 4294967295)`;
   await runStatements('upgrades', upgrades);
   await runStatements('seeds', seeds);
+  await normalizeLegacyPhones();
   console.log('Neon schema is up to date');
 } finally {
   await sql.end();

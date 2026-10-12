@@ -37,6 +37,31 @@ const INTEREST_LABELS = {
   futura_instalacion: 'Futura instalación',
 };
 
+// Contactos y permisos por canal, en una fila desplegable: cada cosa en su
+// columna para no mezclar verificación (hecho técnico) con autorización
+// (consentimiento) ni finalidad con canal.
+function contactsBlock(subject) {
+  const contacts = subject.contacts ?? [];
+  const consents = subject.consents ?? {};
+  const permission = (purpose, channel) => {
+    const state = consents?.[purpose]?.[channel];
+    if (!state) return '—';
+    return state.granted ? `sí · ${escapeText(state.textVersion || '')}` : 'no';
+  };
+  const rows = contacts.map((contact) => `<tr>
+      <td>${CHANNEL_LABELS[contact.channel] || escapeText(contact.channel)}</td>
+      <td>${escapeText(contact.address || '—')}</td>
+      <td>${contact.verified ? 'sí' : 'no'}</td>
+      <td>${contact.optedIn ? 'sí' : 'no'}</td>
+      <td>${permission('service', contact.channel)}</td>
+      <td>${permission('commercial', contact.channel)}</td>
+    </tr>`).join('');
+  const body = rows || '<tr><td colspan="6">Sin contactos declarados.</td></tr>';
+  return `<details><summary>Contactos y permisos</summary>
+    <table><thead><tr><th>Canal</th><th>Dirección</th><th>Verificado</th><th>Avisos</th><th>Servicio</th><th>Publicidad</th></tr></thead>
+    <tbody>${body}</tbody></table></details>`;
+}
+
 function subscriberRow(row) {
   const profile = row.profile
     ? [row.profile.activity && (ACTIVITY_LABELS[row.profile.activity] || row.profile.activity),
@@ -49,7 +74,8 @@ function subscriberRow(row) {
         ? '<span class="badge badge-valid">verificado</span>'
         : '<span class="badge badge-warn">sin verificar</span>'}
       ${row.active ? '' : '<span class="badge badge-invalid">desactivado</span>'}
-      ${profile ? `<div class="alert-detail">${escapeText(profile)}</div>` : ''}</td>
+      ${profile ? `<div class="alert-detail">${escapeText(profile)}</div>` : ''}
+      ${contactsBlock(row)}</td>
     <td><select data-role="${row.id}">${ROLES.map((role) =>
       `<option value="${role}" ${row.role === role ? 'selected' : ''}>${roleLabel(role)}</option>`).join('')}</select></td>
     <td><select data-plan="${row.id}">${PLANS.map((plan) =>
@@ -65,7 +91,10 @@ function subscriberRow(row) {
 }
 
 function manualRow(row) {
-  const digits = String(row.address || '').replace(/[^\d]/g, '');
+  const address = String(row.address || '');
+  // Solo se ofrece wa.me para un número en E.164: un legado sin prefijo abriría
+  // un número equivocado. Se muestra igual, pero sin enlace.
+  const digits = address.startsWith('+') ? address.replace(/[^\d]/g, '') : '';
   const text = row.body || row.subject || '';
   const expired = row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now();
   const link = digits && !expired ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
@@ -102,7 +131,7 @@ function leadRow(lead) {
     : '';
   const followUp = lead.nextContactAt ? `<div class="alert-detail">próximo contacto: ${dateText(lead.nextContactAt)}</div>` : '';
   return `<tr>
-    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div>${requestType}${channelBadge}${campaign}</td>
+    <td>${escapeText(lead.name)}<div class="alert-detail">${escapeText(contact || '—')}</div>${requestType}${channelBadge}${campaign}${contactsBlock(lead)}</td>
     <td>${escapeText(lead.zone || '—')}<div class="alert-detail">${escapeText(detail || '—')}</div>${followUp}</td>
     <td>${dateText(lead.createdAt)}</td>
     <td><select data-lead-status="${lead.id}">${LEAD_STATUSES.map((status) =>

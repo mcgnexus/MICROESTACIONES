@@ -12,9 +12,10 @@ import { listFarms } from './farms.js';
 import { DEFAULT_PREFERENCES, preferenceSchema, preferenceColumns } from './alert-preferences.js';
 import { ACTIVITIES, INTERESTS } from './leads.js';
 import { servicePayload } from './services.js';
+import { channelAvailability } from './verification-status.js';
 import {
   CONSENT_CHANNELS, CONSENT_TEXT_VERSION, consentSummary, grantCommercialConsent,
-  latestConsent, revokeCommercialConsent,
+  latestConsent, recordConsent, revokeCommercialConsent,
 } from './consent.js';
 
 const router = Router();
@@ -53,6 +54,9 @@ router.get('/me', requireSubscriber, async (req, res) => {
     farms,
     services: services.map(servicePayload),
     stations: stations.map((station) => ({ id: station.id, name: station.name, active: station.active })),
+    // Disponibilidad real de cada canal: el cliente no ofrece verificar por un
+    // canal que hoy no puede entregar el código.
+    channelAvailability: channelAvailability(),
   });
 });
 
@@ -119,6 +123,37 @@ router.post('/account/consents', requireSubscriber, csrfGuard, async (req, res) 
   }
   const current = await latestConsent(sql, { subscriberId: req.subscriber.id, purpose: 'commercial', channel });
   res.json({ purpose: 'commercial', channel, current });
+});
+
+// Reutiliza el correo de acceso ya confirmado como destinatario de avisos. La
+// prueba de control existe (`email_verified_at`), así que no se pide un segundo
+// código. Solo registra autorización de SERVICIO para el correo: no crea ni toca
+// permisos comerciales, suscripciones a estación ni dispositivos.
+router.post('/account/alert-email', requireSubscriber, csrfGuard, async (req, res) => {
+  const [me] = await sql`SELECT email, email_verified_at FROM subscribers WHERE id = ${req.subscriber.id}`;
+  const address = String(me?.email || '').trim().toLowerCase();
+  if (!me?.emailVerifiedAt || !address) return res.status(409).json({ error: 'email_not_verified' });
+  const ip = req.ip || req.socket.remoteAddress || null;
+  const userAgent = String(req.get('user-agent') || '').slice(0, 200) || null;
+
+  await sql.begin(async (tx) => {
+    await tx`INSERT INTO subscriber_contacts
+        (subscriber_id, channel, address, verified_at, opted_in_at, opted_out_at)
+      VALUES (${req.subscriber.id}, 'email', ${address}, ${me.emailVerifiedAt}, now(), null)
+      ON CONFLICT (subscriber_id, channel) DO UPDATE SET
+        address = ${address},
+        verified_at = ${me.emailVerifiedAt},
+        opted_in_at = coalesce(subscriber_contacts.opted_in_at, now()),
+        opted_out_at = null,
+        updated_at = now()`;
+    await recordConsent(tx, {
+      subscriberId: req.subscriber.id, purpose: 'service', channel: 'email',
+      action: 'granted', source: 'account', ip, userAgent,
+    });
+  });
+  await audit(sql, req, 'contact.reuse_email', 'subscriber', String(req.subscriber.id), null, { channel: 'email' });
+  const contacts = await listContacts(req.subscriber.id);
+  res.json({ contact: contacts.find((contact) => contact.channel === 'email') ?? null });
 });
 
 const consentSchema = z.object({ communication_consent: z.boolean() }).strict();

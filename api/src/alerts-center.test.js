@@ -9,22 +9,29 @@ const accountSource = await readFile(new URL('../public/js/account.js', import.m
 const me = (over = {}) => ({
   stations: [{ id: 'st-1', name: 'Casco urbano' }],
   contacts: [{ channel: 'email', address: 'a@b.es', verified: true, optedIn: true }],
+  channelAvailability: { email: true, whatsapp: true },
   ...over,
 });
 
-const alta = (over = {}) => signupSteps({ me: me(), engineVerified: true, whatsappDelivery: 'manual', ...over });
+// Preferencias con todos los tipos elegidos y ambos canales activos.
+const fullPrefs = {
+  receiveFrost: true, receiveHeat: true, receiveStorm: true, receiveWind: true,
+  receiveHumidity: true, receiveGeneral: true, channelWhatsapp: true, channelEmail: true,
+};
+
+const alta = (over = {}) => signupSteps({ me: me(), engineVerified: true, whatsappDelivery: 'manual', prefs: fullPrefs, ...over });
 
 // F17 · P2: «No hay avisos para estos filtros» no diferencia falta de avisos,
 // acceso pendiente o configuración incompleta. El estado de alta sí.
 
 test('una cuenta con el alta completa no pide ninguna acción', () => {
   const steps = alta();
-  assert.deepEqual(steps.map((s) => s.state), ['ok', 'ok', 'ok', 'ok', 'ok']);
+  assert.deepEqual(steps.map((s) => s.state), ['ok', 'ok', 'ok', 'ok']);
   for (const step of steps) assert.equal(step.action, undefined);
 });
 
-test('sin estación concedida, el primer paso falta y apunta al piloto', () => {
-  const station = alta({ me: me({ stations: [] }) })[0];
+test('sin estación ni finca, el primer paso falta y apunta al piloto', () => {
+  const station = alta({ me: me({ stations: [], farms: [] }) })[0];
   assert.equal(station.state, 'missing');
   assert.equal(station.action.href, '#/');
   assert.match(station.detail, /medición propia/i);
@@ -32,55 +39,78 @@ test('sin estación concedida, el primer paso falta y apunta al piloto', () => {
 
 test('sin canal de contacto, falta el canal y la acción lleva a Cuenta', () => {
   const steps = alta({ me: me({ contacts: [] }) });
-  assert.equal(steps[1].state, 'missing');
-  assert.equal(steps[1].action.href, '#/cuenta');
-  // Sin canal no hay autorización ni verificación que revisar: se dice, sin acción.
-  assert.equal(steps[2].state, 'missing');
-  assert.ok(!steps[2].action);
-  assert.equal(steps[3].state, 'missing');
+  const channel = steps.find((step) => step.key === 'channel');
+  assert.equal(channel.state, 'missing');
+  assert.equal(channel.action.href, '#/cuenta');
 });
 
-test('canal configurado a medias se marca pendiente y pide completarlo', () => {
-  const steps = alta({ me: me({ contacts: [{ channel: 'whatsapp', address: '+34600', verified: false, optedIn: true }] }) });
-  assert.equal(steps[1].state, 'pending');
-  assert.equal(steps[1].action.href, '#/cuenta');
-  assert.equal(steps[2].state, 'ok', 'hay autorización: opt_in a true');
-  assert.equal(steps[3].state, 'pending', 'falta la verificación del destinatario');
+test('sin canal configurado pero con correo de acceso, se ofrece reutilizarlo', () => {
+  const steps = alta({ me: me({ contacts: [], emailVerifiedAt: '2026-10-01T00:00:00Z' }) });
+  assert.match(steps.find((step) => step.key === 'channel').detail, /correo de acceso/i);
 });
 
 test('la verificación del alta habla del destinatario, no del acceso por correo', () => {
   const steps = alta({ me: me({ contacts: [{ channel: 'email', address: 'a@b.es', verified: false, optedIn: false }] }) });
-  assert.match(steps[3].detail, /destinatario/i);
-  assert.match(steps[3].detail, /código/i);
-  assert.doesNotMatch(steps[3].detail, /correo de acceso/i);
+  const email = steps.find((step) => step.key === 'channel:email');
+  assert.equal(email.state, 'pending');
+  assert.match(email.detail, /sin verificar/i);
+  assert.doesNotMatch(email.detail, /correo de acceso/i);
 });
 
 test('motor sin comprobar degrada el paso de servicio y se declara', () => {
-  const service = alta({ engineVerified: false })[4];
+  const service = alta({ engineVerified: false }).find((step) => step.key === 'service');
   assert.equal(service.state, 'pending');
   assert.match(service.detail, /motor de avisos/i);
 });
 
 test('WhatsApp manual se declara en el servicio sin degradarlo', () => {
-  const service = alta({ whatsappDelivery: 'manual' })[4];
+  const service = alta({ whatsappDelivery: 'manual' }).find((step) => step.key === 'service');
   assert.equal(service.state, 'ok');
   assert.match(service.detail, /manual/i);
 });
 
 test('renderSignupSteps pinta insignia, etiqueta, detalle y acción', () => {
-  const html = renderSignupSteps(alta({ me: me({ stations: [] }) }));
+  const html = renderSignupSteps(alta({ me: me({ stations: [], farms: [] }) }));
   assert.match(html, /badge-invalid/);
   assert.match(html, /<a class="link" href="#\/">Solicitar acceso al piloto<\/a>/);
-  assert.match(html, /Sin estación concedida no hay medición propia/);
+  assert.match(html, /Sin estación concedida ni finca/);
 });
 
 test('el bloque de alta vacía distingue alta incompleta de alta completa', () => {
-  const incomplete = signupBlock({ me: me({ contacts: [] }), engineVerified: true, whatsappDelivery: 'manual' });
+  const incomplete = signupBlock({ me: me({ contacts: [] }), engineVerified: true, whatsappDelivery: 'manual', prefs: fullPrefs });
   assert.match(incomplete, /data-signup/);
   assert.match(incomplete, /incompleta/);
   assert.match(incomplete, /tampoco significa que no haya riesgo/);
-  const complete = signupBlock({ me: me(), engineVerified: true, whatsappDelivery: null });
+  const complete = signupBlock({ me: me(), engineVerified: true, whatsappDelivery: null, prefs: fullPrefs });
   assert.match(complete, /ninguna condición ha superado los umbrales/);
+});
+
+// C15 · el alta se calcula por canal y destinatario: cada canal se valora sobre
+// el mismo contacto y las categorías o el terreno no se marcan por venir de un
+// contacto completo.
+test('email verificado sin permiso y WhatsApp con permiso sin verificar quedan ambos pendientes', () => {
+  const contacts = [
+    { channel: 'email', address: 'a@b.es', verified: true, optedIn: false },
+    { channel: 'whatsapp', address: '+34600', verified: false, optedIn: true },
+  ];
+  const steps = alta({ me: me({ contacts }) });
+  const channels = steps.filter((step) => step.key === 'channel:email' || step.key === 'channel:whatsapp');
+  assert.equal(channels.length, 2);
+  for (const step of channels) assert.equal(step.state, 'pending');
+});
+
+test('un contacto completo no activa categorías ni estaciones no elegidas', () => {
+  const steps = alta({ me: me({ stations: [], farms: [] }), prefs: { channelEmail: true, channelWhatsapp: true } });
+  assert.equal(steps.find((step) => step.key === 'categories').state, 'pending');
+  assert.equal(steps.find((step) => step.key === 'station').state, 'missing');
+  assert.equal(steps.find((step) => step.key === 'channel:email').state, 'pending');
+});
+
+test('el canal apagado en preferencias deja el canal pendiente', () => {
+  const steps = alta({ prefs: { ...fullPrefs, channelEmail: false } });
+  const email = steps.find((step) => step.key === 'channel:email');
+  assert.equal(email.state, 'pending');
+  assert.match(email.detail, /apagado/i);
 });
 
 // F18 · P2: el centro ofrecía SMS, Webhook, Push y WhatsApp aunque la cuenta
@@ -155,13 +185,14 @@ test('la publicidad ya no remite «arriba» a un bloque que estaba debajo', () =
   assert.doesNotMatch(accountSource, /añade el canal arriba/);
 });
 
-test('Cuenta presenta los avisos como asistente por pasos', () => {
+test('Cuenta presenta el estado por canal y los pasos propios', () => {
   assert.match(accountSource, /CONFIGURACIÓN DE AVISOS/);
   assert.match(accountSource, /function signupStepper\(/);
-  for (const label of ['Contacto', 'Autorización', 'Verificación', 'Preferencias efectivas']) {
-    assert.match(accountSource, new RegExp(`label: '${label}'`), `falta el paso ${label}`);
-  }
-  // La preferencia operativa sigue siendo un formulario real, ahora como paso final.
+  assert.match(accountSource, /alertReadiness\(/);
+  assert.match(accountSource, /READINESS_CHANNEL_LABELS/);
+  assert.match(accountSource, /label: 'Tipos de aviso'/);
+  assert.match(accountSource, /label: 'Estación o finca'/);
+  // La preferencia operativa sigue siendo un formulario real.
   assert.match(accountSource, /data-prefs-form/);
 });
 
@@ -178,7 +209,7 @@ test('el estado de alta se explica aunque ya haya avisos si falta completarlo', 
 });
 
 test('el alta completa no promete que no haya riesgo', () => {
-  const complete = signupBlock({ me: me(), engineVerified: true, whatsappDelivery: null });
+  const complete = signupBlock({ me: me(), engineVerified: true, whatsappDelivery: null, prefs: fullPrefs });
   assert.doesNotMatch(complete, /es porque ninguna condición/);
   assert.match(complete, /revisa la cobertura de datos/);
 });

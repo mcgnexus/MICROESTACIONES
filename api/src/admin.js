@@ -20,21 +20,35 @@ import {
 const router = Router();
 const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-// Último estado comercial de cada canal, agrupado por sujeto. Una sola consulta
-// evita repetirla por fila y deja claro que un canal es publicidad vigente solo
-// si su último hecho registrado fue una concesión.
-async function commercialBySubject() {
-  const rows = await sql`SELECT DISTINCT ON (subscriber_id, lead_id, channel)
-      subscriber_id, lead_id, channel, action
+// Estado vigente de cada finalidad y canal, agrupado por sujeto. Una sola
+// consulta al libro de consentimientos cubre la finalidad `service` y la
+// `commercial`, así que de aquí se derivan también las insignias de publicidad
+// (antes se resolvían con una segunda consulta sobre la misma tabla).
+async function consentSummaryBySubject() {
+  const rows = await sql`SELECT DISTINCT ON (subscriber_id, lead_id, purpose, channel)
+      subscriber_id, lead_id, purpose, channel, action, text_version, recorded_at
     FROM consent_records
-    WHERE purpose = 'commercial'
-    ORDER BY subscriber_id, lead_id, channel, recorded_at DESC, id DESC`;
+    ORDER BY subscriber_id, lead_id, purpose, channel, recorded_at DESC, id DESC`;
   const map = new Map();
   for (const row of rows) {
-    // Prefijo para no confundir un id de cuenta con uno de contacto.
     const key = row.subscriberId != null ? `sub:${row.subscriberId}` : `lead:${row.leadId}`;
     if (!map.has(key)) map.set(key, {});
-    map.get(key)[row.channel] = row.action === 'granted';
+    map.get(key)[row.purpose] ??= {};
+    map.get(key)[row.purpose][row.channel] = {
+      granted: row.action === 'granted', textVersion: row.textVersion ?? null, source: row.source ?? null,
+    };
+  }
+  return map;
+}
+
+// Vista compacta { canal: booleano } que consumen las insignias y botones de
+// publicidad, derivada del mismo resumen para no consultar el libro dos veces.
+function commercialFromSummaries(summaries) {
+  const map = new Map();
+  for (const [key, purposes] of summaries) {
+    const commercial = purposes.commercial ?? {};
+    map.set(key, Object.fromEntries(
+      Object.entries(commercial).map(([channel, state]) => [channel, state.granted === true])));
   }
   return map;
 }
@@ -52,16 +66,22 @@ router.get('/subscribers', async (req, res) => {
   const where = conditions.length
     ? sql`WHERE ${conditions.reduce((acc, cond, index) => (index === 0 ? cond : sql`${acc} AND ${cond}`))}`
     : sql``;
-  const [rows, commercial] = await Promise.all([
+  const [rows, consents] = await Promise.all([
     sql`SELECT s.id, s.email, s.role, s.plan, s.active, s.created_at,
         s.email_verified_at, s.acquisition,
         p.municipality, p.activity, p.crop_or_livestock, p.interest,
         (SELECT count(*)::integer FROM subscriber_devices sd WHERE sd.subscriber_id = s.id) AS station_count,
-        (SELECT count(*)::integer FROM web_sessions w WHERE w.subscriber_id = s.id AND w.expires_at > now()) AS session_count
+        (SELECT count(*)::integer FROM web_sessions w WHERE w.subscriber_id = s.id AND w.expires_at > now()) AS session_count,
+        coalesce((SELECT json_agg(json_build_object(
+            'channel', c.channel, 'address', c.address,
+            'verified', c.verified_at IS NOT NULL,
+            'optedIn', c.opted_in_at IS NOT NULL AND c.opted_out_at IS NULL) ORDER BY c.channel)
+          FROM subscriber_contacts c WHERE c.subscriber_id = s.id), '[]'::json) AS contacts
       FROM subscribers s LEFT JOIN subscriber_profiles p ON p.subscriber_id = s.id
       ${where} ORDER BY s.created_at`,
-    commercialBySubject(),
+    consentSummaryBySubject(),
   ]);
+  const commercial = commercialFromSummaries(consents);
   const subscribers = rows.map((row) => ({
     id: row.id,
     email: row.email,
@@ -76,6 +96,8 @@ router.get('/subscribers', async (req, res) => {
       ? { municipality: row.municipality, activity: row.activity, cropOrLivestock: row.cropOrLivestock, interest: row.interest }
       : null,
     commercial: commercial.get(`sub:${row.id}`) ?? {},
+    contacts: row.contacts ?? [],
+    consents: consents.get(`sub:${row.id}`) ?? {},
     stationCount: row.stationCount,
     sessionCount: row.sessionCount,
   }));
@@ -253,23 +275,30 @@ router.get('/leads', async (req, res) => {
   const status = LEAD_STATUSES.includes(req.query.status) ? req.query.status : null;
   const requestType = REQUEST_TYPES.includes(req.query.request_type) ? req.query.request_type : null;
   const preferredChannel = ['email', 'whatsapp'].includes(req.query.preferred_channel) ? req.query.preferred_channel : null;
-  const [rows, commercial] = await Promise.all([
+  const [rows, consents] = await Promise.all([
     sql`SELECT l.id::text AS id, l.id AS numeric_id, l.name, l.phone, l.email, l.activity, l.zone,
         l.request_type, l.preferred_channel, l.crop_or_livestock, l.interest, l.notes, l.admin_notes, l.consent, l.consent_at, l.status,
         l.source, l.campaign, l.next_contact_at, l.created_at, l.updated_at
-      FROM farm_leads l
-      WHERE (${status}::text IS NULL OR l.status = ${status})
+      FROM farm_leads l WHERE true
+        AND (${status}::text IS NULL OR l.status = ${status})
         AND (${requestType}::text IS NULL OR l.request_type = ${requestType})
         AND (${preferredChannel}::text IS NULL OR l.preferred_channel = ${preferredChannel})
       ORDER BY l.created_at DESC LIMIT 500`,
-    commercialBySubject(),
+    consentSummaryBySubject(),
   ]);
+  const commercial = commercialFromSummaries(consents);
   res.json({
     leads: rows.map((row) => ({
       ...row,
       campaign: row.campaign ?? {},
       nextContactAt: row.nextContactAt ?? null,
       commercial: commercial.get(`lead:${row.numericId}`) ?? {},
+      consents: consents.get(`lead:${row.numericId}`) ?? {},
+      // Una solicitud no tiene tabla de contactos: se resume lo que declaró.
+      contacts: [
+        row.phone && { channel: 'whatsapp', address: row.phone, verified: false, optedIn: row.consent === true },
+        row.email && { channel: 'email', address: row.email, verified: false, optedIn: row.consent === true },
+      ].filter(Boolean),
     })),
   });
 });

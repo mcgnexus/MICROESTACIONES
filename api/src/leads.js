@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sha256 } from './security.js';
 import { normalizeAcquisition } from './consent.js';
+import { DEFAULT_COUNTRY, normalizePhoneE164, isSupportedCountryCode } from './phone.js';
 
 export const ACTIVITIES = ['agricultura', 'ganaderia', 'mixta', 'otra'];
 export const INTERESTS = ['heladas', 'calor', 'tormentas', 'viento', 'humedad', 'general', 'futura_instalacion'];
@@ -9,15 +10,10 @@ export const LEAD_STATUSES = ['nuevo', 'contactado', 'interesado', 'piloto_activ
 // visitante: consulta de instalación o entrada en el piloto.
 export const REQUEST_TYPES = ['installation_info', 'pilot'];
 
-// El teléfono se guarda normalizado (solo dígitos, prefijo internacional opcional)
-// para poder abrir la conversación de WhatsApp sin ambigüedad.
-export function normalizePhone(value) {
-  return String(value ?? '').replace(/[\s().-]/g, '');
-}
-
-const phoneSchema = z.string().trim().max(30)
-  .transform(normalizePhone)
-  .refine((value) => /^\+?\d{7,15}$/.test(value));
+// País con el que se interpreta un teléfono nacional (por defecto España). El
+// número se guarda en E.164; el país solo interviene al normalizar.
+const countrySchema = z.string().trim().toUpperCase().length(2)
+  .refine(isSupportedCountryCode, { message: 'País no soportado.' });
 
 const campaignSchema = z.object({
   source: z.string().max(80).optional(),
@@ -33,12 +29,13 @@ const campaignSchema = z.object({
 // marcar por defecto: `commercial_consent` es opcional e independiente del acceso.
 // `website` es un campo trampa invisible. El contacto es email o WhatsApp a
 // elección del visitante: el canal elegido exige su dato, el otro es opcional
-// (segundo canal para después).
+// (segundo canal para después). El teléfono se valida y guarda en E.164.
 export const leadSchema = z.object({
   name: z.string().trim().min(2).max(120),
   preferred_channel: z.enum(['email', 'whatsapp']),
   request_type: z.enum(REQUEST_TYPES),
-  phone: phoneSchema.optional(),
+  phone: z.string().trim().max(40).optional(),
+  phone_country: countrySchema.optional(),
   email: z.string().trim().toLowerCase().email().max(254).optional(),
   activity: z.enum(ACTIVITIES).optional(),
   zone: z.string().trim().min(2).max(160),
@@ -50,13 +47,20 @@ export const leadSchema = z.object({
   campaign: campaignSchema.optional(),
   website: z.string().max(200).optional(),
 }).strict().superRefine((lead, ctx) => {
+  const country = lead.phone_country || DEFAULT_COUNTRY;
+  if (lead.phone && normalizePhoneE164(lead.phone, country) === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phone'], message: 'El teléfono no es válido para el país indicado.' });
+  }
   if (lead.preferred_channel === 'email' && !lead.email) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['email'], message: 'Falta el correo electrónico del canal elegido.' });
   }
-  if (lead.preferred_channel === 'whatsapp' && !lead.phone) {
+  if (lead.preferred_channel === 'whatsapp' && !normalizePhoneE164(lead.phone, country)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phone'], message: 'Falta el teléfono de WhatsApp del canal elegido.' });
   }
-});
+}).transform((lead) => ({
+  ...lead,
+  phone: lead.phone ? normalizePhoneE164(lead.phone, lead.phone_country || DEFAULT_COUNTRY) : undefined,
+}));
 
 // Si el campo trampa trae texto, el envío es de un bot: se responde igual pero no se guarda.
 export const isHoneypot = (lead) => Boolean(lead?.website && lead.website.trim());
@@ -67,15 +71,19 @@ export function leadContact(lead) {
   return lead.phone || lead.email || '';
 }
 
-// Clave de contacto normalizada y etiquetada por canal. Un email no pasa por la
-// normalización de teléfono (perdería puntos y guiones) y un contacto solo-email
-// nunca comparte clave con otro: no hay un hash de teléfono vacío común.
+// Clave de contacto normalizada y etiquetada por canal. El teléfono va en E.164
+// (con el país de la solicitud si viniera nacional); un email no pasa por la
+// normalización de teléfono y un contacto solo-email nunca comparte clave con
+// otro: no hay un hash de teléfono vacío común.
 export function leadContactKey(lead) {
   const parts = [];
   const preferredFirst = lead?.preferred_channel === 'email'
     ? ['email', 'whatsapp'] : ['whatsapp', 'email'];
   for (const channel of preferredFirst) {
-    if (channel === 'whatsapp' && lead?.phone) parts.push(`whatsapp:${normalizePhone(lead.phone)}`);
+    if (channel === 'whatsapp' && lead?.phone) {
+      const normalized = normalizePhoneE164(lead.phone, lead.phone_country || DEFAULT_COUNTRY) || String(lead.phone).trim();
+      parts.push(`whatsapp:${normalized}`);
+    }
     if (channel === 'email' && lead?.email) parts.push(`email:${String(lead.email).trim().toLowerCase()}`);
   }
   return parts.length ? parts.join('|') : null;

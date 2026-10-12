@@ -2,7 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CONTACT_CHANNELS, generateVerificationCode, verificationHash, verificationMatches,
+  normalizeWhatsappAddress,
 } from './contacts.js';
+
+test('la dirección de WhatsApp se guarda en E.164 con el país indicado', () => {
+  assert.equal(normalizeWhatsappAddress('600 123 456'), '+34600123456');
+  assert.equal(normalizeWhatsappAddress('0034 600 123 456'), '+34600123456');
+  assert.equal(normalizeWhatsappAddress('6 12 34 56 78', 'FR'), '+33612345678');
+  // Un valor que no es un teléfono válido no se acepta ni se convierte a ciegas.
+  assert.equal(normalizeWhatsappAddress('123456789'), null);
+  assert.equal(normalizeWhatsappAddress('no-es-telefono'), null);
+});
 
 test('verification codes are always six digits', () => {
   for (let i = 0; i < 200; i++) {

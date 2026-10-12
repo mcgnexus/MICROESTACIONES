@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { filterProspects, authorizedExport } from './prospect-policy.js';
-const base = { municipality: 'Huéscar', activity: 'agricultura', interest: 'heladas', verified: true,
-  status: 'registrado', commercial: { email: true, whatsapp: false }, email: 'campo@example.test', whatsapp: '+34600000000' };
+const base = { kind: 'subscriber', municipality: 'Huéscar', activity: 'agricultura', interest: 'heladas', verified: true,
+  status: 'registrado', commercial: { email: true, whatsapp: true }, email: 'campo@example.test', whatsapp: '+34600000000',
+  emailReady: true, whatsappReady: true };
 test('el alcance combina municipio, actividad, interés y permiso sin asumir solicitud de llamada', () => {
   const rows = [base, { ...base, activity: 'otra' }, { ...base, commercial: {} }];
   assert.deepEqual(filterProspects(rows, { municipality: 'hués', activity: 'agricultura', interest: 'heladas', permission: 'yes', status: 'registrado' }), [base]);
@@ -19,8 +20,19 @@ test('el alcance filtra por modalidad y canal preferido, y deja fuera el legado'
   assert.deepEqual(filterProspects(rows, { preferred_channel: 'email' }), [installation]);
 });
 test('la exportación excluye canales no autorizados, bajas, archivados y retención vencida', () => {
-  const rows = [base, { ...base, status: 'archivado' }, { ...base, accountActive: false },
-    { ...base, commercial: { email: false } }, { ...base, retainUntil: '2000-01-01T00:00:00Z' }];
-  assert.deepEqual(authorizedExport(rows, 'email'), [base]);
+  const only = { ...base, commercial: { email: true, whatsapp: false } };
+  const rows = [only, { ...only, status: 'archivado' }, { ...only, accountActive: false },
+    { ...only, commercial: { email: false, whatsapp: false } }, { ...only, retainUntil: '2000-01-01T00:00:00Z' }];
+  assert.deepEqual(authorizedExport(rows, 'email'), [only]);
   assert.deepEqual(authorizedExport(rows, 'whatsapp'), []);
+});
+
+test('la exportación exige contacto verificado y autorizado en cuentas', () => {
+  const lead = { ...base, kind: 'lead', commercial: { whatsapp: true }, whatsappReady: null };
+  const rows = [base,
+    { ...base, whatsappReady: false },              // verificación perdida o baja
+    { ...base, commercial: { whatsapp: false } },   // permiso revocado
+    lead];
+  // Solo la cuenta lista y el lead con permiso vigente.
+  assert.deepEqual(authorizedExport(rows, 'whatsapp'), [rows[0], lead]);
 });
