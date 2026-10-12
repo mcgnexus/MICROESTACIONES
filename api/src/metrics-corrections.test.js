@@ -31,9 +31,12 @@ test('la tarjeta distingue fases: verificación, interés, permisos y seguimient
 
 test('el filtro «Solicitado» localiza las consultas del día', () => {
   assert.match(policy, /CREATED_SINCE_OPTIONS = \['today', '7d', '30d'\]/);
+  // Ancladas a la medianoche local: una fila a «hace 1 hora» deja de ser
+  // «hoy» entre las 00:00 y la 01:00 y el test se vuelve dependiente del reloj.
+  const midnight = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
   const rows = [
-    { createdAt: new Date(Date.now() - 3600_000), status: 'registrado' },
-    { createdAt: new Date(Date.now() - 10 * 86400000), status: 'registrado' },
+    { createdAt: new Date(midnight + 3600_000), status: 'registrado' },
+    { createdAt: new Date(midnight - 10 * 86400000), status: 'registrado' },
   ];
   assert.equal(filterProspects(rows, { created_since: 'today' }).length, 1);
   assert.equal(filterProspects(rows, { created_since: '7d' }).length, 1);

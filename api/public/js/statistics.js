@@ -31,6 +31,9 @@ export async function renderStatisticsTab(content, stationId, station) {
         totalChange: pressureMbar(sourceMetric.trend.totalChange),
       } : sourceMetric.trend,
     } : sourceMetric;
+    // Sin muestras aceptadas el servidor devuelve trend: null: la tarjeta
+    // muestra «sin datos suficientes» en lugar de tumbar la pestaña.
+    const trend = metric.trend || { direction: 'insuficiente', slopePerHour: null };
     return `
     <div class="stat-card">
       <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span class="metric-icon">${icon(METRIC_ICONS[metric.label], { size: 18 })}</span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
@@ -44,10 +47,10 @@ export async function renderStatisticsTab(content, stationId, station) {
         <span>Desv.</span><strong>${numberText(metric.stddev, metric.digits ?? 1)}</strong>
         <span>Muestras</span><strong>${metric.count}</strong>
       </div>
-      <p class="trend trend-${escapeText(metric.trend.direction)}" style="--trend-color:${TREND_COLORS[metric.trend.direction] || TREND_COLORS.insuficiente}">
-        ${metric.trend.direction === 'sube' ? '↑ ' : metric.trend.direction === 'baja' ? '↓ ' : metric.trend.direction === 'estable' ? '→ ' : '· '}
-        Tendencia ${escapeText(TREND_LABELS[metric.trend.direction] || metric.trend.direction)}
-        ${metric.trend.slopePerHour != null ? ` · ${numberText(metric.trend.slopePerHour, 3)} ${escapeText(metric.unit)}/h` : ''}
+      <p class="trend trend-${escapeText(trend.direction)}" style="--trend-color:${TREND_COLORS[trend.direction] || TREND_COLORS.insuficiente}">
+        ${trend.direction === 'sube' ? '↑ ' : trend.direction === 'baja' ? '↓ ' : trend.direction === 'estable' ? '→ ' : '· '}
+        Tendencia ${escapeText(TREND_LABELS[trend.direction] || trend.direction)}
+        ${trend.slopePerHour != null ? ` · ${numberText(trend.slopePerHour, 3)} ${escapeText(metric.unit)}/h` : ''}
       </p>
     </div>`;
   }).join('');
