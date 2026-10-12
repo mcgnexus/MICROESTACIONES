@@ -528,7 +528,6 @@ router.get('/maintenance/limits', async (_req, res) => {
     messageTtlMinutes: MESSAGE_TTL_MINUTES,
   });
 });
-});
 
 // ---- Auditoría -------------------------------------------------------------
 

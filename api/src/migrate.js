@@ -431,9 +431,9 @@ const upgrades = [
   `ALTER TABLE public_alert_subscriptions DROP CONSTRAINT IF EXISTS public_alert_subscriptions_subject_check`,
   `ALTER TABLE public_alert_subscriptions ADD CONSTRAINT public_alert_subscriptions_subject_check
      CHECK (num_nonnulls(subscriber_id, wa_phone) = 1)`,
-  -- El PK antiguo (subscriber_id, device_id, channel) no admite filas wa
-  -- (subscriber_id NULL). Se sustituye por un índice único sobre el sujeto
-  -- compuesto: la exclusión de duplicados la dan este índice y el CHECK.
+  // El PK antiguo (subscriber_id, device_id, channel) no admite filas wa
+  // (subscriber_id NULL). Se sustituye por un índice único sobre el sujeto
+  // compuesto: la exclusión de duplicados la dan este índice y el CHECK.
   `DO $$ BEGIN
      ALTER TABLE public_alert_subscriptions DROP CONSTRAINT public_alert_subscriptions_pkey;
    EXCEPTION WHEN undefined_object THEN NULL; END $$`,
