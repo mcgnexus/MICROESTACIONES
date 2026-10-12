@@ -47,7 +47,7 @@ test('recording a consent writes an immutable fact and validates the input', asy
   });
   const insert = client.calls.at(-1);
   assert.match(insert.text, /INSERT INTO consent_records/);
-  assert.deepEqual(insert.values.slice(0, 6), [7, null, 'commercial', 'email', 'granted', CONSENT_TEXT_VERSION]);
+  assert.deepEqual(insert.values.slice(0, 7), [7, null, null, 'commercial', 'email', 'granted', CONSENT_TEXT_VERSION]);
   await assert.rejects(() => recordConsent(client, { purpose: 'spam', channel: 'email', action: 'granted' }));
   await assert.rejects(() => recordConsent(client, { purpose: 'commercial', channel: 'sms', action: 'granted' }));
   await assert.rejects(() => recordConsent(client, { purpose: 'commercial', channel: 'email', action: 'maybe' }));

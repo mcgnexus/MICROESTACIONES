@@ -64,7 +64,10 @@ function providerError(result, payload) {
   };
 }
 
-export async function sendWhatsApp(address, text, env = process.env, { template = null } = {}) {
+// Respuestas a mensajes entrantes (ALTA, BAJA, código): la ventana de 24 h está
+// abierta por definición porque la persona acaba de escribir, así que el texto
+// libre es legítimo sin plantilla.
+export async function sendWhatsApp(address, text, env = process.env, { template = null, inWindow = false } = {}) {
   const provider = whatsappProvider(env);
   if (provider === 'disabled') return providerNotConfigured();
   // Modo piloto: no se envía solo. El aviso queda en la bandeja para enviarlo a mano.
@@ -77,13 +80,16 @@ export async function sendWhatsApp(address, text, env = process.env, { template 
   }
   try {
     if (provider === 'meta') {
-      if (!template?.name) return { ok: false, permanent: true, error: 'template_required' };
+      if (!template?.name && !inWindow) return { ok: false, permanent: true, error: 'template_required' };
+      const payload = template
+        ? metaTemplatePayload(address, template)
+        : { messaging_product: 'whatsapp', to: digits(address), type: 'text', text: { body: text } };
       const { response, data, bodyTimedOut } = await fetchJsonWithLimits(
         `https://graph.facebook.com/v21.0/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(metaTemplatePayload(address, template)),
+          body: JSON.stringify(payload),
         },
         env,
       );
@@ -105,14 +111,18 @@ export async function sendWhatsApp(address, text, env = process.env, { template 
     }
     if (provider === 'twilio') {
       // Content API: la plantilla aprobada viaja como ContentSid con variables.
-      if (!template?.contentSid) return { ok: false, permanent: true, error: 'template_required' };
+      // En ventana (respuesta a un entrante) el texto libre es legítimo.
+      if (!template?.contentSid && !inWindow) return { ok: false, permanent: true, error: 'template_required' };
       const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
-      const variables = {};
-      template.params.forEach((value, index) => { variables[String(index + 1)] = value; });
       const form = new URLSearchParams({
-        From: `whatsapp:${env.TWILIO_WHATSAPP_FROM}`, To: `whatsapp:${address}`,
-        ContentSid: template.contentSid, ContentVariables: JSON.stringify(variables), Body: text,
+        From: `whatsapp:${env.TWILIO_WHATSAPP_FROM}`, To: `whatsapp:${address}`, Body: text,
       });
+      if (template?.contentSid) {
+        const variables = {};
+        template.params.forEach((value, index) => { variables[String(index + 1)] = value; });
+        form.set('ContentSid', template.contentSid);
+        form.set('ContentVariables', JSON.stringify(variables));
+      }
       const { response, data, bodyTimedOut } = await fetchJsonWithLimits('https://api.twilio.com/2010-04-01/Accounts/'
         + `${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
         method: 'POST',

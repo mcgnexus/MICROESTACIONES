@@ -106,16 +106,41 @@ CREATE TABLE IF NOT EXISTS subscriber_devices (
 -- (`subscriber_devices`/`farms`): solo da notificaciones, nunca acceso a datos
 -- privados ni entradas en el centro de avisos. La baja es por estación y canal.
 CREATE TABLE IF NOT EXISTS public_alert_subscriptions (
-  subscriber_id bigint NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+  -- Sujeto de la suscripción: una cuenta verificada O una identidad de servicio
+  -- solo por WhatsApp. Exactamente uno de los dos; un teléfono nunca es cuenta.
+  subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
+  wa_phone text,
   device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
   channel text NOT NULL CHECK (channel IN ('email','whatsapp')),
   categories text[] NOT NULL DEFAULT '{frost,heat,storm,wind,humidity,general}',
   subscribed_at timestamptz NOT NULL DEFAULT now(),
   unsubscribed_at timestamptz,
-  PRIMARY KEY (subscriber_id, device_id, channel)
+  UNIQUE (wa_phone, device_id, channel),
+  CHECK (num_nonnulls(subscriber_id, wa_phone) = 1)
 );
+-- Unicidad por sujeto + estación + canal: índices parciales, uno por tipo de
+-- sujeto, para que `ON CONFLICT` pueda inferirlos en los upserts.
+CREATE UNIQUE INDEX IF NOT EXISTS public_alert_subscriptions_account_idx
+  ON public_alert_subscriptions(subscriber_id, device_id, channel) WHERE subscriber_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS public_alert_subscriptions_device_idx
   ON public_alert_subscriptions(device_id) WHERE unsubscribed_at IS NULL;
+CREATE INDEX IF NOT EXISTS public_alert_subscriptions_wa_idx
+  ON public_alert_subscriptions(wa_phone) WHERE unsubscribed_at IS NULL;
+
+-- Identidad de servicio solo por WhatsApp: no es una cuenta, no da acceso al
+-- panel ni a datos privados. `verified_at` confirma que el número es del
+-- interesado (código); `opted_out_at` es la baja por «BAJA».
+CREATE TABLE IF NOT EXISTS wa_alert_identities (
+  phone text PRIMARY KEY,
+  lead_id bigint REFERENCES farm_leads(id) ON DELETE SET NULL,
+  verified_at timestamptz,
+  opted_out_at timestamptz,
+  code_hash text,
+  code_expires_at timestamptz,
+  code_attempts integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- Lista de interés para el servicio de avisos públicos cuando aún no hay
 -- estaciones habilitadas (o el interesado quiere una estación sin avisos).
@@ -274,12 +299,14 @@ CREATE TABLE IF NOT EXISTS prospect_tracking (
 );
 
 -- Libro de consentimientos: hechos inmutables con finalidad, canal, fecha y la
--- versión del texto aceptado. Un sujeto es o bien una cuenta o bien un contacto
--- de captación, nunca los dos. La publicidad vive aquí, separada del acceso.
+-- versión del texto aceptado. Un sujeto es exactamente uno de: cuenta, contacto
+-- de captación o identidad de servicio solo por WhatsApp. La publicidad vive
+-- aquí, separada del acceso.
 CREATE TABLE IF NOT EXISTS consent_records (
   id bigserial PRIMARY KEY,
   subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
   lead_id bigint REFERENCES farm_leads(id) ON DELETE CASCADE,
+  wa_phone text,
   purpose text NOT NULL CHECK (purpose IN ('service','commercial')),
   channel text NOT NULL CHECK (channel IN ('email','whatsapp')),
   action text NOT NULL CHECK (action IN ('granted','revoked')),
@@ -288,10 +315,12 @@ CREATE TABLE IF NOT EXISTS consent_records (
   ip_address text,
   user_agent text,
   recorded_at timestamptz NOT NULL DEFAULT now(),
-  CHECK ((subscriber_id IS NULL) <> (lead_id IS NULL))
+  CHECK (num_nonnulls(subscriber_id, lead_id, wa_phone) = 1)
 );
 CREATE INDEX IF NOT EXISTS consent_records_subject_idx
   ON consent_records(subscriber_id, lead_id, purpose, channel, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS consent_records_wa_idx
+  ON consent_records(wa_phone, purpose, channel, recorded_at DESC);
 
 -- Cada fila conserva lo que el equipo transmitió: instante de medida (observed_at)
 -- e instante de recepción (received_at) son distintos para reconstruir lotes tardíos.

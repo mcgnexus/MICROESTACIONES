@@ -3,10 +3,12 @@ import { api, escapeText, numberText, dateText, timeText, makeChart } from './ui
 import { mountLeadForms } from './leads.js';
 import { sinceText } from './farm-cards.js';
 import { mountFarmSimulation, renderSimulationShell } from './farm-sim.js';
+import { mountWaSignup } from './wa-alerts-signup.js';
 
 export const PUBLIC_SECTIONS = new Set([
   'tiempo-local', 'vias', 'comparacion-aemet', 'evolucion', 'fincas', 'demo-agricola', 'herramientas',
   'preguntas', 'solicitar-piloto', 'acceso-gratuito', 'zonas', 'alertas', 'como-funciona', 'microclimas',
+  'avisos-whatsapp',
 ]);
 export const PRIVATE_SECTIONS = new Set(['panel', 'estaciones', 'avisos', 'admin', 'cuenta']);
 
@@ -296,6 +298,7 @@ export function initLanding() {
     mountFarmSimulation(simMount);
   }
   mountLeadForms();
+  mountWaSignup();
   loadPublicWeather();
   initLandingRefresh();
 }

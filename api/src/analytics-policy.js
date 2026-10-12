@@ -1,4 +1,4 @@
-export const METRIC_EVENTS = ['home_visit', 'locked_tool_open', 'access_requested', 'contact_verified', 'first_expanded_query', 'agricultural_profile_completed', 'commercial_authorized', 'installation_interest'];
+export const METRIC_EVENTS = ['home_visit', 'locked_tool_open', 'access_requested', 'contact_verified', 'contact_verified_email', 'contact_verified_whatsapp', 'first_expanded_query', 'agricultural_profile_completed', 'commercial_authorized', 'installation_interest'];
 export const PUBLIC_METRIC_EVENTS = ['home_visit', 'locked_tool_open'];
 const sources = ['google', 'bing', 'facebook', 'instagram', 'whatsapp', 'qr', 'newsletter', 'partner'];
 const media = ['organic', 'social', 'email', 'cpc', 'qr', 'referral'];
@@ -19,9 +19,9 @@ export function ratio(numerator, denominator) {
   return { numerator, denominator, percent: denominator ? Math.round(numerator / denominator * 1000) / 10 : null };
 }
 
-export function aggregateMetrics(counters, subjects, campaigns = []) {
+export function aggregateMetrics(counters, subjects, leadSubjects = [], campaigns = []) {
   const buckets = new Map();
-  const empty = () => ({ events: Object.fromEntries(METRIC_EVENTS.map((event) => [event, 0])), registered: 0, verified: 0, activated: 0, agricultural: 0, verifiedAgricultural: 0, authorized: 0, installation: 0, verifiedAgriculturalAuthorized: 0, agriculturalInstallation: 0 });
+  const empty = () => ({ events: Object.fromEntries(METRIC_EVENTS.map((event) => [event, 0])), registered: 0, verified: 0, activated: 0, agricultural: 0, verifiedAgricultural: 0, authorized: 0, installation: 0, verifiedAgriculturalAuthorized: 0, agriculturalInstallation: 0, qualified: 0 });
   for (const row of counters) {
     if (!METRIC_EVENTS.includes(row.event)) continue;
     if (!buckets.has(row.bucket)) buckets.set(row.bucket, empty());
@@ -38,12 +38,31 @@ export function aggregateMetrics(counters, subjects, campaigns = []) {
     row.verifiedAgriculturalAuthorized += Number(agricultural && Boolean(s.verified) && Boolean(s.authorized));
     row.agriculturalInstallation += Number(agricultural && Boolean(s.installation));
   }
+  // Serie aparte de solicitudes de finca (leads): nunca se suman a las cuentas,
+  // porque una campaña puede generar solicitudes sin cuenta y la relación
+  // lead↔cuenta no se resuelve en este informe.
+  const leadBuckets = new Map();
+  for (const s of leadSubjects) {
+    const bucket = campaignBucket(s.acquisition, campaigns);
+    if (!leadBuckets.has(bucket)) leadBuckets.set(bucket, empty());
+    const row = leadBuckets.get(bucket); row.registered++;
+    row.qualified += Number(Boolean(s.qualified));
+    row.authorized += Number(Boolean(s.authorized));
+  }
   const total = empty();
   for (const row of buckets.values()) {
     for (const key of Object.keys(total).filter((key) => key !== 'events')) total[key] += row[key];
     for (const event of METRIC_EVENTS) total.events[event] += row.events[event];
   }
+  const leadsTotal = empty();
+  for (const row of leadBuckets.values()) {
+    leadsTotal.registered += row.registered; leadsTotal.qualified += row.qualified; leadsTotal.authorized += row.authorized;
+  }
   const rates = (row) => ({ verified: ratio(row.verified, row.registered), activated: ratio(row.activated, row.registered),
     agricultural: ratio(row.verifiedAgricultural, row.registered), authorized: ratio(row.authorized, row.registered), installation: ratio(row.installation, row.registered) });
-  return { total, rates: rates(total), channels: [...buckets].map(([bucket, row]) => ({ bucket, ...row, rates: rates(row) })) };
+  const leadRates = (row) => ({ qualified: ratio(row.qualified, row.registered), authorized: ratio(row.authorized, row.registered) });
+  return {
+    total, rates: rates(total), channels: [...buckets].map(([bucket, row]) => ({ bucket, ...row, rates: rates(row) })),
+    leads: { total: leadsTotal, rates: leadRates(leadsTotal), channels: [...leadBuckets].map(([bucket, row]) => ({ bucket, ...row, rates: leadRates(row) })) },
+  };
 }

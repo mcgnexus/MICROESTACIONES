@@ -78,10 +78,21 @@ export async function analyticsReport(req, res) {
         WHERE c.subscriber_id = s.id AND purpose = 'commercial' ORDER BY channel, recorded_at DESC, id DESC) c WHERE action = 'granted') AS authorized
     FROM subscribers s LEFT JOIN subscriber_profiles p ON p.subscriber_id = s.id
     WHERE s.role = 'viewer' AND s.created_at >= ${from}::date AND s.created_at < ${to}::date + interval '1 day'`;
-  res.set('Cache-Control', 'no-store').json({ from, to, ...aggregateMetrics(counters, subjects, campaigns),
+  // Serie separada de solicitudes de finca: una campaña puede generar leads sin
+  // cuentas, y lead y cuenta no se suman como personas (relación no resuelta).
+  const leadSubjects = await sql`SELECT l.campaign AS acquisition,
+      (l.activity IN ('agricultura','ganaderia','mixta') AND length(trim(coalesce(l.zone, ''))) > 0
+        AND length(trim(coalesce(l.crop_or_livestock, ''))) > 0 AND l.interest IS NOT NULL) AS qualified,
+      EXISTS (SELECT 1 FROM (SELECT DISTINCT ON (channel) action FROM consent_records c
+        WHERE c.lead_id = l.id AND purpose = 'commercial' ORDER BY channel, recorded_at DESC, id DESC) c WHERE action = 'granted') AS authorized
+    FROM farm_leads l
+    WHERE l.created_at >= ${from}::date AND l.created_at < ${to}::date + interval '1 day'`;
+  res.set('Cache-Control', 'no-store').json({ from, to, ...aggregateMetrics(counters, subjects, leadSubjects, campaigns),
     definitions: { visits: 'Aperturas consentidas por carga de página; no visitantes únicos. Muestra parcial, no comparable como conversión personal.',
       events: 'Hitos nuevos desde la puesta en servicio; primera ocurrencia por cuenta o solicitud salvo visitas y solicitudes de enlace.',
       cohort: 'Cuentas viewer creadas en el período. Estado actual del perfil, verificación e intención; incluye cuentas anteriores al inicio de medición.',
+      leads: 'Serie separada de solicitudes de finca (leads): se muestran aparte y no se suman a las cuentas porque la relación lead↔cuenta no se resuelve aquí.',
       denominator: 'Cada porcentaje de cohorte divide entre cuentas registradas del mismo canal y período. No es un embudo secuencial.',
+      installation: 'Interés en instalación por intención explícita: modalidad «consulta de instalación» en la solicitud o marca de seguimiento.',
       attribution: 'Primer origen conservado de la cuenta. Solo source/medium/campaign del catálogo; desconocidos agrupados. No se atribuye a la última visita.' } });
 }

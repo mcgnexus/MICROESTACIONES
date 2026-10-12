@@ -9,6 +9,7 @@ export async function mountProspects(root) {
       <label>Actividad<select name="activity"><option value="">Todas</option>${options({ agricultura: 'Agricultura', ganaderia: 'Ganadería', mixta: 'Mixta', otra: 'Otra' })}</select></label>
       <label>Interés<select name="interest"><option value="">Todos</option>${options({ heladas: 'Heladas', calor: 'Calor', tormentas: 'Tormentas', viento: 'Viento', humedad: 'Humedad', general: 'General', futura_instalacion: 'Instalación' })}</select></label>
       <label>Estado comercial<select name="status"><option value="">Todos</option>${options(states)}</select></label>
+      <label>Solicitado<select name="created_since"><option value="">Cualquier fecha</option><option value="today">Hoy</option><option value="7d">Últimos 7 días</option><option value="30d">Últimos 30 días</option></select></label>
       <label>Verificación<select name="verified"><option value="">Todas</option><option value="yes">Correo verificado</option><option value="no">Sin verificar</option></select></label>
       <label>Permiso comercial<select name="permission"><option value="">Todos</option><option value="yes">Autorizado</option><option value="no">Sin permiso</option></select></label>
       <label>Instalación<select name="installation"><option value="">Todos</option><option value="yes">Con interés</option></select></label>
@@ -30,6 +31,12 @@ export async function mountProspects(root) {
       <p>${r.verified ? 'Correo verificado' : 'Sin verificar'} · Cuenta: ${r.accountActive == null ? 'sin cuenta' : r.accountActive ? 'activa' : 'inactiva'}</p>
       <p>Contacto: ${e(r.email || '')} ${e(r.whatsapp || '')}. Permiso comercial: ${e(Object.keys(r.commercial).filter((c) => r.commercial[c]).join(', ') || 'ninguno')}</p>
       <p>Canal preferido: ${e(r.preferredChannel === 'whatsapp' ? 'WhatsApp' : r.preferredChannel === 'email' ? 'Email' : 'Legado · sin declarar')} · Modalidad: ${e(r.requestType === 'installation_info' ? 'Consulta de instalación' : r.requestType === 'pilot' ? 'Piloto' : 'Legado · sin declarar')}</p>
+      <p>Verificación: ${r.kind === 'subscriber'
+        ? `${r.whatsappReady ? 'WhatsApp listo' : 'WhatsApp pendiente'} · ${r.emailReady ? 'email listo' : 'email pendiente'}`
+        : 'Sin verificación (captación: se verifica al crear cuenta)'}</p>
+      <p>Interés agronómico: ${e(r.interest || 'no declarado')} · Actividad: ${e(r.activity || 'no declarada')} · Municipio: ${e(r.municipality || 'no declarado')}</p>
+      <p>Permisos · Atender solicitud: ${Object.keys(r.service || {}).filter((c) => r.service[c]).join(', ') || 'sin permiso explícito'} · Avisos públicos: ${r.alertsSubscription ? 'suscrito' : 'no'} · Publicidad: ${e(Object.keys(r.commercial).filter((c) => r.commercial[c]).join(', ') || 'ninguno')}</p>
+      <p>Estado comercial: ${e(states[r.status])} · Siguiente acción: ${e(r.nextAction || 'sin definir')}${r.nextActionAt ? ` (${dateText(r.nextActionAt)})` : ''}</p>
       <p>Origen: ${e(JSON.stringify(r.origin || {}))} · Registro: ${dateText(r.createdAt)}</p>
       <form data-edit="${r.kind}/${r.id}" class="rule-form">
         <label>Estado comercial<select name="status">${Object.entries(states).map(([key, label]) => `<option value="${key}" ${r.status === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>

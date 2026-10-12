@@ -4,6 +4,7 @@
 // con espera creciente y deja constancia del intento y del error. Los proveedores
 // concretos viven en whatsapp.js y email.js; sin proveedor configurado el envío no
 // se finge: queda pendiente y acaba en `failed`, visible en administración.
+import { timingSafeEqual } from 'node:crypto';
 import { sql } from './db.js';
 import { sendWhatsApp, whatsappProvider, whatsappRequiresTemplate } from './whatsapp.js';
 import { sendEmail, emailProvider } from './email.js';
@@ -11,6 +12,7 @@ import { whatsappTemplate, templateCategory } from './message-templates.js';
 import { isQuietHour, recipientWants } from './alert-preferences.js';
 import { COMMERCIAL_KIND, hasCommercialConsent, revokeCommercialConsent } from './consent.js';
 import { messageExpiresAt, messageTtlMinutes, isExpired } from './message-ttl.js';
+import { sha256 } from './security.js';
 // La misma taxonomía que usa la pantalla: el mensaje describe un aviso con sus
 // cinco datos (categoría, fuente, fecha, estado y vigencia) y su naturaleza.
 import { classifyNotice, validityText } from '../public/js/notice-taxonomy.js';
@@ -199,7 +201,19 @@ export async function recipientsForDevice(client, deviceId, { category = 'genera
     JOIN subscriber_contacts sc ON sc.subscriber_id = pas.subscriber_id AND sc.channel = pas.channel
     LEFT JOIN alert_preferences p ON p.subscriber_id = pas.subscriber_id
     WHERE pas.unsubscribed_at IS NULL
-      AND sc.opted_in_at IS NOT NULL AND sc.opted_out_at IS NULL AND sc.verified_at IS NOT NULL`;
+      AND sc.opted_in_at IS NOT NULL AND sc.opted_out_at IS NULL AND sc.verified_at IS NOT NULL
+    UNION ALL
+    -- Identidad de servicio solo por WhatsApp: sin cuenta, sin contactos de
+    -- cuenta. El destinatario es el propio teléfono verificado.
+    SELECT NULL::bigint AS subscriber_id, 'whatsapp' AS channel, pas.wa_phone AS address,
+      NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean,
+      NULL::boolean, NULL::boolean, NULL::boolean, NULL::text, NULL::text,
+      pas.categories AS public_categories
+    FROM public_alert_subscriptions pas
+    JOIN devices d ON d.id = pas.device_id AND d.active AND d.public_alerts_enabled
+    JOIN wa_alert_identities w ON w.phone = pas.wa_phone
+    WHERE pas.unsubscribed_at IS NULL
+      AND w.verified_at IS NOT NULL AND w.opted_out_at IS NULL`;
 
   // Si el mismo suscriptor+canal entra por privado y por público, gana el privado:
   // una fila por destinatario, nunca dos envíos del mismo aviso.
@@ -379,6 +393,22 @@ async function verificationStillValid(client, row) {
 }
 
 async function alertRecipientAllowed(client, row) {
+  // Suscripción pública solo por WhatsApp: sin suscriptor de cuenta, el sujeto
+  // es la identidad del teléfono.
+  if (row.audience === 'public' && row.subscriberId == null) {
+    const [sub] = await client`
+      SELECT pas.unsubscribed_at, w.verified_at, w.opted_out_at, d.public_alerts_enabled, d.active
+      FROM public_alert_subscriptions pas
+      JOIN devices d ON d.id = pas.device_id
+      JOIN wa_alert_identities w ON w.phone = pas.wa_phone
+      WHERE pas.wa_phone = ${row.address}
+        AND pas.device_id = (SELECT device_id FROM alerts WHERE id = ${row.alertId})`;
+    if (!sub || sub.unsubscribedAt) return { ok: false, status: 'cancelled', reason: 'suscripción revocada', alertState: 'failed' };
+    if (!sub.verifiedAt) return { ok: false, status: 'cancelled', reason: 'teléfono sin verificar', alertState: 'failed' };
+    if (sub.optedOutAt) return { ok: false, status: 'cancelled', reason: 'baja por WhatsApp', alertState: 'failed' };
+    if (!sub.publicAlertsEnabled || !sub.active) return { ok: false, status: 'cancelled', reason: 'estación sin avisos públicos', alertState: 'failed' };
+    return { ok: true };
+  }
   if (row.subscriberId == null) {
     return { ok: false, status: 'cancelled', reason: 'sin suscriptor', alertState: 'failed' };
   }
@@ -412,18 +442,29 @@ async function alertRecipientAllowed(client, row) {
 
 // Baja de una suscripción pública: aparta los avisos pendientes de esa estación
 // que ya no están autorizados, sin tocar los privados del mismo suscriptor.
-export async function cancelPendingPublicAlerts(client, { subscriberId, deviceId }) {
+// Por cuenta (`subscriberId` + estación) o por teléfono (identidad wa).
+export async function cancelPendingPublicAlerts(client, { subscriberId = null, deviceId = null, phone = null }) {
   const rows = await client`UPDATE notification_outbox o
       SET status = 'cancelled', last_error = 'suscripción revocada', updated_at = now(),
           claimed_by = NULL, claimed_at = NULL
-    WHERE o.kind = 'alert' AND o.audience = 'public' AND o.subscriber_id = ${subscriberId}
+    WHERE o.kind = 'alert' AND o.audience = 'public'
       AND o.status IN ('pending', 'manual')
-      AND o.alert_id IN (SELECT id FROM alerts WHERE device_id = ${deviceId})
+      AND (${subscriberId}::bigint IS NOT NULL AND o.subscriber_id = ${subscriberId}
+        OR ${phone}::text IS NOT NULL
+          AND o.subscriber_id IS NULL
+          AND regexp_replace(o.address, '[^0-9]', '', 'g') = regexp_replace(${phone}, '[^0-9]', '', 'g'))
+      AND (${deviceId}::text IS NULL OR o.alert_id IN (SELECT id FROM alerts WHERE device_id = ${deviceId}))
     RETURNING o.id, o.alert_id`;
   for (const row of rows) {
     await writeAlertDelivery(client, { alertId: row.alertId, state: 'failed' });
   }
   return rows.length;
+}
+
+// Hash del código de verificación de una identidad wa: ata el código al teléfono,
+// igual que el de contacto se ata a la fila de contacto.
+export function waVerificationHash(phone, code) {
+  return sha256(`wa-otp:${phone}:${code}`);
 }
 
 // Cada transición se escribe con su estado en texto fijo: los operadores y las
@@ -595,26 +636,102 @@ export async function dispatchOutbox({
   return counts;
 }
 
-// Procesa un mensaje entrante de WhatsApp: "BAJA"/"STOP" revoca el consentimiento
-// de ese contacto. Se usa desde el webhook del proveedor.
-export async function handleInboundWhatsApp(client, fromAddress, text) {
+// Procesa un mensaje entrante de WhatsApp:
+//   · «BAJA»/«STOP» revoca el consentimiento y da de baja contactos e
+//     identidades solo-WhatsApp, apartando lo que estuviera en cola.
+//   · «ALTA» responde con el enlace al formulario público (elección de estación
+//     y categorías); no crea nada por su cuenta.
+//   · Un código de 6 dígitos confirma la verificación de una identidad con
+//     código vivo (equivale a `wa/confirm`).
+// Se usa desde el webhook del proveedor. `reply` envía texto libre en ventana
+// (la persona acaba de escribir); `siteUrl` construye el enlace del ALTA.
+export async function handleInboundWhatsApp(client, fromAddress, text, { reply = null, siteUrl = '' } = {}) {
   const target = String(fromAddress || '').replace(/[^\d]/g, '');
   const command = String(text || '').trim().toUpperCase();
-  if (!/^(BAJA|STOP|CANCELAR|ALTA_CANCELADA)$/.test(command)) return { action: 'ignored' };
-  // Se comparan solo los dígitos: da igual que el número se guarde con o sin "+".
-  const rows = await client`UPDATE subscriber_contacts SET opted_in_at = null, opted_out_at = now(), updated_at = now()
-    WHERE channel = 'whatsapp' AND regexp_replace(address, '[^0-9]', '', 'g') = ${target}
-    RETURNING id, subscriber_id`;
-  // Una baja por WhatsApp retira también la publicidad y aparta lo que estuviera
-  // en cola: no basta con dejar de recibir avisos operativos.
-  const subscriberIds = [...new Set(rows.map((row) => row.subscriberId).filter(Boolean))];
-  for (const subscriberId of subscriberIds) {
-    await revokeCommercialConsent(client, { subscriberId, channel: 'whatsapp', source: 'whatsapp' });
+  const code = /^(\d{6})$/.exec(command)?.[1] ?? null;
+  const isBaja = /^(BAJA|STOP|CANCELAR|ALTA_CANCELADA)$/.test(command);
+  const isAlta = command === 'ALTA';
+  if (!isBaja && !isAlta && !code) return { action: 'ignored' };
+  const answer = async (message) => {
+    if (!reply) return;
+    try { await reply(message); } catch { /* la respuesta nunca rompe el webhook */ }
+  };
+
+  if (isBaja) {
+    // Se comparan solo los dígitos: da igual que el número se guarde con o sin "+".
+    const rows = await client`UPDATE subscriber_contacts SET opted_in_at = null, opted_out_at = now(), updated_at = now()
+      WHERE channel = 'whatsapp' AND regexp_replace(address, '[^0-9]', '', 'g') = ${target}
+      RETURNING id, subscriber_id`;
+    // Una baja por WhatsApp retira también la publicidad y aparta lo que estuviera
+    // en cola: no basta con dejar de recibir avisos operativos.
+    const subscriberIds = [...new Set(rows.map((row) => row.subscriberId).filter(Boolean))];
+    for (const subscriberId of subscriberIds) {
+      await revokeCommercialConsent(client, { subscriberId, channel: 'whatsapp', source: 'whatsapp' });
+    }
+    const leads = await client`SELECT id FROM farm_leads
+      WHERE regexp_replace(phone, '[^0-9]', '', 'g') = ${target}`;
+    for (const lead of leads) {
+      await revokeCommercialConsent(client, { leadId: lead.id, channel: 'whatsapp', source: 'whatsapp' });
+    }
+    // Baja de las identidades solo por WhatsApp y de sus suscripciones públicas.
+    const waRows = await client`UPDATE wa_alert_identities SET opted_out_at = now(), updated_at = now()
+      WHERE regexp_replace(phone, '[^0-9]', '', 'g') = ${target} AND opted_out_at IS NULL
+      RETURNING phone`;
+    if (waRows.length) {
+      await client`UPDATE public_alert_subscriptions SET unsubscribed_at = now(), updated_at = now()
+        WHERE wa_phone IN (SELECT phone FROM wa_alert_identities
+          WHERE regexp_replace(phone, '[^0-9]', '', 'g') = ${target}) AND unsubscribed_at IS NULL`;
+      await cancelPendingPublicAlerts(client, { phone: target });
+    }
+    return {
+      action: 'opted_out',
+      affected: rows.length,
+      commercialRevoked: subscriberIds.length + leads.length,
+      waIdentities: waRows.length,
+    };
   }
-  const leads = await client`SELECT id FROM farm_leads
-    WHERE regexp_replace(phone, '[^0-9]', '', 'g') = ${target}`;
-  for (const lead of leads) {
-    await revokeCommercialConsent(client, { leadId: lead.id, channel: 'whatsapp', source: 'whatsapp' });
+
+  if (isAlta) {
+    // Nada se crea por mensaje: la elección de estación, categorías y canal se
+    // hace en el formulario público, y la identidad se verifica con código.
+    const [{ n }] = await client`SELECT count(*)::integer AS n
+      FROM devices WHERE active = true AND public_alerts_enabled = true`;
+    const link = `${String(siteUrl || '').replace(/\/$/, '')}/#avisos-whatsapp`;
+    await answer(n > 0
+      ? `Para recibir avisos elige estación y tipos aquí: ${link}`
+      : `El servicio de avisos públicos aún no tiene estaciones habilitadas. Puedes apuntarte a la lista de interés aquí: ${link}`);
+    return { action: 'signup_link_sent', enabledStations: n };
   }
-  return { action: 'opted_out', affected: rows.length, commercialRevoked: subscriberIds.length + leads.length };
+
+  // Código de verificación de una identidad solo por WhatsApp.
+  const [identity] = await client`SELECT phone, code_hash, code_expires_at, code_attempts, verified_at
+    FROM wa_alert_identities WHERE regexp_replace(phone, '[^0-9]', '', 'g') = ${target}`;
+  if (!identity?.codeHash) return { action: 'ignored' };
+  if (identity.verifiedAt) {
+    await answer('Tu número ya estaba verificado.');
+    return { action: 'already_verified' };
+  }
+  if (isExpired(identity.codeExpiresAt)) {
+    await client`UPDATE wa_alert_identities SET code_hash = NULL, code_expires_at = NULL, updated_at = now()
+      WHERE phone = ${identity.phone}`;
+    await answer('El código ha caducado. Pide uno nuevo en el formulario.');
+    return { action: 'code_expired' };
+  }
+  if (identity.codeAttempts >= 5) {
+    await answer('Demasiados intentos. Pide un código nuevo en el formulario.');
+    return { action: 'code_exhausted' };
+  }
+  const expected = Buffer.from(String(identity.codeHash), 'hex');
+  const provided = Buffer.from(waVerificationHash(identity.phone, code), 'hex');
+  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {
+    await client`UPDATE wa_alert_identities SET code_attempts = code_attempts + 1, updated_at = now()
+      WHERE phone = ${identity.phone}`;
+    await answer('Código incorrecto. Compruébalo e inténtalo de nuevo.');
+    return { action: 'invalid_code' };
+  }
+  await client`UPDATE wa_alert_identities SET verified_at = now(), code_hash = NULL,
+      code_expires_at = NULL, code_attempts = 0, updated_at = now()
+    WHERE phone = ${identity.phone}`;
+  await answer('Número verificado: tus avisos públicos quedan activos. Puedes darte de baja respondiendo BAJA.');
+  return { action: 'verified' };
 }

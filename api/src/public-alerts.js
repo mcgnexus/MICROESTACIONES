@@ -7,6 +7,7 @@
 // canal está verificado y autorizado. El acceso a una estación privada
 // (`subscriber_devices`/`farms`) es otra cosa y no se toca aquí.
 import { Router } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { sql } from './db.js';
 import { requireSubscriber, csrfGuard } from './auth.js';
@@ -14,11 +15,142 @@ import { audit } from './audit.js';
 import { recordConsent } from './consent.js';
 import { consumeAttempt } from './login-rate-limit.js';
 import { sha256 } from './security.js';
-import { messageExpiresAt } from './message-ttl.js';
-import { cancelPendingPublicAlerts } from './notify.js';
+import { messageExpiresAt, isExpired } from './message-ttl.js';
+import { cancelPendingPublicAlerts, sendWhatsApp, waVerificationHash } from './notify.js';
 import { CATEGORY_COLUMNS } from './alert-preferences.js';
+import { normalizePhoneE164, DEFAULT_COUNTRY } from './phone.js';
+import { channelAvailable } from './verification-status.js';
+import { whatsappTemplate } from './message-templates.js';
+import { generateVerificationCode, VERIFICATION_TTL_MINUTES } from './contacts.js';
 
 const router = Router();
+
+// ---- Flujo público solo por WhatsApp (sin cuenta) ---------------------------
+// Va ANTES de `requireSubscriber`: estos endpoints son públicos y nunca crean
+// cuentas, sesiones ni `subscriber_contacts`. La persona elige estación y
+// categorías aquí; la identidad del teléfono se verifica con un código.
+const waRequestSchema = z.object({
+  phone: z.string().min(6).max(32),
+  device_id: z.string().min(1).max(80),
+  categories: z.array(z.enum(['frost', 'heat', 'storm', 'wind', 'humidity', 'general']))
+    .max(6).optional(),
+}).strict();
+
+const waConfirmSchema = z.object({
+  phone: z.string().min(6).max(32),
+  code: z.string().regex(/^\d{6}$/),
+}).strict();
+
+const waIp = (req) => req.ip || req.socket.remoteAddress || 'unknown';
+const digitsOf = (phone) => String(phone).replace(/[^\d]/g, '');
+
+// Estaciones habilitadas (datos públicos) para el formulario.
+router.get('/wa/stations', async (_req, res) => {
+  const stations = await sql`SELECT d.id, d.name, d.public_zone,
+      (SELECT max(observed_at) FROM measurements m
+        WHERE m.device_id = d.id AND m.is_validated AND m.deleted_at IS NULL) AS last_data
+    FROM devices d
+    WHERE d.active = true AND d.public_alerts_enabled = true
+    ORDER BY d.name`;
+  res.json({
+    stations: stations.map((station) => ({
+      id: station.id, name: station.name, zone: station.publicZone ?? null,
+      lastDataAt: station.lastData ?? null,
+      categories: ['frost', 'heat', 'storm', 'wind', 'humidity', 'general'],
+    })),
+  });
+});
+
+// Petición de verificación: envía un código por WhatsApp a la estación y
+// categorías elegidas. La suscripción queda pendiente hasta confirmar el código.
+router.post('/wa/request', async (req, res) => {
+  const parsed = waRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const phone = normalizePhoneE164(parsed.data.phone, DEFAULT_COUNTRY);
+  if (!phone) return res.status(409).json({ error: 'invalid_phone' });
+  const categories = parsed.data.categories?.length ? [...new Set(parsed.data.categories)] : ['frost', 'heat', 'storm', 'wind', 'humidity', 'general'];
+
+  const found = await loadEnabledStation(sql, parsed.data.device_id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  if (!channelAvailable('whatsapp')) return res.status(409).json({ error: 'channel_unavailable' });
+  const [existing] = await sql`SELECT opted_out_at FROM wa_alert_identities WHERE phone = ${phone}`;
+  if (existing?.optedOutAt) return res.status(409).json({ error: 'wa_opted_out' });
+
+  const limits = [
+    { key: sha256(`wa-request:phone:${phone}`), max: 3 },
+    { key: sha256(`wa-request-ip:${String(waIp(req)).slice(0, 200)}`), max: 10 },
+  ];
+  const results = await Promise.all(limits.map(({ key, max }) => consumeAttempt(sql, key, max)));
+  if (results.some((result) => result.limited)) return res.status(429).json({ error: 'too_many_requests' });
+
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + VERIFICATION_TTL_MINUTES * 60 * 1000);
+  const [lead] = await sql`SELECT id FROM farm_leads
+    WHERE regexp_replace(phone, '[^0-9]', '', 'g') = ${digitsOf(phone)}
+    ORDER BY created_at DESC LIMIT 1`;
+  // Vinculación con lead solo trazable: no otorga permisos privados.
+  await sql.begin(async (tx) => {
+    await tx`INSERT INTO wa_alert_identities (phone, lead_id, code_hash, code_expires_at, code_attempts)
+      VALUES (${phone}, ${lead?.id ?? null}, ${waVerificationHash(phone, code)}, ${expiresAt}, 0)
+      ON CONFLICT (phone) DO UPDATE SET
+        code_hash = ${waVerificationHash(phone, code)}, code_expires_at = ${expiresAt},
+        code_attempts = 0, updated_at = now()`;
+    await tx`INSERT INTO public_alert_subscriptions
+        (wa_phone, device_id, channel, categories, subscribed_at, unsubscribed_at)
+      VALUES (${phone}, ${parsed.data.device_id}, 'whatsapp', ${categories}, now(), NULL)
+      ON CONFLICT (wa_phone, device_id, channel) WHERE wa_phone IS NOT NULL DO UPDATE SET
+        categories = ${categories}, subscribed_at = now(), unsubscribed_at = NULL`;
+  });
+
+  const template = whatsappTemplate('contact_verification', { params: [code] });
+  const result = await sendWhatsApp(phone, `Tu código de verificación TecRural es ${code}`, process.env, { template });
+  if (!result.ok) {
+    // Fallo honesto: no se finge envío; la identidad queda sin verificar.
+    return res.status(409).json({
+      error: result.error === 'template_required' ? 'channel_unavailable' : 'send_failed',
+    });
+  }
+  await audit(sql, req, 'public_alerts.wa_request', 'device', parsed.data.device_id, null,
+    { phone: `***${digitsOf(phone).slice(-4)}` });
+  res.status(202).json({ status: 'pending', expiresAt });
+});
+
+// Confirmación del código: activa la identidad y, con ella, la suscripción.
+router.post('/wa/confirm', async (req, res) => {
+  const parsed = waConfirmSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const phone = normalizePhoneE164(parsed.data.phone, DEFAULT_COUNTRY);
+  if (!phone) return res.status(409).json({ error: 'invalid_phone' });
+
+  const limit = await consumeAttempt(sql, sha256(`wa-confirm-ip:${String(waIp(req)).slice(0, 200)}`), 20);
+  if (limit.limited) return res.status(429).json({ error: 'too_many_requests' });
+
+  const [identity] = await sql`SELECT phone, code_hash, code_expires_at, code_attempts, verified_at
+    FROM wa_alert_identities WHERE phone = ${phone}`;
+  if (!identity?.codeHash) return res.status(409).json({ error: 'no_pending_code' });
+  if (identity.verifiedAt) return res.json({ status: 'verified' });
+  if (isExpired(identity.codeExpiresAt)) {
+    await sql`UPDATE wa_alert_identities SET code_hash = NULL, code_expires_at = NULL, updated_at = now()
+      WHERE phone = ${phone}`;
+    return res.status(410).json({ error: 'code_expired' });
+  }
+  if (identity.codeAttempts >= 5) return res.status(429).json({ error: 'too_many_attempts' });
+
+  const expected = Buffer.from(String(identity.codeHash), 'hex');
+  const provided = Buffer.from(waVerificationHash(phone, parsed.data.code), 'hex');
+  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {
+    await sql`UPDATE wa_alert_identities SET code_attempts = code_attempts + 1, updated_at = now()
+      WHERE phone = ${phone}`;
+    return res.status(400).json({ error: 'invalid_code' });
+  }
+  await sql`UPDATE wa_alert_identities SET verified_at = now(), code_hash = NULL,
+      code_expires_at = NULL, code_attempts = 0, updated_at = now()
+    WHERE phone = ${phone}`;
+  await audit(sql, req, 'public_alerts.wa_confirm', 'device', null, null,
+    { phone: `***${digitsOf(phone).slice(-4)}` });
+  res.json({ status: 'verified' });
+});
+
 router.use(requireSubscriber);
 
 const ALL_CATEGORIES = Object.keys(CATEGORY_COLUMNS);
@@ -111,7 +243,7 @@ router.post('/subscribe', csrfGuard, async (req, res) => {
     const [row] = await tx`INSERT INTO public_alert_subscriptions
         (subscriber_id, device_id, channel, categories, subscribed_at, unsubscribed_at)
       VALUES (${req.subscriber.id}, ${deviceId}, ${channel}, ${categories}, now(), NULL)
-      ON CONFLICT (subscriber_id, device_id, channel) DO UPDATE SET
+      ON CONFLICT (subscriber_id, device_id, channel) WHERE subscriber_id IS NOT NULL DO UPDATE SET
         categories = ${categories}, subscribed_at = now(), unsubscribed_at = NULL
       RETURNING device_id, channel, categories, subscribed_at`;
     await recordConsent(tx, {

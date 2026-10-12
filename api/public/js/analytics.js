@@ -9,10 +9,25 @@ let currentLocked = false;
 const sent = new Set();
 const sources = ['google', 'bing', 'facebook', 'instagram', 'whatsapp', 'qr', 'newsletter', 'partner'];
 const media = ['organic', 'social', 'email', 'cpc', 'qr', 'referral'];
+// Conservar la atribución del recorrido: se guarda al primer avistamiento y se
+// restaura si la navegación (p. ej. a /contacto) pierde la query.
+const utmKey = 'tecrural:utm';
+function storedAcquisition() {
+  try { return JSON.parse(sessionStorage.getItem(utmKey) || '{}') || {}; } catch { return {}; }
+}
+function persistAcquisition(value) {
+  if (!value.source && !value.medium && !value.campaign) return;
+  try { sessionStorage.setItem(utmKey, JSON.stringify(value)); } catch { /* sin almacenamiento, se usa la URL */ }
+}
 function campaign() {
   const params = new URLSearchParams(location.search);
   const pick = (name) => (params.get(`utm_${name}`) || params.get(name) || '').toLowerCase();
-  const source = pick('source'), medium = pick('medium'), value = pick('campaign');
+  const fromUrl = { source: pick('source'), medium: pick('medium'), campaign: pick('campaign') };
+  persistAcquisition(fromUrl);
+  const stored = storedAcquisition();
+  const source = fromUrl.source || stored.source || '';
+  const medium = fromUrl.medium || stored.medium || '';
+  const value = fromUrl.campaign || stored.campaign || '';
   return { source: sources.includes(source) ? source : source ? 'other' : '',
     medium: media.includes(medium) ? medium : '', campaign: campaigns.includes(value) ? value : '' };
 }

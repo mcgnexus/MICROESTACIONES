@@ -24,7 +24,9 @@ test('el esquema y la migración traen el modelo completo de forma idempotente',
   for (const source of [schema, migrate]) {
     assert.match(source, /public_alerts_enabled boolean NOT NULL DEFAULT false/);
   }
-  assert.match(schema, /PRIMARY KEY \(subscriber_id, device_id, channel\)/);
+  // El sujeto puede ser cuenta o teléfono: la unicidad va por índices parciales.
+  assert.match(schema, /CREATE UNIQUE INDEX IF NOT EXISTS public_alert_subscriptions_account_idx/);
+  assert.match(schema, /CHECK \(num_nonnulls\(subscriber_id, wa_phone\) = 1\)/);
   assert.match(migrate, /ADD COLUMN IF NOT EXISTS audience text/);
   assert.match(migrate, /'subscription_test'/);
   assert.match(schema, /'subscription_test'/);
@@ -70,7 +72,7 @@ test('el alta valida estación habilitada, cuenta y contacto verificados', () =>
   assert.match(publicAlerts, /'station_not_enabled', status: 409/);
   assert.match(publicAlerts, /'account_not_verified', status: 409/);
   assert.match(publicAlerts, /'contact_not_verified', status: 409/);
-  assert.match(publicAlerts, /ON CONFLICT \(subscriber_id, device_id, channel\) DO UPDATE/);
+  assert.match(publicAlerts, /\(subscriber_id, device_id, channel\) WHERE subscriber_id IS NOT NULL DO UPDATE/);
   assert.match(publicAlerts, /source: 'public_alerts'/);
 });
 

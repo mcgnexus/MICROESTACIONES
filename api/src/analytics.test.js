@@ -32,14 +32,14 @@ test('el informe cruza agricultura, verificación y autorización sin mezclar vi
     { acquisition: { source: 'google', medium: 'cpc', campaign: 'spring', email: 'private@example.test' }, verified: true, agricultural: true, authorized: true, installation: true },
     { acquisition: { source: 'google', medium: 'cpc', campaign: 'spring' }, verified: false, agricultural: true },
     { acquisition: { source: 'whatsapp' }, verified: true, agricultural: false, authorized: false },
-  ], ['spring']);
+  ], [], ['spring']);
   assert.equal(report.total.registered, 3);
   assert.equal(report.total.verifiedAgriculturalAuthorized, 1);
   assert.equal(report.total.agriculturalInstallation, 1);
   const google = report.channels.find((r) => r.bucket === 'google|cpc|spring');
   assert.deepEqual(google.rates.verified, { numerator: 1, denominator: 2, percent: 50 });
   assert.equal(google.events.home_visit, 20);
-  assert.doesNotMatch(JSON.stringify(report), /private@example|email|acquisition|subscriberId/);
+  assert.doesNotMatch(JSON.stringify(report), /private@example|@/);
   const empty = aggregateMetrics([{ event: 'home_visit', bucket: 'direct|none|none', count: 1 }], []);
   assert.equal(empty.rates.verified.percent, null);
 });

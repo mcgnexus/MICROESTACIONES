@@ -20,6 +20,8 @@ async function fillCountrySelects(form) {
 
 // Captación de la visita (utm_* y ref). El servidor la valida de nuevo. Se lee
 // de forma defensiva para poder importar el módulo fuera del navegador.
+// Si la navegación perdió la query (p. ej. de la portada a /contacto), se
+// restaura la atribución guardada en sessionStorage al primer avistamiento.
 const acquisition = (() => {
   if (typeof location === 'undefined') return {};
   const params = new URLSearchParams(location.search);
@@ -28,6 +30,13 @@ const acquisition = (() => {
     const value = params.get(key) ?? params.get(`utm_${key}`);
     if (value) out[key] = value;
   }
+  try {
+    if (Object.keys(out).length) {
+      sessionStorage.setItem('tecrural:acquisition', JSON.stringify(out));
+    } else {
+      return JSON.parse(sessionStorage.getItem('tecrural:acquisition') || '{}') || {};
+    }
+  } catch { /* sin almacenamiento, solo la URL actual */ }
   return out;
 })();
 

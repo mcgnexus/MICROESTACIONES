@@ -281,6 +281,9 @@ router.post('/:channel/confirm', csrfGuard, async (req, res) => {
   });
   await audit(sql, req, 'contact.verified', 'subscriber', String(req.subscriber.id), null, { channel });
   await markMetric(sql, 'contact_verified', { subscriberId: req.subscriber.id }).catch(metricFailure);
+  // Verificación por canal: el total y la serie del canal confirmado.
+  await markMetric(sql, channel === 'whatsapp' ? 'contact_verified_whatsapp' : 'contact_verified_email',
+    { subscriberId: req.subscriber.id }).catch(metricFailure);
   res.json({ verified: true, channel });
 });
 

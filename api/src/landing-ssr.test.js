@@ -59,7 +59,7 @@ test('sin tarjeta (SSR no disponible) el HTML se sirve tal cual', () => {
 
 test('el cliente siempre pide los datos, pero un fallo no borra la tarjeta del servidor', () => {
   // La comparación y la evolución siguen viniendo del cliente.
-  assert.match(landing, /mountLeadForms\(\);\s*loadPublicWeather\(\);/);
+  assert.match(landing, /mountLeadForms\(\);\s*mountWaSignup\(\);\s*loadPublicWeather\(\);/);
   // Un fallo posterior conserva la última lectura pintada por el servidor.
   assert.match(landing, /if \(card && !card\.hasAttribute\('data-public-ready'\)\) card\.innerHTML = ''/);
 });

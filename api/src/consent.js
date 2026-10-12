@@ -52,27 +52,32 @@ export function normalizeAcquisition(input) {
 // Registra una transición de consentimiento. Es la única forma de escribir en el
 // libro: no se actualiza ni se borra, se añade un hecho nuevo con su fecha.
 export async function recordConsent(client, {
-  subscriberId = null, leadId = null, purpose, channel, action,
+  subscriberId = null, leadId = null, waPhone = null, purpose, channel, action,
   textVersion = CONSENT_TEXT_VERSION, source = 'web', ip = null, userAgent = null,
 }) {
   if (!CONSENT_PURPOSES.includes(purpose)) throw new Error('invalid_consent_purpose');
   if (!CONSENT_CHANNELS.includes(channel)) throw new Error('invalid_consent_channel');
   if (!CONSENT_ACTIONS.includes(action)) throw new Error('invalid_consent_action');
   if (!CONSENT_SOURCES.includes(source)) throw new Error('invalid_consent_source');
+  // Sujeto único: cuenta, contacto de captación o identidad solo por WhatsApp.
+  if ([subscriberId, leadId, waPhone].filter((subject) => subject != null).length !== 1) {
+    throw new Error('invalid_consent_subject');
+  }
   await client`INSERT INTO consent_records
-    (subscriber_id, lead_id, purpose, channel, action, text_version, source, ip_address, user_agent)
-    VALUES (${subscriberId}, ${leadId}, ${purpose}, ${channel}, ${action},
+    (subscriber_id, lead_id, wa_phone, purpose, channel, action, text_version, source, ip_address, user_agent)
+    VALUES (${subscriberId}, ${leadId}, ${waPhone}, ${purpose}, ${channel}, ${action},
       ${textVersion}, ${source}, ${ip}, ${userAgent})`;
   return true;
 }
 
 // Estado vigente de una finalidad y canal: el último hecho registrado manda.
-export async function latestConsent(client, { subscriberId = null, leadId = null, purpose, channel }) {
+export async function latestConsent(client, { subscriberId = null, leadId = null, waPhone = null, purpose, channel }) {
   const [row] = await client`SELECT action, text_version, source, recorded_at
     FROM consent_records
     WHERE purpose = ${purpose} AND channel = ${channel}
       AND subscriber_id IS NOT DISTINCT FROM ${subscriberId}
       AND lead_id IS NOT DISTINCT FROM ${leadId}
+      AND wa_phone IS NOT DISTINCT FROM ${waPhone}
     ORDER BY recorded_at DESC, id DESC LIMIT 1`;
   if (!row) return null;
   return {
@@ -91,12 +96,13 @@ export async function hasCommercialConsent(client, { subscriberId = null, leadId
 
 // Resumen por finalidad y canal para administración y cuenta. Devuelve solo la
 // situación vigente de cada combinación, no el histórico completo.
-export async function consentSummary(client, { subscriberId = null, leadId = null } = {}) {
+export async function consentSummary(client, { subscriberId = null, leadId = null, waPhone = null } = {}) {
   const rows = await client`SELECT DISTINCT ON (purpose, channel)
       purpose, channel, action, text_version, source, recorded_at
     FROM consent_records
     WHERE subscriber_id IS NOT DISTINCT FROM ${subscriberId}
       AND lead_id IS NOT DISTINCT FROM ${leadId}
+      AND wa_phone IS NOT DISTINCT FROM ${waPhone}
     ORDER BY purpose, channel, recorded_at DESC, id DESC`;
   const summary = {};
   for (const row of rows) {

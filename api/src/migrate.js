@@ -411,6 +411,42 @@ const upgrades = [
      CHECK (kind IN ('alert','contact_verification','lead_confirmation','lead_notice','commercial','subscription_test'))`,
   `CREATE INDEX IF NOT EXISTS notification_outbox_subscription_idx
      ON notification_outbox(subscriber_id, kind, audience) WHERE kind = 'alert'`,
+  // Cambio 19: identidad de servicio solo por WhatsApp y suscripciones públicas
+  // sin cuenta. Nunca crea `subscribers` ni da acceso al panel.
+  `DO $$ BEGIN
+     CREATE TABLE wa_alert_identities (
+       phone text PRIMARY KEY,
+       lead_id bigint REFERENCES farm_leads(id) ON DELETE SET NULL,
+       verified_at timestamptz,
+       opted_out_at timestamptz,
+       code_hash text,
+       code_expires_at timestamptz,
+       code_attempts integer NOT NULL DEFAULT 0,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now()
+     );
+   EXCEPTION WHEN duplicate_table THEN NULL; END $$`,
+  `ALTER TABLE public_alert_subscriptions ALTER COLUMN subscriber_id DROP NOT NULL`,
+  `ALTER TABLE public_alert_subscriptions ADD COLUMN IF NOT EXISTS wa_phone text`,
+  `ALTER TABLE public_alert_subscriptions DROP CONSTRAINT IF EXISTS public_alert_subscriptions_subject_check`,
+  `ALTER TABLE public_alert_subscriptions ADD CONSTRAINT public_alert_subscriptions_subject_check
+     CHECK (num_nonnulls(subscriber_id, wa_phone) = 1)`,
+  -- El PK antiguo (subscriber_id, device_id, channel) no admite filas wa
+  -- (subscriber_id NULL). Se sustituye por un índice único sobre el sujeto
+  -- compuesto: la exclusión de duplicados la dan este índice y el CHECK.
+  `DO $$ BEGIN
+     ALTER TABLE public_alert_subscriptions DROP CONSTRAINT public_alert_subscriptions_pkey;
+   EXCEPTION WHEN undefined_object THEN NULL; END $$`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS public_alert_subscriptions_account_idx
+     ON public_alert_subscriptions(subscriber_id, device_id, channel) WHERE subscriber_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS public_alert_subscriptions_wa_idx
+     ON public_alert_subscriptions(wa_phone, device_id, channel) WHERE wa_phone IS NOT NULL`,
+  `ALTER TABLE consent_records ADD COLUMN IF NOT EXISTS wa_phone text`,
+  `ALTER TABLE consent_records DROP CONSTRAINT IF EXISTS consent_records_check`,
+  `ALTER TABLE consent_records ADD CONSTRAINT consent_records_check
+     CHECK (num_nonnulls(subscriber_id, lead_id, wa_phone) = 1)`,
+  `CREATE INDEX IF NOT EXISTS consent_records_wa_idx
+     ON consent_records(wa_phone, purpose, channel, recorded_at DESC)`,
   // Rezonda lo que ya estaba en cola sin caducidad: un aviso o un código viejo
   // no se envía. Solo se rellena lo que sigue pendiente.
   `UPDATE notification_outbox SET expires_at = created_at + CASE kind

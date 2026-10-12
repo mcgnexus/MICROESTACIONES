@@ -20,7 +20,9 @@ async function list() {
       s.email_verified_at IS NOT NULL AS verified,
       s.active AS account_active, s.acquisition AS origin, s.created_at,
       t.status, t.notes, t.next_action, t.next_action_at,
-      coalesce(t.installation_interest, p.interest = 'futura_instalacion') AS installation_interest, t.retain_until
+      coalesce(t.installation_interest, p.interest = 'futura_instalacion') AS installation_interest, t.retain_until,
+      EXISTS (SELECT 1 FROM public_alert_subscriptions pas
+        WHERE pas.subscriber_id = s.id AND pas.unsubscribed_at IS NULL) AS alerts_subscription
     FROM subscribers s LEFT JOIN subscriber_profiles p ON p.subscriber_id = s.id
     LEFT JOIN prospect_tracking t ON t.subscriber_id = s.id
     UNION ALL
@@ -28,26 +30,32 @@ async function list() {
       l.preferred_channel, l.request_type,
       false, NULL::boolean, jsonb_build_object('source', l.source, 'campaign', l.campaign), l.created_at,
       t.status, coalesce(t.notes, l.admin_notes), t.next_action, t.next_action_at,
-      coalesce(t.installation_interest, l.request_type = 'installation_info', l.interest = 'futura_instalacion'), t.retain_until
+      coalesce(t.installation_interest, l.request_type = 'installation_info', l.interest = 'futura_instalacion'), t.retain_until,
+      EXISTS (SELECT 1 FROM public_alert_subscriptions pas
+        WHERE pas.lead_id = l.id AND pas.unsubscribed_at IS NULL) AS alerts_subscription
     FROM farm_leads l LEFT JOIN prospect_tracking t ON t.lead_id = l.id`;
-  const consents = await sql`SELECT DISTINCT ON (subscriber_id, lead_id, channel)
-    subscriber_id, lead_id, channel, action FROM consent_records WHERE purpose = 'commercial'
-    ORDER BY subscriber_id, lead_id, channel, recorded_at DESC, id DESC`;
+  // Permiso de servicio (atender la solicitud), de publicidad y canal, uno por
+  // sujeto: la atención no depende del permiso comercial.
+  const consents = await sql`SELECT DISTINCT ON (subscriber_id, lead_id, purpose, channel)
+    subscriber_id, lead_id, purpose, channel, action FROM consent_records
+    ORDER BY subscriber_id, lead_id, purpose, channel, recorded_at DESC, id DESC`;
   const permissions = new Map();
   for (const c of consents) {
     const key = c.subscriberId ? `subscriber:${c.subscriberId}` : `lead:${c.leadId}`;
-    if (!permissions.has(key)) permissions.set(key, {});
-    permissions.get(key)[c.channel] = c.action === 'granted';
+    if (!permissions.has(key)) permissions.set(key, { service: {}, commercial: {} });
+    permissions.get(key)[c.purpose][c.channel] = c.action === 'granted';
   }
   return rows.map((r) => ({ ...r, status: r.status || (r.interest && r.interest !== 'general' ? 'interes_declarado' : 'registrado'),
-    commercial: permissions.get(`${r.kind}:${r.id}`) || {} }));
+    commercial: permissions.get(`${r.kind}:${r.id}`)?.commercial || {},
+    service: permissions.get(`${r.kind}:${r.id}`)?.service || {} }));
 }
 const router = Router();
 const filtersSchema = z.object({ municipality: z.string().max(160).optional(), activity: z.string().max(40).optional(),
   interest: z.string().max(40).optional(), status: z.enum(COMMERCIAL_STATES).optional(),
   verified: z.enum(['yes', 'no']).optional(), permission: z.enum(['yes', 'no']).optional(),
   installation: z.literal('yes').optional(), channel: z.enum(['email', 'whatsapp']).optional(),
-  request_type: z.enum(REQUEST_TYPES).optional(), preferred_channel: z.enum(['email', 'whatsapp']).optional() }).strict();
+  request_type: z.enum(REQUEST_TYPES).optional(), preferred_channel: z.enum(['email', 'whatsapp']).optional(),
+  created_since: z.enum(['today', '7d', '30d']).optional() }).strict();
 router.get('/', async (req, res) => {
   const parsed = filtersSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_filters' });

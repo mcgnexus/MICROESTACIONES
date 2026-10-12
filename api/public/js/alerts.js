@@ -375,6 +375,11 @@ export function availableChannels({ me = {}, whatsappDelivery = null } = {}) {
 }
 
 // ---- Centro de avisos (todas las estaciones) --------------------------------
+// Primera consulta útil: se publica una vez por sesión solo cuando se han
+// mostrado datos reales (avisos en pantalla), no al abrir la ruta. Si la carga
+// falla, los renderizadores gestionan el error y no se publica nada.
+let activationSent = false;
+
 export async function renderAlertsCenter(root) {
   const editable = canEdit();
   const channels = availableChannels({ me: session.me, whatsappDelivery: session.support?.whatsappDelivery });
@@ -433,6 +438,12 @@ export async function renderAlertsCenter(root) {
       const data = await api(`/api/v1/alerts?${params}`);
       const open = data.alerts.filter((alert) => !alert.closedAt);
       const closed = data.alerts.filter((alert) => alert.closedAt);
+      if ((open.length || closed.length) && !activationSent) {
+        activationSent = true;
+        try {
+          await api('/api/v1/analytics/activation', { method: 'POST', body: JSON.stringify({ tool: 'avisos' }) });
+        } catch { /* la activación nunca rompe la pantalla */ }
+      }
       const listOptions = {
         technical: editable, engineVerified: data.engine_verified !== false, admin: isAdmin(),
       };

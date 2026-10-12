@@ -34,7 +34,7 @@ import {
   leadSchema, isHoneypot, leadRateLimitKeys, leadColumns, leadContactKey,
   commercialConsentChannels, serviceConsentChannels,
 } from './leads.js';
-import { enqueueLeadMessages, handleInboundWhatsApp } from './notify.js';
+import { enqueueLeadMessages, handleInboundWhatsApp, sendWhatsApp } from './notify.js';
 import {
   runScheduledPasses, schedulerConfig, schedulerRequestTick, startScheduler,
   outboxLimitForRequest, schedulerState, recordSchedulerHeartbeat,
@@ -396,7 +396,16 @@ app.post('/api/v1/whatsapp/webhook', async (req, res) => {
   }
   const results = [];
   for (const message of messages) {
-    if (message.text) results.push(await handleInboundWhatsApp(sql, message.from, message.text));
+    if (!message.text) continue;
+    // Las respuestas (enlace de ALTA, confirmación del código) son texto libre
+    // legítimo: la ventana de 24 h está abierta porque la persona acaba de escribir.
+    results.push(await handleInboundWhatsApp(sql, message.from, message.text, {
+      siteUrl: siteOrigin(process.env.PUBLIC_SITE_URL),
+      reply: async (text) => {
+        const result = await sendWhatsApp(message.from, text, process.env, { inWindow: true });
+        if (!result.ok) console.error('respuesta wa:', result.error);
+      },
+    }));
   }
   res.json({ received: messages.length, statuses, results });
 });
