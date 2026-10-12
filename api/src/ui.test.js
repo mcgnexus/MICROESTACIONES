@@ -204,8 +204,9 @@ test('trendPeriodLabel falls back to a stated default when there is no period', 
 
 test('metrics include an icon and graphs explain temperature trend with an arrow', () => {
   // El icono viene del conjunto común en SVG, no de un emoji: cada sistema
-  // operativo los dibujaba de forma distinta.
-  assert.match(metric('Temperatura', '19,2', '°C'), /<svg class="icon"[^>]*viewBox="0 0 24 24"/);
+  // operativo los dibujaba de forma distinto. El de temperatura es relleno y
+  // conserva su rejilla propia.
+  assert.match(metric('Temperatura', '19,2', '°C'), /<svg class="icon"[^>]*viewBox="0 0 442\.936 442\.936"/);
   assert.doesNotMatch(metric('Temperatura', '19,2', '°C'), /🌡/);
   const rows = [1, 2, 3].map((temperatureC, i) => ({
     observedAt: new Date(i * 30 * 60 * 1000).toISOString(), temperatureC,

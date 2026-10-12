@@ -20,13 +20,22 @@ const css = resolveVars(await readFile(new URL('../public/app.css', import.meta.
 // F12 · F13. Dos hallazgos sobre el mismo problema de fondo: un lenguaje visual
 // y tipográfico que se construía por partes, sin una escala común.
 
-test('el conjunto de iconos es un solo trazo sobre una rejilla de 24', () => {
+test('el conjunto de iconos reparte dos lenguajes: trazo en rejilla de 24 y rellenos', () => {
+  // Los iconos de lectura (estación, temperatura y humedad) llegaron como SVG
+  // rellenos ajenos a la rejilla: conservan su viewBox y pintan con fill.
+  const FILLED = new Set(['station', 'stations', 'temperature', 'humidity']);
   for (const name of ICON_NAMES) {
     const svg = icon(name);
-    assert.match(svg, /viewBox="0 0 24 24"/, `${name} usa otra rejilla`);
-    assert.match(svg, /stroke-width="1\.8"/, `${name} usa otro grosor de trazo`);
-    assert.match(svg, /stroke="currentColor"/, `${name} fija su propio color en vez de heredar`);
-    assert.match(svg, /fill="none"/, `${name} rellena el trazo`);
+    assert.match(svg, /viewBox="0 0 [\d.]+ [\d.]+"/, `${name} no declara su rejilla`);
+    assert.match(svg, /currentColor/, `${name} no hereda el color del texto`);
+    if (FILLED.has(name)) {
+      assert.match(svg, /stroke="none"/, `${name} relleno mezcla trazo`);
+      assert.match(svg, /<g><path/, `${name} relleno sin su dibujo original`);
+    } else {
+      assert.match(svg, /viewBox="0 0 24 24"/, `${name} usa otra rejilla`);
+      assert.match(svg, /stroke-width="1\.8"/, `${name} usa otro grosor de trazo`);
+      assert.match(svg, /fill="none"/, `${name} rellena el trazo`);
+    }
   }
 });
 
@@ -155,7 +164,7 @@ test('la tarjeta de estado usa el mismo conjunto que el resto', () => {
     latest: { observedAt: '2026-01-01T12:00:00Z', temperatureC: 18 },
   }], new Date(), { readings: true });
   for (const name of ['temperature', 'humidity', 'frost', 'heat', 'storm', 'connectivity', 'battery']) {
-    assert.match(cards, new RegExp(`<svg class="icon"[^>]*><(?:path|circle|rect)[^>]*`) , name);
+    assert.match(cards, new RegExp(`<svg class="icon"[^>]*><(?:g|path|circle|rect)[^>]*`), name);
   }
   assert.doesNotMatch(cards, /[\u{1F300}-\u{1FAFF}]/u);
 });
