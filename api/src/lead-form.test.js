@@ -92,17 +92,21 @@ test('el desplegable opcional pide el problema agronómico, sin perfiles por def
   }
 });
 
-test('el paso siguiente se explica sin plazos publicados', () => {
+test('el paso siguiente declara el plazo de respuesta y el uso de los datos', () => {
   assert.match(LEAD_FORM_HTML, /revisamos la solicitud/);
-  assert.match(LEAD_FORM_HTML, /te contactamos por el canal que elijas/);
+  assert.match(LEAD_FORM_HTML, /te responderemos por el canal que elijas/);
+  assert.match(LEAD_FORM_HTML, /dentro de 1-2 d[ií]as laborables/);
   assert.match(LEAD_FORM_HTML, /no programa una instalación automática/);
-  assert.doesNotMatch(LEAD_FORM_HTML, /d[ií]as laborables/, 'el plazo solo se publica si se puede cumplir');
+  // El uso de los datos se explica junto a la solicitud y enlaza la privacidad.
+  assert.match(LEAD_FORM_HTML, /Usamos tus datos solo para responder a esta solicitud/);
+  assert.match(LEAD_FORM_HTML, /href="\/privacidad"/);
 });
 
 test('la confirmación concreta qué se recibió y por qué canal se responde', async () => {
   const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
   assert.match(source, /Hemos recibido \$\{received\}/);
   assert.match(source, /Te responderemos por \$\{channelLabel\}/);
+  assert.match(source, /dentro de 1-2 d[ií]as laborables/);
   assert.match(source, /No hace falta que hagas nada más/);
   assert.match(source, /consulta sobre una instalación/);
   // Ante fallo, lo escrito queda en pantalla para reintentar sin reescribir.

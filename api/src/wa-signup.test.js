@@ -146,7 +146,7 @@ test('BAJA da de baja también la identidad wa y cancela sus pendientes', async 
 
 test('los endpoints wa son públicos y exigen estación habilitada y opt-out respetado', () => {
   const waSection = publicAlerts.slice(0, publicAlerts.indexOf('router.use(requireSubscriber)'));
-  for (const route of [`router.get('/wa/stations'`, `router.post('/wa/request'`, `router.post('/wa/confirm'`]) {
+  for (const route of [`router.get('/wa/stations'`, `router.post('/wa/request'`, `router.post('/wa/confirm'`, `router.post('/wa/interest'`]) {
     assert.match(waSection, new RegExp(route.replace(/[()']/g, (char) => `\\${char}`)));
   }
   assert.match(publicAlerts, /'invalid_phone'/);
@@ -157,6 +157,33 @@ test('los endpoints wa son públicos y exigen estación habilitada y opt-out res
   assert.match(publicAlerts, /'too_many_attempts'/);
   assert.match(publicAlerts, /'invalid_code'/);
   assert.match(publicAlerts, /whatsappTemplate\('contact_verification', \{ params: \[code\] \}\)/);
+});
+
+test('la lista de interés pública registra consentimiento de servicio, nunca comercial', () => {
+  const waSection = publicAlerts.slice(0, publicAlerts.indexOf('router.use(requireSubscriber)'));
+  assert.match(waSection, /router\.post\('\/wa\/interest'/);
+  // Upsert por teléfono (sujeto dual) e inserción en la lista de interés.
+  assert.match(waSection, /INSERT INTO public_alert_interest \(wa_phone\)/);
+  assert.match(waSection, /ON CONFLICT \(wa_phone\) WHERE wa_phone IS NOT NULL DO NOTHING/);
+  // Consentimiento de servicio del número, sin código de verificación.
+  assert.match(waSection, /waPhone: phone, purpose: 'service', channel: 'whatsapp'/);
+  assert.match(waSection, /source: 'public_alerts'/);
+  assert.doesNotMatch(waSection, /'commercial'/, 'la lista de interés nunca deja permiso comercial');
+  // El teléfono solo aparece enmascarado en la auditoría.
+  assert.match(waSection, /wa_interest'.*'wa_phone'/s);
+  assert.match(waSection, /\*\*\*\$\{digitsOf\(phone\)\.slice\(-4\)\}/);
+});
+
+test('el formulario de la lista de interés sustituye al de suscripción sin estaciones', () => {
+  assert.match(signup, /data-wa-interest/);
+  assert.match(signup, /public-alerts\/wa\/interest/);
+  assert.match(signup, /Hemos registrado tu interés/);
+  // El encabezado se ajusta al estado y la sección declara el título dinámico.
+  assert.match(signup, /INTEREST_TITLE = '¿Te interesan los avisos por WhatsApp\?'/);
+  assert.match(signup, /data-wa-title/);
+  assert.match(indexHtml, /data-wa-title/);
+  // El fallo de red se mantiene distinto del «sin estaciones».
+  assert.match(signup, /No se han podido cargar las estaciones/);
 });
 
 test('las respuestas del webhook usan la ventana abierta y el origin público', () => {

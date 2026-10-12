@@ -15,7 +15,7 @@ test('el formulario de acceso ofrece novedades opcionales con su privacidad', ()
   assert.match(form, /<input type="checkbox" name="newsletter">/);
   // Desmarcada: la publicidad nunca va por defecto.
   assert.doesNotMatch(form, /name="newsletter"[^>]*checked/);
-  assert.match(form, /novedades y ofertas por email/);
+  assert.match(form, /novedades y ofertas de TecRural/);
   // La información de privacidad está junto a la casilla.
   assert.match(form, /href="\/privacidad"/);
   // Y el acceso gratuito no depende de marcarla.

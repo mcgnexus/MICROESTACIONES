@@ -447,6 +447,26 @@ const upgrades = [
      CHECK (num_nonnulls(subscriber_id, lead_id, wa_phone) = 1)`,
   `CREATE INDEX IF NOT EXISTS consent_records_wa_idx
      ON consent_records(wa_phone, purpose, channel, recorded_at DESC)`,
+  // Cambio 20: la lista de interés pública admite sujeto dual (cuenta o
+  // teléfono), como las suscripciones públicas. Se conservan las filas de
+  // cuentas existentes y se replica el patrón de Cambio 19.
+  // IMPORTANTE: el PK antiguo (subscriber_id) debe soltarse ANTES de relajar el
+  // NOT NULL; PostgreSQL rechaza `DROP NOT NULL` sobre una columna que aún forma
+  // parte de una clave primaria.
+  `DO $$ BEGIN
+     ALTER TABLE public_alert_interest DROP CONSTRAINT public_alert_interest_pkey;
+   EXCEPTION WHEN undefined_object THEN NULL; END $$`,
+  `ALTER TABLE public_alert_interest ALTER COLUMN subscriber_id DROP NOT NULL`,
+  `ALTER TABLE public_alert_interest ADD COLUMN IF NOT EXISTS wa_phone text`,
+  `ALTER TABLE public_alert_interest DROP CONSTRAINT IF EXISTS public_alert_interest_subject_check`,
+  `ALTER TABLE public_alert_interest ADD CONSTRAINT public_alert_interest_subject_check
+     CHECK (num_nonnulls(subscriber_id, wa_phone) = 1)`,
+  // El PK antiguo ya no existe: la exclusión de duplicados la dan los índices
+  // únicos parciales por sujeto, que además permiten inferir el `ON CONFLICT`.
+  `CREATE UNIQUE INDEX IF NOT EXISTS public_alert_interest_account_idx
+     ON public_alert_interest(subscriber_id) WHERE subscriber_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS public_alert_interest_wa_idx
+     ON public_alert_interest(wa_phone) WHERE wa_phone IS NOT NULL`,
   // Rezonda lo que ya estaba en cola sin caducidad: un aviso o un código viejo
   // no se envía. Solo se rellena lo que sigue pendiente.
   `UPDATE notification_outbox SET expires_at = created_at + CASE kind

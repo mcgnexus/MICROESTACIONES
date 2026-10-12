@@ -30,13 +30,24 @@ test('el esquema y la migración traen el modelo completo de forma idempotente',
   assert.match(migrate, /ADD COLUMN IF NOT EXISTS audience text/);
   assert.match(migrate, /'subscription_test'/);
   assert.match(schema, /'subscription_test'/);
-  assert.match(schema, /notification_outbox_subscription_idx/);
+  assert.match(migrate, /notification_outbox_subscription_idx/);
 });
 
 test('la habilitación va por el mismo camino que publicar datos', () => {
   assert.match(stations, /public_alerts_enabled: z\.boolean\(\)/);
   assert.match(stations, /'publish_permission', 'public_alerts_enabled', 'coverage_km'/);
   assert.match(stations, /publish_permission, public_alerts_enabled/);
+});
+
+test('la lista de interés admite sujeto dual (cuenta o teléfono) de forma idempotente', () => {
+  // Esquema: sin PK sobre subscriber_id, con teléfono e índices parciales.
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS public_alert_interest \(/);
+  assert.match(schema, /public_alert_interest_account_idx/);
+  assert.match(schema, /public_alert_interest_wa_idx/);
+  // Migración: relaja el NOT NULL, añade wa_phone y sustituye el PK antiguo.
+  assert.match(migrate, /ALTER TABLE public_alert_interest ALTER COLUMN subscriber_id DROP NOT NULL/);
+  assert.match(migrate, /ALTER TABLE public_alert_interest ADD COLUMN IF NOT EXISTS wa_phone text/);
+  assert.match(migrate, /ALTER TABLE public_alert_interest DROP CONSTRAINT public_alert_interest_pkey/);
 });
 
 test('recipientsForDevice incorpora suscriptores públicos con dedupe a favor del privado', () => {

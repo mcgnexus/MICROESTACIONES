@@ -151,6 +151,44 @@ router.post('/wa/confirm', async (req, res) => {
   res.json({ status: 'verified' });
 });
 
+// Lista de interés pública: teléfono + consentimiento de servicio, sin código de
+// verificación. Se usa cuando todavía no hay estaciones con avisos habilitados.
+// El teléfono no crea cuenta; la identidad se verificará cuando el servicio se
+// active. El subject es solo el número (wa_phone), nunca una cuenta.
+const waInterestSchema = z.object({
+  phone: z.string().min(6).max(32),
+}).strict();
+
+router.post('/wa/interest', async (req, res) => {
+  const parsed = waInterestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body', details: parsed.error.issues });
+  const phone = normalizePhoneE164(parsed.data.phone, DEFAULT_COUNTRY);
+  if (!phone) return res.status(409).json({ error: 'invalid_phone' });
+
+  const limits = [
+    { key: sha256(`wa-interest:phone:${phone}`), max: 3 },
+    { key: sha256(`wa-interest-ip:${String(waIp(req)).slice(0, 200)}`), max: 10 },
+  ];
+  const results = await Promise.all(limits.map(({ key, max }) => consumeAttempt(sql, key, max)));
+  if (results.some((result) => result.limited)) return res.status(429).json({ error: 'too_many_requests' });
+
+  await sql.begin(async (tx) => {
+    await tx`INSERT INTO public_alert_interest (wa_phone) VALUES (${phone})
+      ON CONFLICT (wa_phone) WHERE wa_phone IS NOT NULL DO NOTHING`;
+    // Consentimiento de servicio (nunca comercial): el número quiere que le
+    // avisemos cuando el servicio esté disponible.
+    await recordConsent(tx, {
+      waPhone: phone, purpose: 'service', channel: 'whatsapp',
+      action: 'granted', source: 'public_alerts',
+      ip: req.ip || req.socket.remoteAddress || null,
+      userAgent: String(req.get('user-agent') || '').slice(0, 200) || null,
+    });
+  });
+  await audit(sql, req, 'public_alerts.wa_interest', 'wa_phone', null, null,
+    { phone: `***${digitsOf(phone).slice(-4)}` });
+  res.status(201).json({ interest: { joined: true } });
+});
+
 router.use(requireSubscriber);
 
 const ALL_CATEGORIES = Object.keys(CATEGORY_COLUMNS);
@@ -338,7 +376,7 @@ router.post('/interest', csrfGuard, async (req, res) => {
   }
   await sql`INSERT INTO public_alert_interest (subscriber_id, device_id)
     VALUES (${req.subscriber.id}, ${deviceId})
-    ON CONFLICT (subscriber_id) DO UPDATE SET
+    ON CONFLICT (subscriber_id) WHERE subscriber_id IS NOT NULL DO UPDATE SET
       device_id = COALESCE(EXCLUDED.device_id, public_alert_interest.device_id)`;
   await audit(sql, req, 'public_alerts.interest', 'subscriber', String(req.subscriber.id), null, { deviceId });
   res.status(201).json({ interest: { joined: true, deviceId } });

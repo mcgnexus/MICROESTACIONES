@@ -96,8 +96,8 @@
           </div>
           <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>. <button type="button" class="quiet hint-dismiss" data-dismiss-install-hint>Entendido</button></p>
           <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
-          <h1>Tiempo local ahora</h1>
-          <p class="landing-lead">Temperatura y humedad medidas en un punto del casco urbano. La lectura describe ese emplazamiento; no representa exactamente toda la ciudad ni tu finca.</p>
+          <h1>Tiempo local medido en Huéscar</h1>
+          <p class="landing-lead">Una microestación mide temperatura y humedad en un punto del casco urbano de Huéscar. Cada lectura indica su hora y describe ese emplazamiento: no representa todas las calles ni tu finca.</p>
         </div>
       </section>
 
@@ -170,7 +170,7 @@
       <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-request-type="installation_info" data-lead-title="Consultar una instalación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
 
       <section id="avisos-whatsapp" class="landing-section panel" data-wa-signup>
-        <div class="section-heading"><div><p class="eyebrow">AVISOS POR WHATSAPP</p><h2>Avisos del tiempo sin crear cuenta</h2></div></div>
+        <div class="section-heading"><div><p class="eyebrow">AVISOS POR WHATSAPP</p><h2 data-wa-title>Recibe los avisos disponibles de esta estación</h2></div></div>
       </section>
 
       <section id="preguntas" class="landing-section">
@@ -199,8 +199,8 @@
     </section>
     <section id="login-view" class="login-card hidden">
       <p class="eyebrow">ACCESO · SIN CONTRASEÑA</p>
-      <h1 id="magic-title">Entra con tu correo</h1>
-      <p id="magic-description">Te enviamos un enlace de un solo uso. Sin contraseña y sin crear cuenta con antelación.</p>
+      <h1 id="magic-title">Consulta el histórico ampliado</h1>
+      <p id="magic-description">Escribe tu correo y recibe un enlace de un solo uso para entrar sin contraseña. Sin crear cuenta con antelación.</p>
       <div id="magic-confirm" class="hidden">
         <p><strong>Ya casi estás dentro.</strong> El enlace solo se usa cuando lo confirmas aquí, así que una visita automática no inicia tu sesión.</p>
         <button id="magic-confirm-button" type="button">Confirmar y entrar</button>
@@ -208,13 +208,13 @@
       </div>
       <form id="magic-form">
         <label>Correo electrónico<input name="email" type="email" autocomplete="email" required></label>
-        <button type="submit">Enviar enlace de acceso</button>
-        <label class="check"><input type="checkbox" name="newsletter"> Quiero recibir novedades y ofertas por email (opcional). Puedes darte de baja cuando quieras. Consulta la <a href="/privacidad">Política de privacidad</a>.</label>
+        <button type="submit">Enviarme el enlace</button>
+        <label class="check"><input type="checkbox" name="newsletter"> Quiero recibir por email novedades y ofertas de TecRural. Es opcional y puedo darme de baja. Consulta la <a href="/privacidad">Política de privacidad</a>.</label>
         <p class="hint">El acceso es gratuito y no requiere casillas adicionales: sin marcar la casilla solo verificamos tu correo.</p>
         <p id="magic-status" class="hint" role="status" aria-live="polite"></p>
       </form>
       <div id="magic-sent" class="hidden">
-        <p class="hint" role="status" aria-live="polite">Hemos enviado un enlace a <strong id="magic-sent-email"></strong>. Revisa tu bandeja de entrada y la carpeta de spam.</p>
+        <p class="hint" role="status" aria-live="polite">Hemos solicitado el envío del enlace a <strong id="magic-sent-email"></strong>. Revisa tu bandeja de entrada y spam. Si no llega, podrás reenviarlo o cambiar la dirección.</p>
         <p class="hint" id="magic-resend-hint"><span id="magic-resend-countdown">60</span> s para reenviar</p>
         <div class="button-group">
           <button type="button" id="magic-resend" class="hidden">Reenviar enlace</button>

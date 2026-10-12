@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS subscriber_devices (
 -- privados ni entradas en el centro de avisos. La baja es por estación y canal.
 CREATE TABLE IF NOT EXISTS public_alert_subscriptions (
   -- Sujeto de la suscripción: una cuenta verificada O una identidad de servicio
-  -- solo por WhatsApp. Exactamente uno de los dos; un teléfono nunca es cuenta.
+  -- solo por WhatsApp. Exactamente uno de los dos: un teléfono nunca es cuenta.
   subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
   wa_phone text,
   device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -129,7 +129,7 @@ CREATE INDEX IF NOT EXISTS public_alert_subscriptions_wa_idx
 
 -- Identidad de servicio solo por WhatsApp: no es una cuenta, no da acceso al
 -- panel ni a datos privados. `verified_at` confirma que el número es del
--- interesado (código); `opted_out_at` es la baja por «BAJA».
+-- interesado (código). `opted_out_at` es la baja por «BAJA».
 CREATE TABLE IF NOT EXISTS wa_alert_identities (
   phone text PRIMARY KEY,
   lead_id bigint REFERENCES farm_leads(id) ON DELETE SET NULL,
@@ -144,11 +144,21 @@ CREATE TABLE IF NOT EXISTS wa_alert_identities (
 
 -- Lista de interés para el servicio de avisos públicos cuando aún no hay
 -- estaciones habilitadas (o el interesado quiere una estación sin avisos).
+-- Sujeto dual: una cuenta verificada O un teléfono que se apunta sin cuenta.
+-- Exactamente uno de los dos. La identidad se verifica cuando el servicio se active.
 CREATE TABLE IF NOT EXISTS public_alert_interest (
-  subscriber_id bigint PRIMARY KEY REFERENCES subscribers(id) ON DELETE CASCADE,
+  subscriber_id bigint REFERENCES subscribers(id) ON DELETE CASCADE,
+  wa_phone text,
   device_id text REFERENCES devices(id) ON DELETE SET NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (num_nonnulls(subscriber_id, wa_phone) = 1)
 );
+-- Unicidad por sujeto: índices parciales, uno por tipo, para que `ON CONFLICT`
+-- pueda inferirlos en los upserts (igual que en las suscripciones públicas).
+CREATE UNIQUE INDEX IF NOT EXISTS public_alert_interest_account_idx
+  ON public_alert_interest(subscriber_id) WHERE subscriber_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS public_alert_interest_wa_idx
+  ON public_alert_interest(wa_phone) WHERE wa_phone IS NOT NULL;
 
 -- Finca: agrupa estaciones bajo un nombre que el cliente reconoce. La relación
 -- finca-estación permite saber a qué finca pertenece cada aviso.
@@ -319,8 +329,8 @@ CREATE TABLE IF NOT EXISTS consent_records (
 );
 CREATE INDEX IF NOT EXISTS consent_records_subject_idx
   ON consent_records(subscriber_id, lead_id, purpose, channel, recorded_at DESC);
-CREATE INDEX IF NOT EXISTS consent_records_wa_idx
-  ON consent_records(wa_phone, purpose, channel, recorded_at DESC);
+-- El índice por `wa_phone` lo crea migrate.js DESPUÉS de añadir la columna: en
+-- bases existentes la tabla ya está creada sin ella y aquí fallaría.
 
 -- Cada fila conserva lo que el equipo transmitió: instante de medida (observed_at)
 -- e instante de recepción (received_at) son distintos para reconstruir lotes tardíos.
@@ -592,8 +602,8 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 );
 CREATE INDEX IF NOT EXISTS notification_outbox_due_idx ON notification_outbox(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS notification_outbox_alert_idx ON notification_outbox(alert_id);
-CREATE INDEX IF NOT EXISTS notification_outbox_subscription_idx
-  ON notification_outbox(subscriber_id, kind, audience) WHERE kind = 'alert';
+-- El índice por `audience` lo crea migrate.js DESPUÉS de añadir la columna: en
+-- bases existentes la tabla ya está creada sin ella y aquí fallaría.
 CREATE INDEX IF NOT EXISTS notification_outbox_provider_message_idx
   ON notification_outbox(provider_message_id) WHERE provider_message_id IS NOT NULL;
 

@@ -112,13 +112,14 @@ export const LEAD_FORM_HTML = `
       </label>
       <label>Notas<textarea name="notes" maxlength="1000" rows="2"></textarea></label>
     </details>
-    <p class="hint span-all">Siguiente paso: revisamos la solicitud y te contactamos por el canal que elijas. El envío no programa una instalación automática.</p>
+    <p class="hint span-all">Usamos tus datos solo para responder a esta solicitud y tramitar el acceso. Consulta la <a href="/privacidad">Política de privacidad</a>.</p>
+    <p class="hint span-all">Siguiente paso: revisamos la solicitud y te responderemos por el canal que elijas dentro de 1-2 días laborables. El envío no programa una instalación automática.</p>
     <label class="check span-all"><input type="checkbox" name="consent" required> Acepto que TecRural contacte conmigo para responder a esta solicitud y tramitar el acceso. Consulta la <a href="/privacidad">Política de privacidad</a>.</label>
     <label class="check span-all"><input type="checkbox" name="commercial_consent"> Quiero recibir novedades y ofertas sobre microestaciones (opcional). Puedes darte de baja cuando quieras.</label>
     <input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" class="honeypot">
     <p class="error span-all" data-lead-error role="alert"></p>
     <p class="ok span-all hidden" data-lead-ok role="status">Solicitud recibida. Te contactaremos.</p>
-    <button type="submit" class="span-all">Enviar solicitud de acceso</button>
+    <button type="submit" class="span-all">Enviar la solicitud</button>
   </form>`;
 
 // Muestra el campo del canal elegido y esconde el otro, también en el
@@ -239,7 +240,7 @@ export async function submitLead(event) {
       ? 'tu consulta sobre una instalación' : 'tu solicitud para probar el servicio';
     const received = `${kind}${body.zone ? ` en ${body.zone}` : ''}`;
     showNotice(scope, '[data-lead-ok]',
-      `${scope.dataset.leadSuccess ? `${scope.dataset.leadSuccess} ` : ''}Hemos recibido ${received}. Te responderemos por ${channelLabel}; revisa ese canal en los próximos días. No hace falta que hagas nada más.`);
+      `${scope.dataset.leadSuccess ? `${scope.dataset.leadSuccess} ` : ''}Hemos recibido ${received}. Te responderemos por ${channelLabel} dentro de 1-2 días laborables. No hace falta que hagas nada más.`);
   } catch (error) {
     // Sin resetear: lo escrito queda en pantalla para reintentar sin reescribir.
     setError(scope, '[data-lead-error]', `No se pudo enviar la solicitud: ${error.message}. Comprueba tu conexión y vuelve a pulsar Enviar: tus datos siguen en el formulario.`);
