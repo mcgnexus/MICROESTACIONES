@@ -25,17 +25,16 @@ function sliceBetween(startMarker, endMarker) {
 
 test('la ruta de portada con sesión muestra la portada en lugar de redirigir al panel', () => {
   // El bloque de sesión (después de `if (!session.me)`): para landing/entrar,
-  // solo «entrar» redirige al panel; «landing» invoca showLandingView().
+  // «landing» invoca showLandingView() y «entrar» respeta el destino pedido
+  // (histórico, panel…) en lugar de imponer siempre el panel.
   const route = sliceBetween('if (!session.me) {', 'showApp();');
   assert.match(route, /showLandingView\(\)/);
-  // La redirección a panel queda confinada al caso entrar: todo location.hash a
-  // #/panel está dentro de un `if (section === 'entrar')`.
-  const panelRedirects = (route.match(/location\.hash = '#\/panel'/g) || []);
-  assert.ok(panelRedirects.length >= 1, 'entrar sigue redirigiendo al panel');
+  // La redirección por «entrar» queda confinada al caso `section === 'entrar'`.
   const guard = route.indexOf("section === 'entrar'");
-  const firstRedirect = route.indexOf("location.hash = '#/panel'");
-  assert.ok(guard > -1 && firstRedirect > guard,
-    'la redirección al panel debe estar tras comprobar section === entrar');
+  assert.ok(guard > -1, 'falta el caso section === entrar');
+  const enterBlock = route.slice(guard, route.indexOf('showLandingView()', guard));
+  assert.match(enterBlock, /RETURN_DESTINATIONS\.has\(pendingReturn\)/);
+  assert.match(enterBlock, /'#\/panel'/);
   // Y el caso landing, explícitamente, invoca la vista de portada.
   assert.match(route, /section === 'landing' \|\| section === 'entrar'[\s\S]*?showLandingView\(\)/);
 });

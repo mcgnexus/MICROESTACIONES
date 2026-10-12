@@ -641,6 +641,9 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .public-hero{display:grid;gap:14px}
 .public-hero>.landing-lead{max-width:740px;margin:0;text-align:left;font-size:16px}
 .public-hero>.landing-actions{margin-top:4px}
+/* Acciones con resultado justo bajo la tarjeta de medición: la primera se ve
+   sin desplazar la portada en móvil. Cada botón crece a lo ancho disponible. */
+.hero-actions .cta{flex:1 1 220px;text-align:center}
 /* Nota técnica de la portada: plegada y solo en la vista pública, para no
    repetirla al pie de todas las secciones privadas (que ya tienen su propia
    documentación en el panel). */

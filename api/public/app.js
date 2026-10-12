@@ -252,6 +252,21 @@ function setPageTitle(section) {
 // para devolverlo ahí tras verificar el enlace (destino interno validado).
 let pendingReturn = 'panel';
 
+// Acciones que piden volver a una herramienta concreta tras verificar el correo
+// (por ejemplo, «Ver el histórico ampliado gratis»). Se registra el destino
+// declarado y el enrutador de «entrar» lo respeta en vez de imponer el panel.
+document.addEventListener('click', (event) => {
+  const action = event.target.closest?.('[data-return]');
+  if (action) pendingReturn = action.dataset.return;
+});
+
+// Destinos internos que una acción puede pedir como retorno. Se usa al abrir
+// «entrar» con sesión: se respeta el destino pedido en vez del panel genérico.
+const RETURN_DESTINATIONS = new Set([
+  'panel', 'estaciones', 'avisos', 'cuenta', 'tiempo-local', 'comparacion-aemet',
+  'evolucion', 'fincas', 'herramientas', 'solicitar-piloto', 'preguntas',
+]);
+
 async function route() {
   // Un fragmento que no es ruta no desmonta la vista actual: se deja que el
   // navegador haga su trabajo normal con el ancla.
@@ -267,7 +282,10 @@ async function route() {
       // Quien llega a una sección privada sin sesión ve el formulario de
       // acceso: el título es el de esa pantalla, no el de la sección pedida.
       setPageTitle('entrar');
-      pendingReturn = section; showLogin(); return;
+      // «entrar» no impone destino: conserva el que haya pedido una acción con
+      // `data-return` (por ejemplo, el histórico). Las secciones privadas sí.
+      if (section !== 'entrar') pendingReturn = section;
+      showLogin(); return;
     }
     showLanding();
     if (PUBLIC_SECTIONS.has(section)) scrollToPublicSection(section);
@@ -278,7 +296,13 @@ async function route() {
   // usuario pueda volver al panel cuando quiera. No se exige cerrar sesión para
   // consultar la información del producto.
   if (section === 'landing' || section === 'entrar') {
-    if (section === 'entrar') { location.hash = '#/panel'; return; }
+    if (section === 'entrar') {
+      // Con sesión abierta «entrar» no tiene sentido: se abre el destino que
+      // pidió la acción de origen (por ejemplo, el histórico) y, si no hay uno
+      // válido, el panel.
+      location.hash = RETURN_DESTINATIONS.has(pendingReturn) ? `#/${pendingReturn}` : '#/panel';
+      return;
+    }
     showLandingView();
     return;
   }

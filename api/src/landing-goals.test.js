@@ -7,6 +7,7 @@ const html = await readFile(new URL('../views/index.html', import.meta.url), 'ut
 const landing = await readFile(new URL('../public/js/landing.js', import.meta.url), 'utf8');
 const leads = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+const magic = await readFile(new URL('./magic-link.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../public/app.css', import.meta.url), 'utf8');
 
 const section = (id) => {
@@ -20,14 +21,32 @@ const section = (id) => {
 // explicación del producto y la captación. Estas pruebas fijan que las tres
 // cosas se offering como caminos separados y con resultados declarados.
 
-test('el CTA del tiempo local no vuelve a la sección donde ya está el visitante', () => {
+test('el CTA del tiempo local ofrece acciones con resultado bajo la tarjeta', () => {
   const local = section('tiempo-local');
   // La sección se llama «tiempo-local»: un enlace a ella no lleva a ninguna parte.
   assert.doesNotMatch(local, /href="#\/tiempo-local"/,
-    'el CTA principal apunta a la sección en la que ya se está');
-  // Lo que ofrece son las dos salidas reales desde la portada.
-  assert.match(local, /href="#\/vias"/);
-  assert.match(local, /href="#\/herramientas"/);
+    'el CTA principal apunta a la sección en la que ya está el visitante');
+  // Bajo la tarjeta de medición van dos acciones con beneficio: histórico y finca.
+  assert.match(local, /href="#\/entrar" data-return="evolucion">Ver el histórico ampliado gratis/);
+  assert.match(local, /href="#\/solicitar-piloto">Quiero información para mi finca/);
+});
+
+test('el acceso al histórico conserva el destino tras verificar el correo', () => {
+  // La acción declara la herramienta de vuelta con `data-return`; el enrutador
+  // de «entrar» la respeta en vez de imponer el panel por defecto, y el enlace
+  // solicitado viaja como `next` (validado en el servidor).
+  assert.match(html, /href="#\/entrar" data-return="evolucion"/);
+  assert.match(app, /closest\?\.\('\[data-return\]'\)/);
+  assert.match(app, /if \(section !== 'entrar'\) pendingReturn = section/);
+  assert.match(app, /next: pendingReturn/);
+  // El destino declarado es un fragmento interno conocido por el servidor.
+  assert.match(magic, /\['evolucion', '#\/evolucion'\]/);
+});
+
+test('la acción de finca se repite tras explicar las diferencias de microclima', () => {
+  const fincas = section('fincas');
+  assert.match(fincas, /href="#\/solicitar-piloto">Quiero información para mi finca/,
+    'falta la acción de finca después de la sección de microclima');
 });
 
 test('las tres vías se separan y cada una declara su resultado antes del enlace', () => {
