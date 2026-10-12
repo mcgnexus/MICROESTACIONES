@@ -681,9 +681,9 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .tools-preview article{display:flex;align-items:flex-start;gap:13px;padding:17px;border:1px solid #e0e9e1;border-radius:var(--r-xl);background:#fbfdfb}
 .tools-preview h3{margin-top:0}
 .access-link{display:inline-flex;align-items:center;justify-content:center;padding:13px 21px;border-radius:var(--r-md);background:var(--c-primary);color:white;font-weight:750;text-decoration:none}
-// Las tres vías de acceso: cada tarjeta declara su resultado antes del enlace,
-// para que elegir una no dependa de la FAQ del final.
-.vias-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:22px}
+// Las dos acciones de acceso: cada tarjeta declara su resultado antes del
+// enlace; la simulación queda como enlace secundario al pie de la sección.
+.vias-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:22px}
 .via-card{display:flex;flex-direction:column;padding:21px;border:1px solid #e0e9e1;border-radius:var(--r-xl);background:var(--c-surface)}
 .via-card h3{margin:7px 0 9px;font-size:17px;color:#234331}
 .via-outcome{margin:0 0 10px;color:#3f5147;font-size:14px;line-height:1.55}

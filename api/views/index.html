@@ -53,7 +53,7 @@
           { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están dentro de la ventana temporal configurada. Si no hay pareja, ambas lecturas se muestran por separado." } },
           { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
           { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
-          { "@type": "Question", "name": "¿Cuál es la diferencia entre las tres formas de empezar?", "acceptedAnswer": { "@type": "Answer", "text": "La simulación no requiere registro y muestra escenarios con datos inventados. Entrar da acceso de consulta, solo lectura, a las mediciones reales mediante un enlace de correo de un solo uso. Consultar una instalación es la única vía que revisa el equipo, y hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación." } }
+          { "@type": "Question", "name": "¿Qué diferencia hay entre entrar con tu correo y consultar una instalación?", "acceptedAnswer": { "@type": "Answer", "text": "Entrar con tu correo da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo de un solo uso: no espera a nadie. Consultar una instalación es la única vía que revisa el equipo: hasta que te contacten no hay acceso concedido, y el envío no es automático: no programa una instalación ni reserva ninguna visita. La simulación no requiere registro y muestra datos inventados. Ninguna vía solicita automáticamente una llamada." } }
         ]
       }
     ]
@@ -103,31 +103,21 @@
 
       <section id="vias" class="landing-section">
         <p class="eyebrow">CÓMO EMPEZAR</p>
-        <h2>Tres caminos distintos, con resultados distintos</h2>
-        <p class="section-intro">Según lo que quieras hacer, te lleva a una cosa o a otra. No hacen falta los tres y ninguno programa nada por su cuenta.</p>
+        <h2>Dos acciones, un resultado cada una</h2>
+        <p class="section-intro">Cada acción lleva a una cosa distinta: consultar las mediciones reales o pedir que estudiemos tu finca.</p>
         <div class="vias-grid">
           <article class="via-card">
-            <p class="eyebrow">SIN REGISTRARTE · DATOS INVENTADOS</p>
-            <h3>Ver la simulación</h3>
-            <p class="via-outcome"><strong>Resultado:</strong> ves tres escenarios simulados y mueves el umbral de aviso. No creas cuenta, no envías nada y ningún dato sale de tu navegador.</p>
-            <p class="hint">Los datos son inventados: no proceden de ninguna estación ni finca real. La estación urbana real está arriba, sin registro.</p>
-            <p><a class="via-link" href="#/demo-agricola">Ver la simulación</a></p>
+            <h3>Consulta el histórico con tu correo</h3>
+            <p class="via-outcome"><strong>Resultado:</strong> escribes tu correo, confirmas el enlace que te enviamos y tienes acceso de consulta a las mediciones reales.</p>
+            <p><a class="via-link" href="#/entrar" data-return="evolucion">Entrar con tu correo</a></p>
           </article>
           <article class="via-card">
-            <p class="eyebrow">ACCESO INMEDIATO · DATOS REALES</p>
-            <h3>Entrar con tu correo</h3>
-            <p class="via-outcome"><strong>Resultado:</strong> entras tú mismo, sin esperar a nadie. Escribes tu correo, recibes un enlace de un solo uso y en cuanto lo confirmas ya tienes acceso de consulta a las mediciones reales.</p>
-            <p class="hint">Sin contraseña. Si prefieres que te lo tramite el equipo, usa la tercera vía.</p>
-            <p><a class="via-link" href="#/entrar">Entrar</a></p>
-          </article>
-          <article class="via-card">
-            <p class="eyebrow">REVISADO POR EL EQUIPO</p>
-            <h3>Consultar una instalación</h3>
-            <p class="via-outcome"><strong>Resultado:</strong> revisamos tu solicitud y te contactamos para estudiarla. No es automático: hasta que te escribamos no hay acceso concedido.</p>
-            <p class="hint">Enviar el formulario no programa una instalación ni reserva ninguna visita.</p>
+            <h3>Cuéntanos dónde está tu finca para estudiar una instalación</h3>
+            <p class="via-outcome"><strong>Resultado:</strong> revisamos tu solicitud y te contactamos para estudiarla.</p>
             <p><a class="via-link" href="#/solicitar-piloto">Consultar una instalación</a></p>
           </article>
         </div>
+        <p class="hint">¿Solo quieres ver cómo funciona? Prueba la <a href="#/demo-agricola">simulación con datos inventados</a>.</p>
       </section>
 
       <section id="comparacion-aemet" class="landing-section">
@@ -174,7 +164,7 @@
           <article><span class="nav-icon" data-icon="alerts"></span><div><h3>Avisos y seguimiento</h3><p>Consulta avisos, estado de conexión y calidad de los datos.</p><a href="#/avisos">Abrir avisos · requiere acceso</a></div></article>
           <article><span class="nav-icon" data-icon="stations"></span><div><h3>Estaciones y fincas</h3><p>Organiza tus ubicaciones y consulta el punto medido.</p><a href="#/panel">Abrir panel · requiere acceso</a></div></article>
         </div>
-        <a class="access-link" href="#/vias">Ver las tres formas de empezar</a>
+        <a class="access-link" href="#/vias">Ver cómo empezar</a>
       </section>
 
       <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-title="Consultar una instalación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
@@ -186,7 +176,7 @@
           <details><summary>¿Qué mide la tarjeta del tiempo local?</summary><p>Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no se presenta como representativa de cada calle o finca.</p></details>
           <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están dentro de la ventana configurada. Si no hay pareja, no mostramos una diferencia directa.</p></details>
           <details><summary>¿La lectura del casco representa mi finca?</summary><p>No necesariamente. Hondonadas, vegas y zonas altas pueden tener condiciones distintas según su emplazamiento y las condiciones del momento. Medir en la finca permite observar ese punto concreto.</p></details>
-          <details><summary>¿Cuál es la diferencia entre las tres formas de empezar?</summary><p><a href="#/demo-agricola">Ver la simulación</a> no requiere registro y muestra datos inventados. <a href="#/entrar">Entrar</a> da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única que revisa el equipo: hasta que te contacten no hay acceso concedido. Ninguna vía solicita automáticamente una llamada ni programa una instalación.</p></details>
+          <details><summary>¿Qué diferencia hay entre entrar con tu correo y consultar una instalación?</summary><p><a href="#/entrar">Entrar con tu correo</a> da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo: no espera a nadie. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única vía que revisa el equipo: hasta que te contacten no hay acceso concedido, y el envío no es automático: no programa una instalación ni reserva ninguna visita. <a href="#/demo-agricola">La simulación</a> no requiere registro y muestra datos inventados. Ninguna vía solicita automáticamente una llamada.</p></details>
           <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Se muestran avisos oficiales y riesgo estimado. Una detección local precisa requeriría sensores adicionales.</p></details>
         </div>
       </section>

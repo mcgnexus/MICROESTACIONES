@@ -49,14 +49,13 @@ test('la acción de finca se repite tras explicar las diferencias de microclima'
     'falta la acción de finca después de la sección de microclima');
 });
 
-test('las tres vías se separan y cada una declara su resultado antes del enlace', () => {
+test('las dos acciones se separan y cada una declara su resultado antes del enlace', () => {
   const vias = section('vias');
   const cards = vias.split('<article class="via-card">').slice(1);
-  assert.equal(cards.length, 3, 'se esperaban tres caminos distintos');
+  assert.equal(cards.length, 2, 'se esperaban dos acciones, no tres tarjetas');
   const expected = [
-    ['Ver la simulación', '#/demo-agricola', /sin cre(ar|é) cuenta|no creas cuenta|ningún dato sale/i],
-    ['Entrar con tu correo', '#/entrar', /acceso inmediato/i],
-    ['Consultar una instalación', '#/solicitar-piloto', /hasta que te escribamos no hay acceso concedido/i],
+    ['Consulta el histórico con tu correo', '#/entrar', /acceso de consulta a las mediciones reales/],
+    ['Cuéntanos dónde está tu finca para estudiar una instalación', '#/solicitar-piloto', /revisamos tu solicitud y te contactamos/i],
   ];
   expected.forEach(([title, href, outcome], index) => {
     const card = cards[index];
@@ -64,16 +63,21 @@ test('las tres vías se separan y cada una declara su resultado antes del enlace
     assert.ok(card.includes(`href="${href}"`), `«${title}» no lleva a ${href}`);
     assert.match(card, outcome, `«${title}» no declara su resultado`);
   });
+  // El histórico usa el mismo destino declarado que el CTA del hero: tras
+  // confirmar el enlace del correo se vuelve a la herramienta pedida.
+  assert.match(cards[0], /href="#\/entrar" data-return="evolucion"/);
+  // La simulación deja de ser tarjeta: queda como enlace secundario discreto.
+  assert.match(vias, /href="#\/demo-agricola">simulación con datos inventados/);
 });
 
-test('cada vía dice qué NO hace, para que no se confundan entre sí', () => {
+test('las condiciones detalladas ya no se repiten en la portada: viven en la FAQ', () => {
   const vias = section('vias');
-  // La demostración no registra; entrar no espera al equipo; el formulario no
-  // da acceso por sí solo. Son las tres confusiones que la FAQ resolvía tarde.
-  const demo = vias.split('<article class="via-card">')[1];
-  assert.match(demo, /simulad/i);
-  assert.match(vias, /no es autom[aá]tico/i);
-  assert.match(vias, /no programa una instalaci[oó]n/i);
+  const faq = section('preguntas');
+  // El formulario tiene su propio aviso, cubierto por lead-form.test.js.
+  assert.doesNotMatch(vias, /no es autom[aá]tico/i);
+  assert.doesNotMatch(vias, /no programa una instalaci[oó]n/i);
+  assert.match(faq, /no es autom[aá]tico/i);
+  assert.match(faq, /no programa una instalaci[oó]n/i);
 });
 
 test('el menú no promete un acceso gratuito que solo se concede por revisión', () => {
@@ -108,9 +112,10 @@ test('cada vía tiene ruta propia y aparece en el sitemap', () => {
 test('la explicación de las vías aparece antes que la FAQ y la FAQ la confirma', () => {
   assert.ok(html.indexOf('id="vias"') < html.indexOf('id="preguntas"'),
     'las vías se explican después de la FAQ');
-  // La FAQ ya no es el único sitio donde se distinction: remite a las tres.
+  // La FAQ explica la diferencia entre las dos acciones y remite a las tres
+  // rutas: entrar, solicitar y la simulación como enlace secundario.
   const faq = section('preguntas');
-  assert.match(faq, /diferencia entre las tres formas de empezar/i);
+  assert.match(faq, /diferencia hay entre entrar con tu correo y consultar una instalaci[oó]n/i);
   for (const href of ['#/demo-agricola', '#/entrar', '#/solicitar-piloto']) {
     assert.ok(faq.includes(`href="${href}"`), `la FAQ no menciona ${href}`);
   }

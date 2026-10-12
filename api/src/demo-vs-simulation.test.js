@@ -45,14 +45,16 @@ test('la palabra «simulación» queda reservada a los datos inventados', () => 
 
 test('el simulador público se llama simulación en toda la portada', () => {
   const vias = view.slice(view.indexOf('id="vias"'), view.indexOf('id="comparacion-aemet"'));
-  assert.match(vias, /<h3>Ver la simulación<\/h3>/);
+  // La simulación ya no es una tarjeta de las vías: queda como enlace
+  // secundario discreto al pie de la sección, y con su nombre correcto.
+  assert.match(vias, /href="#\/demo-agricola">simulación con datos inventados/);
   assert.doesNotMatch(vias, /Ver la demostración/);
-  // Cada vía declara de qué clase es su dato: inventados o reales.
-  assert.match(vias, /SIN REGISTRARTE · DATOS INVENTADOS/);
-  assert.match(vias, /ACCESO INMEDIATO · DATOS REALES/);
-  assert.match(vias, /La estación urbana real está arriba, sin registro/);
-  // El propio bloque del simulador, no solo la tarjeta que lleva a él.
-  assert.match(view, /SIMULACIÓN INTERACTIVA · DATOS INVENTADOS/);
+  assert.equal(vias.split('<article class="via-card">').length - 1, 2,
+    'las vías vuelven a presentar la simulación como tarjeta');
+  // El vocabulario de la simulación vive en su propio bloque, no en las vías.
+  const demo = view.slice(view.indexOf('id="demo-agricola"'), view.indexOf('id="herramientas"'));
+  assert.match(demo, /SIMULACIÓN INTERACTIVA · DATOS INVENTADOS/);
+  assert.match(demo, /datos inventados que no proceden de ninguna estación ni de ninguna finca existente/);
   assert.doesNotMatch(view, /DEMOSTRACIÓN INTERACTIVA/);
 });
 
