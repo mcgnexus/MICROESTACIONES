@@ -78,6 +78,8 @@ test('the public current card keeps the last reading even when stale, clearly la
   assert.match(staleWithoutValue, /Sin lectura registrada/);
   const currentHtml = renderLocalWeatherCard(currentUrban);
   assert.match(currentHtml, /12,3 °C/);
+  assert.match(currentHtml, /<p class="public-location">Casco<\/p>/);
+  assert.doesNotMatch(currentHtml, /<h3>/, 'la localidad no se inserta como encabezado antes del h1');
   assert.match(currentHtml, /no toda la ciudad/i);
   // La antigüedad se muestra en palabras ("Medido hace…"), no solo con la fecha.
   assert.match(currentHtml, /Medido hace/);
@@ -121,13 +123,14 @@ test('public landing has loading containers and a single access request form, wi
   assert.match(html, /Pedir información para instalar una estación/);
 });
 
-test('the big weather card is the first element of the public landing section', async () => {
+test('the Tiempo local h1 precedes the load state and dynamically rendered card', async () => {
   const html = await readFile(new URL('../views/index.html', import.meta.url), 'utf8');
   const section = html.slice(html.indexOf('id="tiempo-local"'), html.indexOf('id="comparacion-aemet"'));
   const card = section.indexOf('id="local-weather-card"');
   const loading = section.indexOf('id="local-weather-state"');
   const heading = section.indexOf('<h1>');
   assert.ok(loading >= 0 && card >= 0 && heading >= 0);
-  assert.ok(loading < heading, 'el indicador de carga va antes del título');
-  assert.ok(card < heading, 'la tarjeta grande va antes del título');
+  assert.ok(heading < loading, 'el h1 precede al indicador de carga');
+  assert.ok(heading < card, 'el h1 precede a la tarjeta que inserta el cliente o SSR');
+  assert.ok(loading < card, 'el estado de carga precede al contenedor de la tarjeta');
 });

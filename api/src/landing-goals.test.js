@@ -87,17 +87,18 @@ test('el menú no promete un acceso gratuito que solo se concede por revisión',
   assert.match(nav, /href="#\/solicitar-piloto">Pedir información para instalar una estación</);
   assert.doesNotMatch(nav, />Acceso gratuito</, 'el menú vuelve a mezclar las dos vías');
   assert.match(nav, /href="#\/entrar">Consultar histórico</);
-  assert.match(nav, /href="#\/fincas">Fincas</);
+  assert.match(nav, /href="#\/fincas">Medir en finca</);
 });
 
 test('la etiqueta principal de instalación se mantiene en todas las llamadas públicas', () => {
   const primary = 'Pedir información para instalar una estación';
   for (const surface of [html, leads]) assert.ok(surface.includes(primary), `falta la etiqueta «${primary}»`);
-  for (const oldLabel of ['Quiero información para mi finca', 'Consultar una instalación', 'Medir en finca']) {
+  for (const oldLabel of ['Quiero información para mi finca', 'Consultar una instalación']) {
     assert.ok(!html.includes(oldLabel), `queda una etiqueta pública alternativa: «${oldLabel}»`);
   }
-  assert.match(leads, /value="installation_info"> Pedir información para instalar una estación/);
-  assert.match(leads, /value="pilot"> Solicitar una prueba del servicio en mi finca/);
+  assert.match(html, /href="#\/fincas">Medir en finca</);
+  assert.match(leads, /value="installation_info" required> Pedir información para instalar una estación/);
+  assert.match(leads, /value="pilot" required> Solicitar una prueba del servicio en mi finca/);
 });
 
 test('el formulario de instalación descarta las dos otras vías', () => {

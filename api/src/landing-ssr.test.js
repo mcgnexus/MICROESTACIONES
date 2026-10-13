@@ -6,6 +6,7 @@ import { injectLandingParts } from '../src/landing-ssr.js';
 
 const landing = readFileSync(new URL('../public/js/landing.js', import.meta.url), 'utf8');
 const server = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+const view = readFileSync(new URL('../views/index.html', import.meta.url), 'utf8');
 
 const urban = {
   name: 'Casco', locationType: 'urbano', zone: 'Huéscar',
@@ -29,6 +30,15 @@ test('renderPublicWeather reúne tarjeta, comparación y evolución de la estaci
   assert.match(parts.comparison, /AEMET/);
   assert.match(parts.evolution, /chart-box|No hay datos suficientes/);
   assert.equal(parts.observedAt, '2026-10-07T12:00:00Z');
+});
+
+test('el h1 de Tiempo local precede a la tarjeta insertada por SSR o por el cliente', () => {
+  const start = view.indexOf('<section id="tiempo-local"');
+  const end = view.indexOf('<section id="comparacion-aemet"', start);
+  const section = view.slice(start, end);
+  assert.ok(section.indexOf('<h1>Tiempo local medido en Huéscar</h1>') < section.indexOf('id="local-weather-state"'));
+  assert.ok(section.indexOf('id="local-weather-state"') < section.indexOf('id="local-weather-card"'));
+  assert.doesNotMatch(renderLocalWeatherCard(urban), /<h3>/);
 });
 
 test('sin estación urbana la tarjeta explica el vacío, no inventa un dato', () => {

@@ -114,6 +114,16 @@ test('cada sección de la portada tiene un encabezado que puede recibir el foco'
   }
 });
 
+test('Contacto aparece en el menú móvil y se registra como sección pública enfocável', () => {
+  const navStart = view.indexOf('<nav id="public-nav"');
+  const nav = view.slice(navStart, view.indexOf('</nav>', navStart));
+  const contact = view.slice(view.indexOf('id="contacto-publico"'), view.indexOf('</section>', view.indexOf('id="contacto-publico"')));
+  assert.match(nav, /href="#\/contacto-publico">Contacto/);
+  assert.match(landing, /'contacto-publico'/);
+  assert.match(contact, /<h2/);
+  assert.match(app, /'contacto-publico': 'Contacto'/);
+});
+
 test('el formulario de captación aporta el encabezado que el HTML no trae', () => {
   // solicitar-piloto está vacía en el HTML: su h2 lo inyecta leads.js. Si ese
   // h2 desapareciera, el salto dejaría de anunciar la petición de instalación.

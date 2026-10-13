@@ -168,37 +168,47 @@ test('las reglas nuevas solo se crean para canales disponibles', () => {
   assert.match(alertsSource, /name="channel">\$\{availableChannels\(/);
 });
 
-// F19 · P2: el orden de Cuenta sigue el flujo de activación de avisos:
-// avisos y contactos → fincas → perfil → datos de cuenta → equipo → piloto →
-// comunicaciones comerciales al final.
-test('Cuenta ordena el servicio antes que la publicidad', () => {
-  const order = [...accountSource.matchAll(/eyebrow">([A-ZÁÉÍÓÚ ]+)</g)].map((m) => m[1].trim());
-  const rank = (name) => order.indexOf(name);
-  const seq = ['CONFIGURACIÓN DE AVISOS', 'MIS FINCAS', 'PERFIL OPCIONAL', 'SUSCRIPCIÓN', 'REFERENCIA PARA EL EQUIPO', 'PILOTO', 'PUBLICIDAD'];
-  for (const name of seq) assert.ok(rank(name) > -1, `falta la sección ${name}`);
-  const ranked = seq.map(rank);
-  assert.deepEqual([...ranked].sort((a, b) => a - b), ranked, `orden inesperado: ${order.join(' → ')}`);
+test('Cuenta guía en cuatro pasos y mantiene los ajustes opcionales en segundo plano', () => {
+  const steps = [...accountSource.matchAll(/data-account-step="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(steps, ['location', 'receive', 'channel', 'check']);
+  for (const title of ['Dónde está mi finca', 'Qué quiero recibir', 'Cómo quiero recibirlo', 'Comprobar que funciona']) {
+    assert.ok(accountSource.includes(title), `falta el paso «${title}»`);
+  }
+  assert.match(accountSource, /data-account-jump/);
+  assert.match(accountSource, /accountGuide\(me, prefs\)/);
+  const secondary = accountSource.indexOf('<details class="technical-details account-secondary">');
+  const commercial = accountSource.indexOf('<details class="technical-details account-commercial">');
+  assert.ok(secondary > accountSource.indexOf('data-account-step="check"'));
+  assert.ok(commercial > secondary);
+  assert.match(accountSource.slice(secondary, commercial), /data-thresholds-form/);
+  assert.match(accountSource.slice(commercial), /data-commercial=/);
 });
 
-test('la publicidad ya no remite «arriba» a un bloque que estaba debajo', () => {
-  assert.match(accountSource, /añade el canal en Canales de aviso/);
-  assert.doesNotMatch(accountSource, /añade el canal arriba/);
+test('las secciones guiadas mantienen formularios con guardado independiente', () => {
+  for (const form of ['data-location-prefs-form', 'data-farm-form', 'data-prefs-form',
+    'data-public-form', 'data-channel-prefs-form', 'data-contact-form', 'data-profile-form']) {
+    assert.match(accountSource, new RegExp(form));
+  }
+  assert.match(accountSource, /api\('\/api\/v1\/alert-preferences', \{ method: 'PUT'/);
+  assert.match(accountSource, /data-public-test/);
 });
 
 test('Cuenta presenta el estado por canal y los pasos propios', () => {
-  assert.match(accountSource, /CONFIGURACIÓN DE AVISOS/);
+  assert.match(accountSource, /function accountGuide\(/);
   assert.match(accountSource, /function signupStepper\(/);
   assert.match(accountSource, /alertReadiness\(/);
   assert.match(accountSource, /READINESS_CHANNEL_LABELS/);
   assert.match(accountSource, /label: 'Tipos de aviso'/);
   assert.match(accountSource, /label: 'Estación o finca'/);
-  // La preferencia operativa sigue siendo un formulario real.
+  assert.match(accountSource, /data-channel-prefs-form/);
+  // Las preferencias meteorológicas siguen teniendo guardado independiente.
   assert.match(accountSource, /data-prefs-form/);
+  assert.match(accountSource, /no envía una alerta privada de prueba/);
 });
 
 test('la verificación del correo de acceso se distingue de la del destinatario', () => {
   assert.match(accountSource, /Correo de acceso verificado/);
-  assert.match(accountSource, /Es distinta de la verificación por código de un destinatario de avisos/);
+  assert.match(accountSource, /es distinta de la verificación por código de un destinatario de avisos/);
 });
 
 test('el estado de alta se explica aunque ya haya avisos si falta completarlo', () => {
@@ -222,7 +232,10 @@ test('los campos de contacto de Cuenta declaran autocomplete y tipo', () => {
 });
 
 test('los umbrales propios se declaran como preferencia que aún no modifica avisos', () => {
-  assert.match(accountSource, /Todavía no modifica tus avisos/);
-  // Y la declaración sigue yendo antes del campo, como exige el guardado móvil.
-  assert.ok(accountSource.indexOf('Todavía no modifica tus avisos') < accountSource.indexOf('name="frost_c"'));
+  assert.match(accountSource, /no modifican los avisos que recibes/);
+  const secondary = accountSource.indexOf('<details class="technical-details account-secondary">');
+  const thresholdForm = accountSource.indexOf('data-thresholds-form');
+  const commercial = accountSource.indexOf('<details class="technical-details account-commercial">');
+  assert.ok(thresholdForm > secondary && thresholdForm < commercial, 'los límites de referencia quedan en los ajustes secundarios');
+  assert.ok(accountSource.indexOf('no modifican los avisos que recibes') < thresholdForm);
 });

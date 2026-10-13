@@ -53,6 +53,66 @@ const REQUEST_TYPE_LABELS = {
   installation_info: 'Pedir información para instalar una estación',
   pilot: 'Solicitar una prueba del servicio en mi finca',
 };
+const REQUIRED_RADIO_GROUPS = ['request_type', 'preferred_channel'];
+let leadFormSequence = 0;
+
+function radioGroupMessage(name) {
+  return name === 'request_type'
+    ? 'Elige qué necesitas para continuar.'
+    : 'Elige si prefieres que te contactemos por email o WhatsApp.';
+}
+
+function groupHasSelection(form, name) {
+  return Boolean(form.querySelector(`input[name="${name}"]:checked`));
+}
+
+function showRadioGroupError(form, name, message = radioGroupMessage(name)) {
+  const group = form.querySelector(`[data-radio-group="${name}"]`);
+  const error = form.querySelector(`[data-radio-error="${name}"]`);
+  if (group) group.setAttribute('aria-invalid', 'true');
+  if (error) {
+    error.textContent = message;
+    error.classList.remove('hidden');
+  }
+}
+
+function clearRadioGroupError(form, name) {
+  const group = form.querySelector(`[data-radio-group="${name}"]`);
+  const error = form.querySelector(`[data-radio-error="${name}"]`);
+  group?.removeAttribute('aria-invalid');
+  if (error) {
+    error.textContent = '';
+    error.classList.add('hidden');
+  }
+}
+
+function focusFirstMissingRadioGroup(form) {
+  const name = REQUIRED_RADIO_GROUPS.find((key) => !groupHasSelection(form, key));
+  form.querySelector(`[data-radio-group="${name}"] input[type="radio"]`)?.focus();
+}
+
+function prepareRadioGroupValidation(form) {
+  const formId = `lead-form-${++leadFormSequence}`;
+  for (const name of REQUIRED_RADIO_GROUPS) {
+    const group = form.querySelector(`[data-radio-group="${name}"]`);
+    const error = form.querySelector(`[data-radio-error="${name}"]`);
+    if (!group || !error) continue;
+    error.id = `${formId}-${name}-error`;
+    group.setAttribute('aria-describedby', error.id);
+    group.setAttribute('aria-required', 'true');
+    form.querySelectorAll(`input[name="${name}"]`).forEach((radio) => {
+      radio.required = true;
+      radio.addEventListener('change', () => clearRadioGroupError(form, name));
+    });
+  }
+  form.addEventListener('invalid', (event) => {
+    const name = REQUIRED_RADIO_GROUPS.find((key) => event.target.name === key);
+    if (!name || groupHasSelection(form, name)) return;
+    if (form.querySelector(`[data-radio-group="${name}"]`)?.getAttribute('aria-invalid') === 'true') return;
+    showRadioGroupError(form, name);
+    requestAnimationFrame(() => focusFirstMissingRadioGroup(form));
+  }, true);
+}
 
 export const LEAD_FORM_HTML = `
   <div class="section-heading"><div><p class="eyebrow">SOLICITUD</p><h2 data-lead-title></h2></div></div>
@@ -61,18 +121,20 @@ export const LEAD_FORM_HTML = `
   <form class="rule-form" data-lead-form>
     <label>Tu nombre<input name="name" required minlength="2" maxlength="120" autocomplete="name"></label>
     <label>Municipio<input name="zone" required maxlength="160" autocomplete="address-level2"></label>
-    <fieldset class="contact-choice span-all">
+    <fieldset class="contact-choice span-all" data-radio-group="request_type" aria-required="true">
       <legend>¿Qué necesitas?</legend>
-      <label class="check"><input type="radio" name="request_type" value="installation_info"> Pedir información para instalar una estación</label>
-      <label class="check"><input type="radio" name="request_type" value="pilot"> Solicitar una prueba del servicio en mi finca</label>
+      <label class="check"><input type="radio" name="request_type" value="installation_info" required> Pedir información para instalar una estación</label>
+      <label class="check"><input type="radio" name="request_type" value="pilot" required> Solicitar una prueba del servicio en mi finca</label>
     </fieldset>
     <p class="hint span-all hidden" data-request-type-note></p>
-    <fieldset class="contact-choice span-all">
+    <p class="error span-all hidden" data-radio-error="request_type" role="alert"></p>
+    <fieldset class="contact-choice span-all" data-radio-group="preferred_channel" aria-required="true">
       <legend>¿Cómo prefieres que te contactemos?</legend>
-      <label class="check"><input type="radio" name="preferred_channel" value="email" checked> Email</label>
-      <label class="check"><input type="radio" name="preferred_channel" value="whatsapp"> WhatsApp</label>
+      <label class="check"><input type="radio" name="preferred_channel" value="email" required> Email</label>
+      <label class="check"><input type="radio" name="preferred_channel" value="whatsapp" required> WhatsApp</label>
     </fieldset>
-    <label data-contact-email>Correo electrónico<input name="email" type="email" maxlength="254" autocomplete="email" placeholder="tu@correo.com"></label>
+    <p class="error span-all hidden" data-radio-error="preferred_channel" role="alert"></p>
+    <label data-contact-email class="hidden">Correo electrónico<input name="email" type="email" maxlength="254" autocomplete="email" placeholder="tu@correo.com"></label>
     <label data-contact-whatsapp class="hidden">País del teléfono
       <select name="phone_country" data-phone-country>
         <option value="ES" selected>España (+34)</option>
@@ -125,7 +187,7 @@ export const LEAD_FORM_HTML = `
 // Muestra el campo del canal elegido y esconde el otro, también en el
 // desplegable del segundo canal. Se llama al montar y con cada cambio de radio.
 function setLeadChannel(form) {
-  const channel = form.querySelector('input[name="preferred_channel"]:checked')?.value || 'email';
+  const channel = form.querySelector('input[name="preferred_channel"]:checked')?.value || null;
   const toggle = (selector, show) => {
     const element = form.querySelector(selector);
     if (element) element.classList.toggle('hidden', !show);
@@ -134,6 +196,10 @@ function setLeadChannel(form) {
   toggle('[data-contact-whatsapp]', channel === 'whatsapp');
   toggle('[data-secondary-email]', channel === 'whatsapp');
   toggle('[data-secondary-whatsapp]', channel === 'email');
+  const email = form.querySelector('input[name="email"]');
+  const phone = form.querySelector('input[name="phone"]');
+  if (email) email.required = channel === 'email';
+  if (phone) phone.required = channel === 'whatsapp';
   // Los metadatos de países solo se descargan al abrir WhatsApp: la portada no
   // paga ese peso si nadie lo usa.
   if (channel === 'whatsapp') fillCountrySelects(form).catch(() => {});
@@ -160,14 +226,15 @@ export async function submitLead(event) {
   const requestType = data.get('request_type');
   const channel = data.get('preferred_channel');
   if (!requestType) {
-      const message = 'Elige qué necesitas: pedir información para instalar una estación o solicitar una prueba del servicio en tu finca.';
-    const requestError = scope.querySelector('[data-request-type-note]');
-    if (requestError) {
-      requestError.textContent = message;
-      requestError.classList.remove('hidden');
-    } else {
-      setError(scope, '[data-lead-error]', message);
-    }
+    showRadioGroupError(form, 'request_type', 'Elige qué necesitas: pedir información para instalar una estación o solicitar una prueba del servicio en tu finca.');
+    focusFirstMissingRadioGroup(form);
+    delete form.dataset.submitting;
+    if (submit) submit.disabled = false;
+    return;
+  }
+  if (!channel) {
+    showRadioGroupError(form, 'preferred_channel');
+    focusFirstMissingRadioGroup(form);
     delete form.dataset.submitting;
     if (submit) submit.disabled = false;
     return;
@@ -262,6 +329,7 @@ export function mountLeadForms(root = document) {
     if (success && section.dataset.leadSuccess) success.textContent = section.dataset.leadSuccess;
     const form = section.querySelector('[data-lead-form]');
     if (!form) return;
+    prepareRadioGroupValidation(form);
     // Modalidad preseleccionada: la declara el embed (data-lead-request-type) o
     // el enlace de campaña (?tipo=…). La campaña se anuncia para que se vea.
     const preset = section.dataset.leadRequestType || campaignRequestType;
@@ -277,8 +345,17 @@ export function mountLeadForms(root = document) {
       }
     }
     form.addEventListener('submit', submitLead);
+    setLeadChannel(form);
     form.querySelectorAll('input[name="preferred_channel"]').forEach((radio) => {
-      radio.addEventListener('change', () => setLeadChannel(form));
+      radio.addEventListener('change', () => {
+        clearRadioGroupError(form, 'preferred_channel');
+        const contactError = section.querySelector('[data-contact-error]');
+        if (contactError) {
+          contactError.textContent = '';
+          contactError.classList.add('hidden');
+        }
+        setLeadChannel(form);
+      });
     });
   });
 }

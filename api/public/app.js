@@ -13,6 +13,13 @@ const mobileNav = $('#mobile-nav');
 const sessionChip = $('#session-chip');
 const installButton = $('#install-app');
 const iosInstallHint = $('#ios-install-hint');
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('#public-nav .nav-more-menu a');
+  if (link) {
+    const menu = link.closest('details.nav-more');
+    if (menu) menu.open = false;
+  }
+});
 let deferredInstallPrompt = null;
 // La instalación se ofrece solo después de que el visitante haya consultado
 // datos o haya iniciado sesión, no en cuanto el navegador la permite.
@@ -240,6 +247,7 @@ const PAGE_TITLES = {
   cuenta: 'Cuenta',
   admin: 'Administración',
   entrar: 'Entrar',
+  'contacto-publico': 'Contacto',
 };
 const PUBLIC_PAGE_TITLE = 'Tiempo local medido en Huéscar | TecRural';
 

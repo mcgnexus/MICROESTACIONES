@@ -74,9 +74,18 @@
     <nav id="public-nav" class="topnav" aria-label="Página pública">
       <a href="#/tiempo-local">Tiempo local</a>
       <a class="nav-optional" href="#/vias">Cómo empezar</a>
-      <a class="nav-optional" href="#/fincas">Fincas</a>
+      <a class="nav-optional" href="#/fincas">Medir en finca</a>
       <a class="nav-access" href="#/solicitar-piloto">Pedir información para instalar una estación</a>
       <a href="#/entrar">Consultar histórico</a>
+      <details class="nav-more">
+        <summary>Más</summary>
+        <div class="nav-more-menu">
+          <a href="#/vias">Cómo empezar</a>
+          <a href="#/fincas">Medir en finca</a>
+          <a href="#/preguntas">Preguntas frecuentes</a>
+          <a href="#/contacto-publico">Contacto</a>
+        </div>
+      </details>
     </nav>
     <div class="topbar-right">
       <span id="session-chip" class="chip hidden"></span>
@@ -97,6 +106,9 @@
 
       <section id="tiempo-local" class="landing-section public-first-section">
         <div class="public-hero">
+          <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
+          <h1>Tiempo local medido en Huéscar</h1>
+          <p class="landing-lead">Una microestación mide temperatura y humedad en un punto del casco urbano de Huéscar. Cada lectura indica su hora y describe ese emplazamiento: no representa todas las calles ni tu finca.</p>
           <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
           <div id="local-weather-card"></div>
           <div class="landing-actions hero-actions">
@@ -104,9 +116,6 @@
             <a class="cta secondary" href="#/solicitar-piloto">Pedir información para instalar una estación</a>
           </div>
           <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>. <button type="button" class="quiet hint-dismiss" data-dismiss-install-hint>Entendido</button></p>
-          <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
-          <h1>Tiempo local medido en Huéscar</h1>
-          <p class="landing-lead">Una microestación mide temperatura y humedad en un punto del casco urbano de Huéscar. Cada lectura indica su hora y describe ese emplazamiento: no representa todas las calles ni tu finca.</p>
         </div>
       </section>
 

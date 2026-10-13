@@ -8,23 +8,29 @@ import { LEAD_FORM_HTML } from '../public/js/leads.js';
 // el campo de ese canal con su explicación, y el segundo canal es opcional.
 // El municipio sustituye a la zona libre y sigue siendo obligatorio.
 
-test('la solicitud se abre solo con nombre, municipio y elección de canal', () => {
-  for (const core of ['name="name"', 'name="zone"', 'name="preferred_channel"']) {
+test('la solicitud exige nombre, municipio, modalidad y canal de contacto', () => {
+  for (const core of ['name="name"', 'name="zone"', 'name="request_type"', 'name="preferred_channel"']) {
     assert.match(LEAD_FORM_HTML, new RegExp(core), `falta ${core}`);
   }
   assert.match(LEAD_FORM_HTML, /<label>Municipio<input name="zone" required/);
   assert.match(LEAD_FORM_HTML, /¿Cómo prefieres que te contactemos\?/);
-  // Radios de canal: email marcado por defecto, whatsapp disponible.
-  assert.match(LEAD_FORM_HTML, /type="radio" name="preferred_channel" value="email" checked/);
-  assert.match(LEAD_FORM_HTML, /type="radio" name="preferred_channel" value="whatsapp"/);
+  // La persona elige explícitamente el canal; ninguno está preseleccionado.
+  assert.match(LEAD_FORM_HTML, /type="radio" name="preferred_channel" value="email" required/);
+  assert.match(LEAD_FORM_HTML, /type="radio" name="preferred_channel" value="whatsapp" required/);
+  assert.doesNotMatch(LEAD_FORM_HTML, /name="preferred_channel"[^>]*checked/);
 });
 
 test('la modalidad se declara con request_type acotado y visible', () => {
   // Radios sin opción marcada: la preselección la decide el origen (embed o
   // campaña), nunca el formulario por su cuenta.
   assert.match(LEAD_FORM_HTML, /¿Qué necesitas\?/);
-  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="installation_info"> Pedir información para instalar una estación/);
-  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="pilot"> Solicitar una prueba del servicio en mi finca/);
+  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="installation_info" required> Pedir información para instalar una estación/);
+  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="pilot" required> Solicitar una prueba del servicio en mi finca/);
+  assert.match(LEAD_FORM_HTML, /data-radio-group="request_type" aria-required="true"/);
+  assert.match(LEAD_FORM_HTML, /data-radio-group="preferred_channel" aria-required="true"/);
+  for (const name of ['request_type', 'preferred_channel']) {
+    assert.match(LEAD_FORM_HTML, new RegExp(`data-radio-error="${name}" role="alert"`));
+  }
   assert.match(LEAD_FORM_HTML, /href="#\/entrar">Consultar histórico</);
   assert.doesNotMatch(LEAD_FORM_HTML, /name="request_type"[^>]*checked/);
   assert.match(LEAD_FORM_HTML, /data-request-type-note/);
@@ -38,12 +44,11 @@ test('la preselección por embed o campaña se muestra y se puede cambiar', asyn
 });
 
 test('cada canal muestra su campo y WhatsApp explica para qué se usa el número', () => {
-  assert.match(LEAD_FORM_HTML, /data-contact-email>Correo electrónico<input name="email" type="email"/);
+  assert.match(LEAD_FORM_HTML, /data-contact-email class="hidden">Correo electrónico<input name="email" type="email"/);
   assert.match(LEAD_FORM_HTML, /data-contact-whatsapp[^>]*class="hidden"/);
   assert.match(LEAD_FORM_HTML, /data-contact-whatsapp[^>]*>Teléfono de WhatsApp<input name="phone" type="tel" inputmode="tel"/);
   assert.match(LEAD_FORM_HTML, /responderte por WhatsApp a esta solicitud/);
-  // Ninguno de los dos campos de canal lleva required en el HTML: la exigencia
-  // la pone la elección del canal, no el marcado.
+  // El canal de contacto se vuelve obligatorio solo después de elegirlo.
   const email = LEAD_FORM_HTML.match(/<input[^>]*name="email"[^>]*>/)[0];
   const phone = LEAD_FORM_HTML.match(/<input[^>]*name="phone"[^>]*>/)[0];
   assert.doesNotMatch(email, /required/);
@@ -65,8 +70,34 @@ test('el teléfono lleva selector de país con España por defecto y se normaliz
   assert.match(source, /Ese teléfono no es válido para el país seleccionado/);
 });
 
-test('el error de canal vacío aparece junto al campo', () => {
-  assert.match(LEAD_FORM_HTML, /data-contact-error role="alert"/);
+test('los errores de modalidad y canal quedan asociados a sus grupos', async () => {
+  const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
+  for (const name of ['request_type', 'preferred_channel']) {
+    assert.match(LEAD_FORM_HTML, new RegExp(`data-radio-error="${name}" role="alert"`));
+  }
+  assert.match(source, /error\.id = `\$\{formId\}-\$\{name\}-error`/);
+  assert.match(source, /group\.setAttribute\('aria-describedby', error\.id\)/);
+  assert.match(source, /prepareRadioGroupValidation\(form\)/);
+  assert.match(source, /group\.setAttribute\('aria-invalid', 'true'\)/);
+  assert.match(source, /group\?\.removeAttribute\('aria-invalid'\)/);
+});
+
+test('sin canal no aparece ningún campo de contacto y el canal elegido vuelve su campo obligatorio', async () => {
+  const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
+  assert.match(source, /const channel = form\.querySelector\('input\[name="preferred_channel"\]:checked'\)\?\.value \|\| null/);
+  assert.match(source, /email\.required = channel === 'email'/);
+  assert.match(source, /phone\.required = channel === 'whatsapp'/);
+  assert.match(source, /toggle\('\[data-contact-email\]', channel === 'email'\)/);
+  assert.match(source, /toggle\('\[data-contact-whatsapp\]', channel === 'whatsapp'\)/);
+});
+
+test('los grupos inválidos priorizan el primer campo y los IDs se generan por formulario', async () => {
+  const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
+  assert.match(source, /const REQUIRED_RADIO_GROUPS = \['request_type', 'preferred_channel'\]/);
+  assert.match(source, /const name = REQUIRED_RADIO_GROUPS\.find\(\(key\) => !groupHasSelection\(form, key\)\)/);
+  assert.match(source, /form\.querySelector\(`\[data-radio-group="\$\{name\}"\] input\[type="radio"\]`\)\?\.focus\(\)/);
+  assert.match(source, /lead-form-\$\{\+\+leadFormSequence\}/);
+  assert.match(source, /requestAnimationFrame\(\(\) => focusFirstMissingRadioGroup\(form\)\)/);
 });
 
 test('el desplegable opcional pide el problema agronómico, sin perfiles por defecto', () => {
@@ -138,6 +169,7 @@ test('el formulario mantiene consentimiento, honeypot y aviso de acceso inmediat
 test('el módulo expone el montaje con el conmutador de canal', async () => {
   const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
   assert.match(source, /function setLeadChannel\(form\)/);
-  assert.match(source, /radio.addEventListener\('change', \(\) => setLeadChannel\(form\)\)/);
+  assert.match(source, /radio.addEventListener\('change', \(\) => \{/);
+  assert.match(source, /clearRadioGroupError\(form, 'preferred_channel'\)/);
   assert.match(source, /data-contact-error/);
 });

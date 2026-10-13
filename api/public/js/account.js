@@ -179,6 +179,32 @@ function signupStepper(me, prefs) {
     `<li><span class="badge ${tone[step.state]}">${text[step.state]}</span><strong>${escapeText(step.label)}</strong><span>${escapeText(step.detail)}</span></li>`).join('')}</ol>`;
 }
 
+function accountGuide(me, prefs) {
+  const readiness = alertReadiness({
+    me: { ...me, contacts: me.contacts || [] }, prefs, service: me.channelAvailability || {},
+  });
+  const channels = Object.values(readiness.channels);
+  const channelRequirements = ['contact', 'verified', 'authorized', 'preferences', 'service'];
+  const howReady = channels.some((channel) => channel.configured
+    && !channel.missing.some((missing) => channelRequirements.includes(missing)));
+  const hasProgress = readiness.stations || readiness.categories.selected || channels.some((channel) => channel.configured);
+  const state = {
+    location: readiness.stations ? 'ok' : 'missing',
+    receive: readiness.categories.selected ? 'ok' : 'missing',
+    channel: howReady ? 'ok' : channels.some((channel) => channel.configured) ? 'pending' : 'missing',
+    check: readiness.anyReady ? 'ok' : hasProgress ? 'pending' : 'missing',
+  };
+  const labels = { ok: 'Listo', pending: 'Pendiente', missing: 'Falta' };
+  const steps = [
+    ['location', 'Dónde está mi finca'],
+    ['receive', 'Qué quiero recibir'],
+    ['channel', 'Cómo quiero recibirlo'],
+    ['check', 'Comprobar que funciona'],
+  ];
+  return `<nav class="account-guide" aria-label="Pasos para configurar avisos"><ol>${steps.map(([key, label], index) =>
+    `<li><button type="button" data-account-jump="${key}" aria-controls="account-step-${key}"><span class="account-guide-number">${index + 1}</span><span>${label}</span><span class="badge badge-${state[key] === 'ok' ? 'valid' : state[key] === 'pending' ? 'warn' : 'invalid'}">${labels[state[key]]}</span></button></li>`).join('')}</ol></nav>`;
+}
+
 function farmBlock(farm, stations) {
   const devices = (farm.devices || []);
   const options = stations
@@ -220,48 +246,18 @@ export async function renderAccount(root) {
   const publicOptions = await api('/api/v1/public-alerts/options').catch(() => null);
 
   root.innerHTML = `
-    <div class="page-heading"><div><p class="eyebrow">CUENTA</p><h1>${escapeText(me.email)}</h1></div></div>
+    <div class="page-heading"><div><p class="eyebrow">CUENTA</p><h1>Configura tus avisos</h1><p class="hint">Completa estas cuatro secciones en el orden que prefieras. Cada cambio se guarda por separado.</p></div></div>
     <p class="error" data-error role="alert"></p>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">CONFIGURACIÓN DE AVISOS</p><h2>Asistente de avisos</h2></div></div>
-      <p class="hint">El estado se calcula por canal y destinatario: cada canal solo queda listo si, sobre el mismo contacto, está verificado y autorizado, el canal sigue activo en preferencias, hay algún tipo de aviso elegido, la cuenta tiene estación o finca y el servicio de ese canal está disponible.</p>
-      ${signupStepper(me, prefs)}
-      <div class="section-heading"><div><h3>Contacto, autorización y verificación</h3></div></div>
-      <p class="hint">Añade tu WhatsApp o correo, autoriza el envío y verifica la dirección. Las alertas solo salen a contactos verificados y autorizados.</p>
-      ${session.support?.whatsappDelivery === 'manual'
-        ? `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`
-        : ''}
-      ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key], availability[channel.key])).join('')}
-      ${emailReuseBlock(me, byChannel)}
-      <div class="section-heading"><div><h3>Avisos públicos de estación</h3></div></div>
-      <p class="hint">Suscríbete expresamente a los avisos de una estación habilitada por TecRural. Consultar datos o gráficos no suscribe a nadie, y el acceso a una estación privada es otra cosa.</p>
-      ${publicAlertsBlock(publicOptions, me)}
-      <div class="section-heading"><div><h3>Preferencias efectivas</h3></div></div>
-      <p class="hint">No todos necesitan lo mismo: un almendro teme la helada y el ganado el calor. Elige aquí tus avisos.</p>
-      <form data-prefs-form class="rule-form">
-        <fieldset class="prefs-group span-all"><legend>Tipos de aviso</legend>
-          <label class="check"><input type="checkbox" name="receive_frost" ${prefs.receiveFrost ? 'checked' : ''}> Heladas</label>
-          <label class="check"><input type="checkbox" name="receive_heat" ${prefs.receiveHeat ? 'checked' : ''}> Golpes de calor</label>
-          <label class="check"><input type="checkbox" name="receive_storm" ${prefs.receiveStorm ? 'checked' : ''}> Tormentas</label>
-          <label class="check"><input type="checkbox" name="receive_wind" ${prefs.receiveWind ? 'checked' : ''}> Viento</label>
-          <label class="check"><input type="checkbox" name="receive_humidity" ${prefs.receiveHumidity ? 'checked' : ''}> Humedad</label>
-          <label class="check"><input type="checkbox" name="receive_general" ${prefs.receiveGeneral ? 'checked' : ''}> Información general</label>
-        </fieldset>
-        <fieldset class="prefs-group span-all"><legend>Canales</legend>
-          <label class="check"><input type="checkbox" name="channel_whatsapp" ${prefs.channelWhatsapp ? 'checked' : ''}> WhatsApp</label>
-          <label class="check"><input type="checkbox" name="channel_email" ${prefs.channelEmail ? 'checked' : ''}> Correo</label>
-        </fieldset>
-        <label>Silencio desde<input type="time" name="quiet_start" value="${escapeText((prefs.quietStart || '').slice(0, 5))}"></label>
-        <label>Silencio hasta<input type="time" name="quiet_end" value="${escapeText((prefs.quietEnd || '').slice(0, 5))}"></label>
-        <label>Zona<input name="zone" maxlength="160" value="${escapeText(prefs.zone || '')}"></label>
-        <label>Cultivo o ganado<input name="crop" maxlength="160" value="${escapeText(prefs.crop || '')}"></label>
-        <p class="hint span-all">El horario silencioso no frena las alertas prioritarias.</p>
-        <button type="submit" class="span-all">Guardar preferencias</button>
+    ${accountGuide(me, prefs)}
+    <section id="account-step-location" data-account-step="location" class="panel account-guide-step">
+      <div class="section-heading"><div><p class="eyebrow">PASO 1 DE 4</p><h2 tabindex="-1">Dónde está mi finca</h2></div></div>
+      <p class="hint">Añade una finca y asocia la estación que mide allí. También puedes guardar una zona y cultivo habituales para contextualizar los avisos.</p>
+      <form data-location-prefs-form class="rule-form">
+        <label>Zona habitual (opcional)<input name="zone" maxlength="160" value="${escapeText(prefs.zone || '')}"></label>
+        <label>Cultivo habitual (opcional)<input name="crop" maxlength="160" value="${escapeText(prefs.crop || '')}"></label>
+        <button type="submit">Guardar zona y cultivo</button>
       </form>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">MIS FINCAS</p><h2>Fincas y estaciones</h2></div></div>
-      <p class="hint">Agrupa tus estaciones por finca para reconocer cada aviso por su nombre.</p>
+      <div class="section-heading"><div><h3>Tus fincas y estaciones</h3></div></div>
       <div class="farm-list">${farms.map((farm) => farmBlock(farm, me.stations)).join('') || '<p class="empty">Todavía no has creado ninguna finca.</p>'}</div>
       <form data-farm-form class="rule-form">
         <label>Nombre de la finca<input name="name" required minlength="2" maxlength="120"></label>
@@ -271,81 +267,137 @@ export async function renderAccount(root) {
         <button type="submit">Añadir finca</button>
       </form>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PERFIL OPCIONAL</p><h2>Para afinar tus avisos</h2></div></div>
-      <p class="hint">Rellenarlo es opcional: nos ayuda a ajustar los avisos a tu actividad y zona.</p>
-      <form data-profile-form class="rule-form">
-        <label>Municipio<input name="municipality" maxlength="120" value="${escapeText(me.profile?.municipality || '')}"></label>
-        <label>Actividad
-          <select name="activity">
-            <option value="">Selecciona…</option>
-            <option value="agricultura" ${me.profile?.activity === 'agricultura' ? 'selected' : ''}>Agricultura</option>
-            <option value="ganaderia" ${me.profile?.activity === 'ganaderia' ? 'selected' : ''}>Ganadería</option>
-            <option value="mixta" ${me.profile?.activity === 'mixta' ? 'selected' : ''}>Agricultura y ganadería</option>
-            <option value="otra" ${me.profile?.activity === 'otra' ? 'selected' : ''}>Otra</option>
-          </select>
-        </label>
-        <label>Cultivo o especie<input name="crop_or_livestock" maxlength="120" value="${escapeText(me.profile?.cropOrLivestock || '')}"></label>
-        <label>Interés principal
-          <select name="interest">
-            <option value="">Selecciona…</option>
-            <option value="heladas" ${me.profile?.interest === 'heladas' ? 'selected' : ''}>Heladas</option>
-            <option value="calor" ${me.profile?.interest === 'calor' ? 'selected' : ''}>Golpes de calor</option>
-            <option value="tormentas" ${me.profile?.interest === 'tormentas' ? 'selected' : ''}>Tormentas</option>
-            <option value="viento" ${me.profile?.interest === 'viento' ? 'selected' : ''}>Viento</option>
-            <option value="humedad" ${me.profile?.interest === 'humedad' ? 'selected' : ''}>Humedad</option>
-            <option value="general" ${me.profile?.interest === 'general' ? 'selected' : ''}>Información general</option>
-            <option value="futura_instalacion" ${me.profile?.interest === 'futura_instalacion' ? 'selected' : ''}>Futura instalación</option>
-          </select>
-        </label>
-        <button type="submit">Guardar perfil</button>
+    <section id="account-step-receive" data-account-step="receive" class="panel account-guide-step">
+      <div class="section-heading"><div><p class="eyebrow">PASO 2 DE 4</p><h2 tabindex="-1">Qué quiero recibir</h2></div></div>
+      <p class="hint">Elige los tipos de aviso que te interesan. Cada estación pública requiere además una suscripción explícita.</p>
+      <form data-prefs-form class="rule-form">
+        <fieldset class="prefs-group span-all"><legend>Tipos de aviso</legend>
+          <label class="check"><input type="checkbox" name="receive_frost" ${prefs.receiveFrost ? 'checked' : ''}> Heladas</label>
+          <label class="check"><input type="checkbox" name="receive_heat" ${prefs.receiveHeat ? 'checked' : ''}> Golpes de calor</label>
+          <label class="check"><input type="checkbox" name="receive_storm" ${prefs.receiveStorm ? 'checked' : ''}> Tormentas</label>
+          <label class="check"><input type="checkbox" name="receive_wind" ${prefs.receiveWind ? 'checked' : ''}> Viento</label>
+          <label class="check"><input type="checkbox" name="receive_humidity" ${prefs.receiveHumidity ? 'checked' : ''}> Humedad</label>
+          <label class="check"><input type="checkbox" name="receive_general" ${prefs.receiveGeneral ? 'checked' : ''}> Información general</label>
+        </fieldset>
+        <button type="submit" class="span-all">Guardar qué quiero recibir</button>
+      </form>
+      <div class="section-heading"><div><h3>Avisos públicos de estación</h3></div></div>
+      <p class="hint">Suscribirte aquí a una estación pública es independiente de tus avisos privados. Consultar sus datos no activa una suscripción.</p>
+      ${publicAlertsBlock(publicOptions, me)}
+    </section>
+    <section id="account-step-channel" data-account-step="channel" class="panel account-guide-step">
+      <div class="section-heading"><div><p class="eyebrow">PASO 3 DE 4</p><h2 tabindex="-1">Cómo quiero recibirlo</h2></div></div>
+      <p class="hint">Añade el contacto, autoriza el canal y confirma el código de verificación. Solo se envían avisos a contactos verificados y autorizados.</p>
+      ${session.support?.whatsappDelivery === 'manual'
+        ? `<p class="hint">${escapeText(WHATSAPP_MANUAL_NOTE)}</p>`
+        : ''}
+      ${CHANNELS.map((channel) => channelBlock(channel, byChannel[channel.key], availability[channel.key])).join('')}
+      ${emailReuseBlock(me, byChannel)}
+      <form data-channel-prefs-form class="rule-form">
+        <fieldset class="prefs-group span-all"><legend>Canales activos</legend>
+          <label class="check"><input type="checkbox" name="channel_whatsapp" ${prefs.channelWhatsapp ? 'checked' : ''}> WhatsApp</label>
+          <label class="check"><input type="checkbox" name="channel_email" ${prefs.channelEmail ? 'checked' : ''}> Correo</label>
+        </fieldset>
+        <label>Silencio desde<input type="time" name="quiet_start" value="${escapeText((prefs.quietStart || '').slice(0, 5))}"></label>
+        <label>Silencio hasta<input type="time" name="quiet_end" value="${escapeText((prefs.quietEnd || '').slice(0, 5))}"></label>
+        <p class="hint span-all">El horario de silencio no frena los avisos prioritarios.</p>
+        <button type="submit" class="span-all">Guardar cómo recibirlos</button>
       </form>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SUSCRIPCIÓN</p><h2>Tu cuenta</h2></div></div>
-      <dl class="detail-grid">
-        <dt>Rol</dt><dd>${escapeText(roleLabel(me.role))}</dd>
-        <dt>Plan</dt><dd>${escapeText(planLabel(me.plan))}</dd>
-        <dt>Estaciones</dt><dd>${me.stations.map((station) => escapeText(station.name)).join(', ') || 'sin estaciones vinculadas'}</dd>
-        <dt>Correo de acceso verificado</dt><dd>${me.emailVerifiedAt
-          ? `<span class="badge badge-valid">verificado ${dateText(me.emailVerifiedAt)}</span>`
-          : '<span class="badge badge-warn">pendiente</span>'}</dd>
-      </dl>
-      <p class="hint">Esta verificación es la del correo con el que entras: confirma tu acceso. Es distinta de la verificación por código de un destinatario de avisos, que se hace arriba, en cada canal.</p>
+    <section id="account-step-check" data-account-step="check" class="panel account-guide-step">
+      <div class="section-heading"><div><p class="eyebrow">PASO 4 DE 4</p><h2 tabindex="-1">Comprobar que funciona</h2></div></div>
+      <p class="hint">Aquí puedes comprobar si cada canal está listo. «Listo» significa que hay contacto verificado y autorizado, avisos seleccionados, finca vinculada y servicio disponible. Esta comprobación no envía una alerta privada de prueba.</p>
+      ${signupStepper(me, prefs)}
+      <p class="hint">Las pruebas de envío solo están disponibles en suscripciones a avisos públicos de estación.</p>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">REFERENCIA PARA EL EQUIPO</p><h2>Límites que te servirían</h2></div></div>
-      <p class="hint"><strong>Preferencia para valorar con el equipo. Todavía no modifica tus avisos.</strong> Estos valores no cambian los avisos que recibes: los límites que disparan las alertas los fija el equipo por estación y no se editan desde aquí.</p>
-      <p class="hint">Déjanos los que tú usarías: los revisamos contigo al ajustar el piloto. Rellenarlo es opcional.</p>
-      <form data-thresholds-form class="rule-form">
-        <label>A partir de qué °C te preocuparía la helada (°C)<input type="number" step="0.5" placeholder="${FROST_C}" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
-        <label>A partir de qué °C te preocuparía el calor (°C)<input type="number" step="0.5" placeholder="${HEAT_C}" name="heat_c" value="${prefs.customThresholds?.heat_c ?? ''}"></label>
-        <p class="hint span-all">En blanco = se queda el actual del equipo (${FROST_C} °C helada, ${HEAT_C} °C calor).</p>
-        <button type="submit" class="span-all">Enviar para el equipo</button>
-      </form>
-      <p class="hint" data-thresholds-ok role="status"></p>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PILOTO</p><h2>¿Quieres alertas en otra finca?</h2></div></div>
-      <p class="hint">Las solicitudes de piloto se gestionan desde la web pública. Si conoces a alguien interesado, puedes compartir la dirección de la portada.</p>
-      <p class="hint"><a class="link" href="#/">Ir a la página pública</a></p>
-    </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">PUBLICIDAD</p><h2>Novedades y ofertas (opcional)</h2></div></div>
-      <p class="hint">Usar la demo no depende de esto. Marca solo los canales por los que quieras recibir novedades y ofertas sobre microestaciones. Puedes retirarlos cuando quieras.</p>
+    <details class="technical-details account-secondary">
+      <summary>Datos y ajustes adicionales</summary>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">PERFIL OPCIONAL</p><h2>Datos para afinar tus avisos</h2></div></div>
+        <p class="hint">Rellenarlo es opcional: ayuda al equipo a entender tu actividad y zona.</p>
+        <form data-profile-form class="rule-form">
+          <label>Municipio<input name="municipality" maxlength="120" value="${escapeText(me.profile?.municipality || '')}"></label>
+          <label>Actividad
+            <select name="activity">
+              <option value="">Selecciona…</option>
+              <option value="agricultura" ${me.profile?.activity === 'agricultura' ? 'selected' : ''}>Agricultura</option>
+              <option value="ganaderia" ${me.profile?.activity === 'ganaderia' ? 'selected' : ''}>Ganadería</option>
+              <option value="mixta" ${me.profile?.activity === 'mixta' ? 'selected' : ''}>Agricultura y ganadería</option>
+              <option value="otra" ${me.profile?.activity === 'otra' ? 'selected' : ''}>Otra</option>
+            </select>
+          </label>
+          <label>Cultivo o especie<input name="crop_or_livestock" maxlength="120" value="${escapeText(me.profile?.cropOrLivestock || '')}"></label>
+          <label>Interés principal
+            <select name="interest">
+              <option value="">Selecciona…</option>
+              <option value="heladas" ${me.profile?.interest === 'heladas' ? 'selected' : ''}>Heladas</option>
+              <option value="calor" ${me.profile?.interest === 'calor' ? 'selected' : ''}>Golpes de calor</option>
+              <option value="tormentas" ${me.profile?.interest === 'tormentas' ? 'selected' : ''}>Tormentas</option>
+              <option value="viento" ${me.profile?.interest === 'viento' ? 'selected' : ''}>Viento</option>
+              <option value="humedad" ${me.profile?.interest === 'humedad' ? 'selected' : ''}>Humedad</option>
+              <option value="general" ${me.profile?.interest === 'general' ? 'selected' : ''}>Información general</option>
+              <option value="futura_instalacion" ${me.profile?.interest === 'futura_instalacion' ? 'selected' : ''}>Futura instalación</option>
+            </select>
+          </label>
+          <button type="submit">Guardar perfil</button>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">REFERENCIA PARA EL EQUIPO</p><h2>Límites que te servirían</h2></div></div>
+        <p class="hint"><strong>Estos valores son solo una referencia para el equipo: no modifican los avisos que recibes.</strong> Los límites que disparan las alertas los fija el equipo por estación.</p>
+        <p class="hint">Déjanos los que tú usarías: los revisamos contigo al ajustar el piloto. Rellenarlo es opcional.</p>
+        <form data-thresholds-form class="rule-form">
+          <label>A partir de qué °C te preocuparía la helada (°C)<input type="number" step="0.5" placeholder="${FROST_C}" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
+          <label>A partir de qué °C te preocuparía el calor (°C)<input type="number" step="0.5" placeholder="${HEAT_C}" name="heat_c" value="${prefs.customThresholds?.heat_c ?? ''}"></label>
+          <p class="hint span-all">En blanco = se queda el actual del equipo (${FROST_C} °C helada, ${HEAT_C} °C calor).</p>
+          <button type="submit" class="span-all">Enviar para el equipo</button>
+        </form>
+        <p class="hint" data-thresholds-ok role="status"></p>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">CUENTA</p><h2>Datos de suscripción</h2></div></div>
+        <dl class="detail-grid">
+          <dt>Rol</dt><dd>${escapeText(roleLabel(me.role))}</dd>
+          <dt>Plan</dt><dd>${escapeText(planLabel(me.plan))}</dd>
+          <dt>Estaciones</dt><dd>${me.stations.map((station) => escapeText(station.name)).join(', ') || 'sin estaciones vinculadas'}</dd>
+          <dt>Correo de acceso verificado</dt><dd>${me.emailVerifiedAt
+            ? `<span class="badge badge-valid">verificado ${dateText(me.emailVerifiedAt)}</span>`
+            : '<span class="badge badge-warn">pendiente</span>'}</dd>
+        </dl>
+        <p class="hint">Esta verificación es la del correo con el que entras; es distinta de la verificación por código de un destinatario de avisos.</p>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">PILOTO</p><h2>¿Quieres alertas en otra finca?</h2></div></div>
+        <p class="hint">Las solicitudes para estudiar otra instalación se gestionan desde la web pública.</p>
+        <p class="hint"><a class="link" href="#/">Ir a la página pública</a></p>
+      </section>
+    </details>
+    <details class="technical-details account-commercial">
+      <summary>Novedades y ofertas (opcional)</summary>
+      <p class="hint">Este consentimiento es comercial; no cambia los avisos meteorológicos. Puedes retirarlo cuando quieras.</p>
       <div class="consent-grid">
         ${CHANNELS.map((channel) => {
           const granted = Boolean(me.consents?.commercial?.[channel.key]?.granted);
           const available = channel.key === 'email' || Boolean(byChannel.whatsapp);
           return `<label class="check"><input type="checkbox" data-commercial="${channel.key}"
-            ${granted ? 'checked' : ''} ${available ? '' : 'disabled'}> ${channel.label}${available ? '' : ' (añade el canal en Canales de aviso)'}</label>`;
+            ${granted ? 'checked' : ''} ${available ? '' : 'disabled'}> ${channel.label}${available ? '' : ' (añade el canal en «Cómo quiero recibirlo»)'} </label>`;
         }).join('')}
       </div>
       <p class="hint">Texto informativo vigente: <strong>${escapeText(me.consentTextVersion || '')}</strong>. Al revocar, se cancelan los envíos comerciales pendientes.</p>
-    </section>`;
+    </details>`;
 
   const error = (message) => { $('[data-error]', root).textContent = message; };
   const refresh = async () => { session.me = await api('/api/v1/me'); await renderAccount(root); };
+
+  root.querySelectorAll('[data-account-jump]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const step = root.querySelector(`#account-step-${button.dataset.accountJump}`);
+      const heading = step?.querySelector('h2');
+      if (!heading) return;
+      heading.scrollIntoView({ block: 'start' });
+      heading.focus({ preventScroll: true });
+    });
+  });
 
   // Sondeo del estado real del código tras pedirlo: muestra preparando/enviado/
   // entregado/fallido/caducado/verificado y habilita el reenvío cuando toca.
@@ -532,15 +584,42 @@ export async function renderAccount(root) {
       receive_frost: bool('receive_frost'), receive_heat: bool('receive_heat'),
       receive_storm: bool('receive_storm'), receive_wind: bool('receive_wind'),
       receive_humidity: bool('receive_humidity'), receive_general: bool('receive_general'),
-      channel_whatsapp: bool('channel_whatsapp'), channel_email: bool('channel_email'),
-      quiet_start: data.get('quiet_start') || null, quiet_end: data.get('quiet_end') || null,
-      zone: data.get('zone') || null, crop: data.get('crop') || null,
     };
     try {
       await api('/api/v1/alert-preferences', { method: 'PUT', body: JSON.stringify(body) });
       await renderAccount(root);
     } catch (err) {
       error(`No se pudieron guardar las preferencias: ${err.message}`);
+    }
+  });
+
+  $('[data-channel-prefs-form]', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    error('');
+    const bool = (name) => data.get(name) === 'on';
+    try {
+      await api('/api/v1/alert-preferences', { method: 'PUT', body: JSON.stringify({
+        channel_whatsapp: bool('channel_whatsapp'), channel_email: bool('channel_email'),
+        quiet_start: data.get('quiet_start') || null, quiet_end: data.get('quiet_end') || null,
+      }) });
+      await renderAccount(root);
+    } catch (err) {
+      error(`No se pudo guardar cómo recibir los avisos: ${err.message}`);
+    }
+  });
+
+  $('[data-location-prefs-form]', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    error('');
+    try {
+      await api('/api/v1/alert-preferences', { method: 'PUT', body: JSON.stringify({
+        zone: data.get('zone') || null, crop: data.get('crop') || null,
+      }) });
+      await renderAccount(root);
+    } catch (err) {
+      error(`No se pudo guardar la zona de referencia: ${err.message}`);
     }
   });
 

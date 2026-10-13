@@ -7,7 +7,7 @@ import { mountWaSignup } from './wa-alerts-signup.js';
 
 export const PUBLIC_SECTIONS = new Set([
   'tiempo-local', 'vias', 'comparacion-aemet', 'evolucion', 'fincas', 'demo-agricola', 'herramientas',
-  'preguntas', 'solicitar-piloto', 'acceso-gratuito', 'zonas', 'alertas', 'como-funciona', 'microclimas',
+  'preguntas', 'contacto-publico', 'solicitar-piloto', 'acceso-gratuito', 'zonas', 'alertas', 'como-funciona', 'microclimas',
   'avisos-whatsapp',
 ]);
 export const PRIVATE_SECTIONS = new Set(['panel', 'estaciones', 'avisos', 'admin', 'cuenta']);
@@ -75,7 +75,7 @@ export function renderLocalWeatherCard(station) {
   const point = station.zone || station.name || 'punto urbano';
   const stale = !tempFresh || !humidityFresh;
   return `<article class="public-data-card public-now-card${stale ? ' is-stale' : ''}">
-    <div class="public-now-heading"><div><p class="eyebrow">PUNTO DE MEDIDA · CASCO URBANO</p><h3>${escapeText(point)}</h3><p>${escapeText(station.name || '')} · un punto concreto, no toda la ciudad</p></div>
+    <div class="public-now-heading"><div><p class="eyebrow">PUNTO DE MEDIDA · CASCO URBANO</p><p class="public-location">${escapeText(point)}</p><p>${escapeText(station.name || '')} · un punto concreto, no toda la ciudad</p></div>
       <span class="badge ${station.connectivity === 'offline' ? 'badge-invalid' : stale ? 'badge-warn' : 'badge-valid'}">${station.connectivity === 'offline' ? 'Sin conexión' : stale ? 'Lectura no reciente' : 'Datos recientes'}</span></div>
     <div class="public-now-readings">
       <div><span>Temperatura</span><strong>${station.temperatureC != null ? `${numberText(station.temperatureC, 1)} °C` : 'Sin lectura registrada'}</strong><small>${tempFresh ? `Medido ${sinceText(station.temperatureObservedAt) || dateText(station.temperatureObservedAt)}` : `Última medición ${dateText(station.temperatureObservedAt)}`}</small></div>

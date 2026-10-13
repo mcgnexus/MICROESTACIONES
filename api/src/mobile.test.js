@@ -61,7 +61,7 @@ test('los umbrales propios no se presentan como si activaran avisos', async () =
   );
   assert.match(thresholds, /name="frost_c"/);
   assert.match(thresholds, /name="heat_c"/);
-  const declared = account.indexOf('no cambian los avisos que recibes');
+  const declared = account.indexOf('no modifican los avisos que recibes');
   assert.ok(declared > -1, 'falta la declaración de que no cambian los avisos');
   assert.ok(declared < account.indexOf('name="frost_c"'), 'la declaración va después del campo');
   // Y no se ofrece un "Guardar" que sugiera un ajuste activo.
@@ -117,18 +117,33 @@ test('el tamaño móvil de los enlaces no lo anula la escala tipográfica global
   assert.equal(mobile[1], '13');
 });
 
-test('en móvil la navegación pública se queda en una fila sin esconder el acceso', async () => {
-  const [html, css] = await Promise.all([readView('index.html'), read('app.css')]);
-  // Solo caben la CTA y el acceso: los enlaces medios del embudo se saltan.
+test('en móvil los enlaces secundarios de navegación quedan disponibles en Más', async () => {
+  const [html, css, landing, app] = await Promise.all([
+    readView('index.html'), read('app.css'), read('js/landing.js'), read('app.js'),
+  ]);
   const publicNav = html.slice(html.indexOf('<nav id="public-nav"'), html.indexOf('</nav>', html.indexOf('<nav id="public-nav"')));
   assert.match(publicNav, /<a href="#\/tiempo-local">/);
   assert.match(publicNav, /<a class="nav-access" href="#\/solicitar-piloto">/);
   assert.match(publicNav, /<a href="#\/entrar">/);
   assert.equal((publicNav.match(/class="nav-optional"/g) || []).length, 2);
-  // Y la regla móvil existe en el mismo bloque que plega la barra.
+  const menu = publicNav.slice(publicNav.indexOf('<details class="nav-more">'));
+  assert.match(menu, /<summary>Más<\/summary>/);
+  for (const [href, label] of [
+    ['#/vias', 'Cómo empezar'], ['#/fincas', 'Medir en finca'],
+    ['#/preguntas', 'Preguntas frecuentes'], ['#/contacto-publico', 'Contacto'],
+  ]) assert.match(menu, new RegExp(`href="${href.replace('#', '#')}"[^>]*>${label}<`));
+
+  // El disclosure se muestra en móvil y los accesos siguen siendo internos.
   const mobileNav = css.split('@media(max-width:760px){')
     .find((part) => part.includes('.topnav{order:3'));
   assert.match(mobileNav, /#public-nav \.nav-optional\{display:none\}/);
+  assert.match(mobileNav, /#public-nav \.nav-more\{display:block/);
+  assert.match(mobileNav, /#public-nav \.nav-access\{max-width:100%;white-space:normal/);
+  assert.match(css, /\.topnav \.nav-more\{display:none/);
+  assert.match(css, /width:min\(240px,calc\(100vw - 24px\)\)/);
+  assert.match(landing, /'contacto-publico'/, 'Contacto debe estar registrado como sección pública');
+  assert.match(app, /event\.target\.closest\?\.\('#public-nav \.nav-more-menu a'\)/);
+  assert.match(app, /menu\.open = false/);
 });
 
 test('el aviso de instalación iOS vive en el contenido y su cierre se persiste', async () => {
