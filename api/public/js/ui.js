@@ -259,12 +259,67 @@ export function sampleChartRows(rows, key, limit = 300) {
 }
 
 const TREND_METRICS = {
-  temperatureC: { icon: 'temperature', up: 'calentamiento', down: 'enfriamiento', unit: '°C' },
-  humidityPct: { icon: 'humidity', up: 'aumenta la humedad relativa', down: 'disminuye la humedad relativa', unit: '%' },
-  pressurePa: { icon: 'pressure', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'milibares' },
-  pressureMbar: { icon: 'pressure', up: 'presión atmosférica al alza', down: 'presión atmosférica a la baja', unit: 'milibares' },
-  batteryMv: { icon: 'battery', up: 'subida de tensión', down: 'descenso de tensión', unit: 'mV' },
+  temperatureC: { icon: 'temperature', subject: 'La temperatura', unit: '°C', changeUnit: '°C', up: 'subido', down: 'bajado', estimateUp: 'subida', estimateDown: 'bajada' },
+  humidityPct: { icon: 'humidity', subject: 'La humedad', unit: '%', changeUnit: 'puntos', up: 'subido', down: 'bajado', estimateUp: 'subida', estimateDown: 'bajada' },
+  pressurePa: { icon: 'pressure', subject: 'La presión atmosférica', unit: 'milibares', changeUnit: 'milibares', up: 'subido', down: 'bajado', estimateUp: 'subida', estimateDown: 'bajada' },
+  pressureMbar: { icon: 'pressure', subject: 'La presión atmosférica', unit: 'milibares', changeUnit: 'milibares', up: 'subido', down: 'bajado', estimateUp: 'subida', estimateDown: 'bajada' },
+  batteryMv: { icon: 'battery', subject: 'La tensión de la batería', unit: 'mV', changeUnit: 'mV', up: 'subido', down: 'bajado', estimateUp: 'subida', estimateDown: 'bajada' },
+  lux: { icon: 'chart', subject: 'La luz ambiental', unit: 'lux', changeUnit: 'lux', up: 'subido', down: 'bajado', estimateUp: 'subida', estimateDown: 'bajada' },
 };
+const TREND_METRIC_KEYS = {
+  temperature_c: 'temperatureC', humidity_pct: 'humidityPct', pressure_pa: 'pressurePa',
+  battery_mv: 'batteryMv', illuminance: 'lux',
+};
+
+export function trendPeriodForHours(hours) {
+  const value = Number(hours);
+  if (value >= 24 * 29) return 'Últimos 30 días';
+  if (value >= 24 * 6) return 'Últimos 7 días';
+  if (value >= 23) return 'Últimas 24 horas';
+  if (value > 1) return `Últimas ${Math.round(value)} horas`;
+  return 'periodo seleccionado';
+}
+
+function trendPeriodPhrase(label) {
+  const period = String(label || '').trim();
+  const lower = period.toLocaleLowerCase('es-ES');
+  if (lower === 'última hora') return 'durante la última hora';
+  if (lower === 'hoy') return 'hoy';
+  if (lower === 'últimas 3 h') return 'en las últimas 3 horas';
+  if (lower === 'últimas 24 horas') return 'en las últimas 24 horas';
+  if (lower === 'últimos 7 días') return 'en los últimos 7 días';
+  if (lower === 'últimos 30 días') return 'en los últimos 30 días';
+  const readings = period.match(/^Últimas (\d+) lecturas$/i);
+  if (readings) return `entre las últimas ${readings[1]} lecturas`;
+  const hours = period.match(/^Últimas (\d+) horas$/i);
+  if (hours) return `en las últimas ${hours[1]} horas`;
+  if (lower === 'periodo seleccionado') return 'en el periodo seleccionado';
+  return period ? `en ${lower}` : 'en el periodo seleccionado';
+}
+
+export function trendSentence(metricKey, direction, change, periodLabel, digits = 1, { estimated = false } = {}) {
+  const key = TREND_METRIC_KEYS[metricKey] || metricKey;
+  const metric = TREND_METRICS[key] || {
+    subject: 'La medida', changeUnit: 'unidades', up: 'subido', down: 'bajado',
+    estimateUp: 'subida', estimateDown: 'bajada',
+  };
+  const period = trendPeriodPhrase(periodLabel);
+  if (direction === 'estable') {
+    return estimated
+      ? `La tendencia estima que ${metric.subject.toLocaleLowerCase('es-ES')} ha variado muy poco ${period}.`
+      : `${metric.subject} apenas ha cambiado ${period}.`;
+  }
+  if (direction !== 'sube' && direction !== 'baja' || change == null || !Number.isFinite(Number(change))) {
+    return `Aún no hay suficientes lecturas para saber cómo cambia ${metric.subject.toLocaleLowerCase('es-ES')}.`;
+  }
+  const amount = `${numberText(Math.abs(Number(change)), digits)} ${metric.changeUnit}`;
+  if (estimated) {
+    const noun = direction === 'sube' ? metric.estimateUp : metric.estimateDown;
+    return `${metric.subject} muestra una ${noun} estimada de ${amount} ${period}.`;
+  }
+  const participle = direction === 'sube' ? metric.up : metric.down;
+  return `${metric.subject} ha ${participle} ${amount} ${period}.`;
+}
 
 // La magnitud es el cambio observado entre la primera y la última lectura de la
 // serie, no el recorrido de una recta ajustada: el usuario compara los mismos
@@ -458,35 +513,24 @@ export function shortDate(value) {
   return `${two(date.getDate())}/${two(date.getMonth() + 1)} ${two(date.getHours())}:${two(date.getMinutes())}`;
 }
 
-function trendExplanation(direction, metric, period) {
-  const scope = period.label.toLowerCase();
-  if (direction === 'sube') return metric.up;
-  if (direction === 'baja') return metric.down;
-  if (direction === 'estable') return `variación pequeña · ${scope}`;
-  return `se necesitan 3 lecturas en ${scope}`;
-}
-
 function trendBadgeBlock(period, key, digits, variant) {
   const metric = TREND_METRICS[key];
   const trend = chartTrend(period.rows, key);
   const { direction, change } = trend;
-  const explanation = trendExplanation(direction, metric, period);
-  const amount = change == null ? '' : ` · ${numberText(Math.abs(change), digits)} ${metric.unit}`;
+  const sentence = trendSentence(key, direction, change, period.label, digits);
   // El bloque diario añade los extremos del día: junto a la tendencia reciente,
   // es lo que responde a «¿qué mínimo y qué máximo ha habido hoy?».
   const dayValues = variant === 'daily'
     ? period.rows.map((row) => Number(row[key])).filter(Number.isFinite)
     : [];
   const dayRange = dayValues.length
-    ? ` · mín ${numberText(Math.min(...dayValues), digits)} / máx ${numberText(Math.max(...dayValues), digits)} ${metric.unit}`
+    ? ` Mínima: ${numberText(Math.min(...dayValues), digits)} ${metric.unit} · máxima: ${numberText(Math.max(...dayValues), digits)} ${metric.unit}.`
     : '';
   const window = `${clockText(period.startAt)}–${clockText(period.endAt)}`;
-  const method = 'Diferencia entre la primera y la última lectura del periodo';
   const accessible = trend.samples < 3
-    ? `${period.label}: ${explanation}${dayRange}`
-    : `${period.label}: ${explanation}${amount}${dayRange}. De ${window}, ${trend.samples} lecturas. `
-      + `${numberText(trend.from, digits)} → ${numberText(trend.to, digits)} ${metric.unit}. ${method}.`;
-  return `<div class="chart-trend-item chart-trend-${variant}"><span class="chart-trend-label">${escapeText(period.label)}</span><span class="chart-trend trend-${direction}" title="${escapeText(accessible)}" aria-label="${escapeText(accessible)}"><strong aria-hidden="true">${trendIcon(direction)}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(explanation)}${escapeText(amount)}${escapeText(dayRange)}</small></div>`;
+    ? `${sentence}${dayRange}`
+    : `${sentence}${dayRange} Lecturas de ${window}: ${trend.samples}; de ${numberText(trend.from, digits)} a ${numberText(trend.to, digits)} ${metric.unit}. Diferencia observada entre la primera y la última lectura.`;
+  return `<div class="chart-trend-item chart-trend-${variant}"><span class="chart-trend-label">${escapeText(period.label)}</span><span class="chart-trend trend-${direction}" role="img" title="${escapeText(accessible)}" aria-label="${escapeText(accessible)}"><strong aria-hidden="true">${trendIcon(direction)}</strong> ${escapeText(direction === 'insuficiente' ? 'Sin tendencia' : direction)}</span><small class="chart-trend-note">${escapeText(sentence)}${escapeText(dayRange)}</small></div>`;
 }
 
 // Un bloque por periodo, con su etiqueta y su cifra. Si el resumen diario y la

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, chartScale, pressureMbar, pressureText, shortDate, trendWindows, trendWindowRows, trendPeriodLabel, validationBadge, verificationBadge } from '../public/js/ui.js';
+import { sampleChartRows, chartTrend, chartYDomain, chartGapThreshold, makeChart, metric, chartSection, chartScale, pressureMbar, pressureText, shortDate, trendWindows, trendWindowRows, trendPeriodLabel, trendSentence, trendPeriodForHours, validationBadge, verificationBadge } from '../public/js/ui.js';
 import { renderStationCard } from '../public/js/panel.js';
 
 test('an accepted reading is labelled as automatic-control accepted, not certified', () => {
@@ -126,6 +126,28 @@ test('trend magnitude is the observed difference, not the fitted line', () => {
   assert.ok(Math.abs(v.change - (15 - 20)) < 1e-9, `change ${v.change}`);
 });
 
+test('natural trend sentences name the metric, observed change, and true period', () => {
+  assert.equal(trendSentence('temperatureC', 'baja', -1.2, 'Última hora', 1),
+    'La temperatura ha bajado 1,2 °C durante la última hora.');
+  assert.equal(trendSentence('humidity_pct', 'sube', 3, 'Últimas 3 h', 0),
+    'La humedad ha subido 3 puntos en las últimas 3 horas.');
+  assert.equal(trendSentence('temperatureC', 'estable', 0.1, 'Hoy', 1),
+    'La temperatura apenas ha cambiado hoy.');
+  assert.equal(trendSentence('temperatureC', 'insuficiente', null, 'Últimas 3 lecturas', 1),
+    'Aún no hay suficientes lecturas para saber cómo cambia la temperatura.');
+  assert.equal(trendPeriodForHours(24 * 7), 'Últimos 7 días');
+});
+
+test('statistical trend copy marks total regression change as an estimate', async () => {
+  const { statisticsTrendSentence } = await import('../public/js/statistics.js');
+  assert.equal(statisticsTrendSentence('temperature_c', { direction: 'baja', totalChange: -1.2 }, 'Últimos 7 días', 1),
+    'La temperatura muestra una bajada estimada de 1,2 °C en los últimos 7 días.');
+  assert.equal(statisticsTrendSentence('temperature_c', { direction: 'insuficiente' }, 'Últimos 7 días', 1),
+    'Aún no hay suficientes lecturas para saber cómo cambia la temperatura.');
+  assert.equal(trendSentence('temperatureC', 'estable', 0, 'Últimos 7 días', 1, { estimated: true }),
+    'La tendencia estima que la temperatura ha variado muy poco en los últimos 7 días.');
+});
+
 test('trend windows separate the recent hour from the day and relabel each fallback', () => {
   const now = new Date('2026-05-20T18:00:00');
   const row = (iso, value) => ({ observedAt: iso, temperatureC: value });
@@ -214,7 +236,7 @@ test('metrics include an icon and graphs explain temperature trend with an arrow
   const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C');
   assert.match(chart, /chart-trend trend-sube/);
   assert.match(chart, /↑/);
-  assert.match(chart, /calentamiento/);
+  assert.match(chart, /La temperatura ha subido 2 °C durante la última hora\./);
   // La caja de referencia es de 560 px de ancho y su alto sale de chartScale.
   assert.match(chart, new RegExp(`viewBox="0 0 560 ${chartScale(560).height}"`));
   assert.match(chart, /chart-area/);
@@ -240,12 +262,13 @@ test('chart shows a falling recent hour instead of a day-long rise', () => {
   assert.match(chart, /↓/);
   assert.match(chart, /Última hora/);
   assert.match(chart, /Hoy/);
-  // 13,7 tras 14,3 en la última hora: la cifra visible es la diferencia observada.
+  // 13,7 tras 14,3 en la última hora: la frase describe la diferencia observada.
+  assert.match(chart, /La temperatura ha bajado 0,6 °C durante la última hora\./);
   assert.match(chart, /0,6 °C/);
   assert.doesNotMatch(chart, /12,3 °C/);
   assert.doesNotMatch(chart, /en el día/);
   // Cada bloque declara su periodo y su método.
-  assert.match(chart, /Diferencia entre la primera y la última lectura del periodo/);
+  assert.match(chart, /Diferencia observada entre la primera y la última lectura/);
 });
 
 test('el resumen diario añade los extremos del día a la tendencia', () => {
@@ -261,7 +284,7 @@ test('el resumen diario añade los extremos del día a la tendencia', () => {
   ].map(([time, temperatureC]) => ({ observedAt: new Date(time).toISOString(), temperatureC }));
   const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1, null, null, rows, now);
   // El bloque "Hoy" declara el mínimo y el máximo del día, no solo la diferencia.
-  assert.match(chart, /mín 12 \/ máx 14,5 °C/);
+  assert.match(chart, /Mínima: 12 °C · máxima: 14,5 °C/);
 });
 
 test('trend block collapses to one when the recent hour is also the whole day', () => {

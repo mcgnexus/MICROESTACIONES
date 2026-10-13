@@ -4,21 +4,21 @@
 // consulta, así que quien entra al panel de administración o del agricultor no
 // descarga este código. Aquí vive solo lo que dibuja el análisis; los textos de
 // la portada del panel y el armazón siguen en panel.js.
-import { escapeText, numberText, pressureMbar } from './ui.js';
+import { escapeText, numberText, pressureMbar, trendSentence, trendPeriodForHours } from './ui.js';
 import { stampText, panelDocumentation } from './panel-shared.js';
 
-function demoMetricCard(metric, unit, digits) {
+export function demoMetricCard(metric, unit, digits, metricKey, periodLabel) {
   if (!metric || !metric.count) {
     return `<div class="stat-card"><p class="eyebrow">${escapeText(metric?.label || '')} <small>${escapeText(unit)}</small></p><p class="empty">Sin datos en el periodo.</p></div>`;
   }
-  const trend = metric.trend?.direction || 'insuficiente';
-  const slope = metric.trend?.slopePerHour != null ? ` · ${numberText(metric.trend.slopePerHour, 3)} ${unit}/h` : '';
+  const trend = metric.trend || { direction: 'insuficiente', totalChange: null };
+  const sentence = trendSentence(metricKey, trend.direction, trend.totalChange, periodLabel, digits, { estimated: true });
   return `<div class="stat-card">
     <p class="eyebrow">${escapeText(metric.label)} <small>${escapeText(unit)}</small></p>
     <div class="stat-row"><span>Mín</span><strong>${numberText(metric.min, digits)}</strong><span>${escapeText(stampText(metric.minAt))}</span></div>
     <div class="stat-row"><span>Máx</span><strong>${numberText(metric.max, digits)}</strong><span>${escapeText(stampText(metric.maxAt))}</span></div>
     <div class="stat-row"><span>Media</span><strong>${numberText(metric.avg, digits)}</strong><span>${metric.count} muestras</span></div>
-    <p class="${trend === 'insuficiente' ? 'hint' : 'coverage'}">Tendencia ${escapeText(trend)}${slope}</p>
+    <p class="${trend.direction === 'insuficiente' ? 'hint' : 'coverage'}">${trend.direction === 'sube' ? '↑ ' : trend.direction === 'baja' ? '↓ ' : trend.direction === 'estable' ? '→ ' : ''}${escapeText(sentence)}</p>
   </div>`;
 }
 
@@ -39,11 +39,12 @@ function demoDailyTable(daily, unit, digits) {
 // distintos en la pantalla: el resumen del periodo acompaña a la evolución, y
 // todo lo que documenta cómo se ha calculado se pliega en Detalles.
 export function renderDemoOverview(data) {
+  const periodLabel = trendPeriodForHours(data.hours);
   return `
     <div class="stat-grid">
-      ${demoMetricCard(data.metrics.temperature_c, '°C', 1)}
-      ${demoMetricCard(data.metrics.humidity_pct, '%', 1)}
-      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour) } : null }, 'milibares', 1)}
+      ${demoMetricCard(data.metrics.temperature_c, '°C', 1, 'temperature_c', periodLabel)}
+      ${demoMetricCard(data.metrics.humidity_pct, '%', 1, 'humidity_pct', periodLabel)}
+      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour), totalChange: pressureMbar(data.metrics.pressure_pa.trend.totalChange) } : null }, 'milibares', 1, 'pressure_pa', periodLabel)}
     </div>
     <p class="${data.period.complete ? 'hint' : 'warn-box'}">${escapeText(data.period.note)}</p>`;
 }

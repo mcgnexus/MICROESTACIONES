@@ -151,10 +151,11 @@ test('la explicación de tendencia conserva su cifra junto a la etiqueta', () =>
   }));
   const chart = makeChart('Temperatura', rows, 'temperatureC', '#d47749', '°C', 1,
     null, null, rows, now, { width: 320 });
-  assert.match(chart, /chart-trend-note">calentamiento/);
+  assert.match(chart, /chart-trend-note">La temperatura ha subido 2 °C durante la última hora\./);
   assert.match(chart, /Última hora/);
-  // Y la cifra del periodo va con su texto, no solo en la flecha.
-  assert.match(chart, /calentamiento · 2 °C/);
+  assert.match(chart, /Diferencia observada entre la primera y la última lectura/);
+  assert.match(css, /\.chart-trend-item\{[^}]*flex-wrap:wrap/);
+  assert.match(css, /\.chart-trend-note\{[^}]*overflow-wrap:anywhere/);
 });
 
 test('la tarjeta de estado usa el mismo conjunto que el resto', () => {

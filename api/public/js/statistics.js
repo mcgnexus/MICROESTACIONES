@@ -1,10 +1,13 @@
-import { $, api, escapeText, dateText, numberText, pressureMbar, canEdit, METRIC_ICONS, verificationBadge } from './ui.js';
+import { $, api, escapeText, dateText, numberText, pressureMbar, canEdit, METRIC_ICONS, verificationBadge, trendSentence, trendPeriodForHours } from './ui.js';
 import { makeChart } from './ui.js';
 import { icon } from './icons.js';
 
-const TREND_LABELS = { sube: 'sube', baja: 'baja', estable: 'estable', insuficiente: 'sin datos suficientes' };
-
 const TREND_COLORS = { sube: '#a13333', baja: '#4286a8', estable: '#5d6f62', insuficiente: '#8a938c' };
+
+export function statisticsTrendSentence(metricKey, trend, periodLabel, digits = 1) {
+  return trendSentence(metricKey, trend?.direction || 'insuficiente', trend?.totalChange,
+    periodLabel, digits, { estimated: true });
+}
 
 // Informe estadístico del periodo. Solo se usan mediciones aceptadas por los
 // controles automáticos, y se citan siempre el periodo y la estación usados
@@ -33,7 +36,8 @@ export async function renderStatisticsTab(content, stationId, station) {
     } : sourceMetric;
     // Sin muestras aceptadas el servidor devuelve trend: null: la tarjeta
     // muestra «sin datos suficientes» en lugar de tumbar la pestaña.
-    const trend = metric.trend || { direction: 'insuficiente', slopePerHour: null };
+    const trend = metric.trend || { direction: 'insuficiente', totalChange: null };
+    const sentence = statisticsTrendSentence(key, trend, trendPeriodForHours(data.hours), metric.digits ?? 1);
     return `
     <div class="stat-card">
       <p class="eyebrow">${METRIC_ICONS[metric.label] ? `<span class="metric-icon">${icon(METRIC_ICONS[metric.label], { size: 18 })}</span>` : ''}${escapeText(metric.label)} <small>${escapeText(metric.unit)}</small></p>
@@ -48,9 +52,8 @@ export async function renderStatisticsTab(content, stationId, station) {
         <span>Muestras</span><strong>${metric.count}</strong>
       </div>
       <p class="trend trend-${escapeText(trend.direction)}" style="--trend-color:${TREND_COLORS[trend.direction] || TREND_COLORS.insuficiente}">
-        ${trend.direction === 'sube' ? '↑ ' : trend.direction === 'baja' ? '↓ ' : trend.direction === 'estable' ? '→ ' : '· '}
-        Tendencia ${escapeText(TREND_LABELS[trend.direction] || trend.direction)}
-        ${trend.slopePerHour != null ? ` · ${numberText(trend.slopePerHour, 3)} ${escapeText(metric.unit)}/h` : ''}
+        <span aria-hidden="true">${trend.direction === 'sube' ? '↑' : trend.direction === 'baja' ? '↓' : trend.direction === 'estable' ? '→' : '·'}</span>
+        ${escapeText(sentence)}
       </p>
     </div>`;
   }).join('');
