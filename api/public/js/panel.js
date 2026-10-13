@@ -5,7 +5,7 @@ import {
 } from './ui.js';
 import { mountMeasurements } from './measurements.js';
 import { summarizeFarms, renderFarmOverview } from './farm-overview.js';
-import { renderStateCards, nextRisk, renderNextRisk, renderZoneComparison, resourceNote } from './farm-cards.js';
+import { nextRisk, renderNextRisk, renderZoneComparison, resourceNote } from './farm-cards.js';
 import { coverageCaveat, caveatBlock } from './alert-copy.js';
 import { originBadge, originLegend } from './origin-labels.js';
 import { stampText, panelDocumentation } from './panel-shared.js';
@@ -25,13 +25,13 @@ let alertsBaselineDone = false;
 // Cabecera del panel: nombre y tipo de cada estación más el rol efectivo. El
 // detalle técnico queda en las tarjetas; aquí solo se sitúa quién eres y qué
 // estaciones ves, que es lo primero que pide la organización de lectura.
-function setPanelContext(root, devices = []) {
+function setPanelContext(root, devices = [], { includeStations = true } = {}) {
   const target = $('[data-panel-context]', root);
   if (!target) return;
-  const stations = devices.map((item) => {
+  const stations = includeStations ? devices.map((item) => {
     const type = item?.device?.locationType ? ` · ${locationLabel(item.device.locationType)}` : '';
     return `${item?.device?.name || '—'}${type}`;
-  });
+  }) : [];
   const role = session.me?.role ? roleLabel(session.me.role) : null;
   const access = canEdit() ? 'Acceso de edición' : 'Solo lectura';
   target.textContent = [role, ...stations, access].filter(Boolean).join(' · ');
@@ -352,6 +352,58 @@ export function primaryReading(devices) {
     item.status?.dataFreshness === 'fresh' && item.latest?.temperatureC != null)
     .sort((a, b) => new Date(b.latest.observedAt || 0) - new Date(a.latest.observedAt || 0));
   return candidates[0] || devices?.[0] || null;
+}
+
+export function renderUserSummary(item, alerts = [], caveat = null, { engineOk = true, now = new Date() } = {}) {
+  const latest = item?.latest?.isValidated === false ? item.history?.at(-1) : item?.latest;
+  const stationName = item?.device?.name || 'Estación';
+  const age = latest?.observedAt ? freshness(latest.observedAt, now) : 'Sin lecturas disponibles';
+  const temperature = latest?.temperatureC == null ? 'Sin dato' : `${numberText(latest.temperatureC)} °C`;
+  const humidity = item?.device?.sensors?.humidity === false
+    ? 'No se mide' : latest?.humidityPct == null ? 'Sin dato' : `${numberText(latest.humidityPct, 0)} %`;
+  const trendRows = item?.trendHistory?.length ? item.trendHistory : item?.history || [];
+  const { recent } = trendWindows(trendRows, now);
+  const direction = chartTrend(recent?.rows || [], 'temperatureC').direction;
+  const trendLabel = { sube: 'Sube', baja: 'Baja', estable: 'Estable' }[direction] || 'Sin tendencia todavía';
+  const trendDescription = direction === 'insuficiente'
+    ? 'Aún no hay datos suficientes para ver cómo cambia.'
+    : `Temperatura de ${stationName}, según las últimas lecturas disponibles.`;
+  const openAlerts = alerts.filter((alert) => !(alert.closedAt ?? alert.closed_at));
+  const pendingDelivery = openAlerts.some((alert) => (alert.deliveryStatus ?? alert.delivery_status) === 'pending');
+
+  let alertContent;
+  if (openAlerts.length) {
+    const count = openAlerts.length;
+    alertContent = `<strong class="quick-summary-value">Activo</strong>
+      <p>${count} aviso${count === 1 ? '' : 's'} abierto${count === 1 ? '' : 's'}.</p>
+      ${pendingDelivery ? '<p class="quick-summary-note">Envío pendiente.</p>' : ''}
+      ${!engineOk ? '<p class="quick-summary-note">No se pueden comprobar todos los avisos.</p>' : ''}`;
+  } else if (!engineOk || caveat || !latest?.observedAt) {
+    const reason = !engineOk ? 'El sistema de avisos no está comprobado.' : 'Faltan datos recientes para confirmar que no haya riesgo.';
+    alertContent = `<strong class="quick-summary-value">No se pudo comprobar</strong><p>${escapeText(reason)}</p>`;
+  } else {
+    alertContent = '<strong class="quick-summary-value">Ninguno</strong><p>No hay avisos activos.</p>';
+  }
+
+  return `<div class="quick-summary-grid" aria-label="Resumen de la finca">
+    <section class="quick-summary-card" data-summary-block="now">
+      <h2>Ahora</h2>
+      <p class="quick-summary-value">${escapeText(temperature)}</p>
+      <p>Humedad: <strong>${escapeText(humidity)}</strong></p>
+      <p class="quick-summary-note">${latest?.observedAt ? `Último dato · ${age}` : escapeText(age)}</p>
+      <p class="quick-summary-station">${escapeText(stationName)}</p>
+    </section>
+    <section class="quick-summary-card" data-summary-block="trend">
+      <h2>Tendencia</h2>
+      <p class="quick-summary-value">${escapeText(trendLabel)}</p>
+      <p>${escapeText(trendDescription)}</p>
+    </section>
+    <section class="quick-summary-card" data-summary-block="alerts" data-alert-state="${openAlerts.length ? 'active' : !engineOk || caveat || !latest?.observedAt ? 'unknown' : 'none'}" data-delivery-pending="${pendingDelivery}">
+      <h2>Avisos</h2>
+      ${alertContent}
+      <a class="link" href="#/avisos">Ver avisos</a>
+    </section>
+  </div>`;
 }
 
 // Tarjeta grande de temperatura como primer bloque visible del panel.
@@ -691,48 +743,36 @@ function createRefreshState(root) {
   };
 }
 
-// Panel sencillo para el agricultor: estado, alertas, próximo riesgo, evolución
-// y, al final, el detalle técnico. El administrador usa el completo.
+// Panel para personas usuarias: tres respuestas sencillas primero; el resto se
+// conserva dentro del detalle ampliable. El administrador usa el panel completo.
 async function renderSimplePanel(root) {
   root.innerHTML = `
     <div class="page-heading">
       <div><p class="eyebrow">TU FINCA</p><h1>Resumen de un vistazo</h1><p class="hint panel-context" data-panel-context></p></div>
       <div class="row-actions">
         <button type="button" class="quiet hidden" data-notify-enable title="Recibir alertas emergentes del navegador">${icon('alerts', { size: 15 })} Alertas emergentes</button>
-        <label class="period-label">Periodo del histórico
-          <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
-        </label>
         ${refreshControls()}
       </div>
     </div>
     <p class="error" data-error role="alert"></p>
-    <div id="simple-hero" class="hero-first-slot"></div>
-    <section class="panel" data-panel-section="estado">
-      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Ahora mismo</h2></div></div>
-      <div id="simple-state"></div>
-    </section>
-    <section class="panel" data-panel-section="avisos">
-      <div class="section-heading"><div><p class="eyebrow">ALERTAS ACTIVAS</p><h2>Lo que requiere tu atención</h2></div>
-        <a class="link" href="#/avisos">Centro de avisos</a></div>
-      <div id="simple-alerts" class="plain-alerts"></div>
-      ${originLegend([
-        { kind: 'medido', text: 'La regla se cruzó sobre una medida real de tu estación.' },
-        { kind: 'forecast', provider: 'aemet', text: 'Riesgo o aviso oficial externo. Aún no ha ocurrido.' },
-        { kind: 'status', text: 'Estado del equipo o del canal, observado. No es previsión.' },
-      ])}
-      <div id="simple-next"></div>
-    </section>
-    <section class="panel" data-panel-section="evolucion">
-      <div class="section-heading"><div><p class="eyebrow">EVOLUCIÓN</p><h2>Gráficos del periodo</h2></div></div>
-      <p class="hint">Evolución de mediciones aceptadas por los controles automáticos. El detalle de cada estación está en «Ver detalles técnicos».</p>
-      <div id="simple-charts" class="station-list"></div>
-      <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Últimos avisos</h2></div>
-        <a class="link" href="#/avisos">Ver todos</a></div>
-      <div id="simple-history" class="alerts"></div>
-    </section>
-    <p class="support-line hidden" data-support></p>
+    <section class="panel" data-panel-section="estado"><div id="simple-summary"></div></section>
     <details class="technical-details" data-panel-section="detalles">
-      <summary>Ver detalles técnicos de las estaciones</summary>
+      <summary>Ver más detalles</summary>
+      <label class="period-label">Periodo del histórico
+        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+      </label>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Detalle de avisos abiertos</h2></div><a class="link" href="#/avisos">Centro de avisos</a></div>
+        <div id="simple-alerts" class="plain-alerts"></div>
+        ${originLegend([
+          { kind: 'medido', text: 'La regla se cruzó sobre una medida real de tu estación.' },
+          { kind: 'forecast', provider: 'aemet', text: 'Riesgo o aviso oficial externo. Aún no ha ocurrido.' },
+          { kind: 'status', text: 'Estado del equipo o del canal, observado. No es previsión.' },
+        ])}
+        <div id="simple-next"></div>
+        <div class="section-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>Últimos avisos</h2></div><a class="link" href="#/avisos">Ver todos</a></div>
+        <div id="simple-history" class="alerts"></div>
+      </section>
       <div id="simple-stations" class="station-list"></div>
       <section class="panel" id="simple-measurements"></section>
       <section class="panel">
@@ -741,11 +781,11 @@ async function renderSimplePanel(root) {
         <p class="hint">Sin coordenadas exactas: solo lecturas y diferencias entre tus puntos de medición.</p>
       </section>
       ${panelDocumentation()}
-    </details>`;
+    </details>
+    <p class="support-line hidden" data-support></p>`;
 
   resetStationDetails();
   renderSupport(root);
-  let heroFocused = false;
   const refresh = createRefreshState(root);
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) $('[data-error]', root).textContent = '';
@@ -753,14 +793,13 @@ async function renderSimplePanel(root) {
     try {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
-      setPanelContext(root, data.devices);
-      $('#simple-hero', root).innerHTML = heroFirstSection(primaryReading(data.devices));
-      $('#simple-state', root).innerHTML = renderStateCards(data.devices);
+      setPanelContext(root, data.devices, { includeStations: false });
       const caveat = coverageCaveat(data.devices);
       const engineOk = data.engine_verified !== false;
       const visible = (list) => (engineOk ? list
         : list.filter((alert) => classifyNotice({ ...alert, engineVerified: engineOk }).category !== 'threshold'));
       const open = visible(data.alerts).filter((alert) => !alert.closedAt);
+      $('#simple-summary', root).innerHTML = renderUserSummary(primaryReading(data.devices), open, caveat, { engineOk });
       $('#simple-alerts', root).innerHTML = open.length
         ? open.map(renderOpenAlert).join('')
         : emptyAlertsHtml(caveat);
@@ -772,9 +811,6 @@ async function renderSimplePanel(root) {
       $('#simple-stations', root).innerHTML = data.devices.length
         ? data.devices.map(renderStationCard).join('')
         : '<section class="panel"><p class="empty">Tu suscripción aún no tiene estaciones vinculadas.</p></section>';
-      $('#simple-charts', root).innerHTML = data.devices.length
-        ? data.devices.map((item) => renderStationCard(item, { chartsOnly: true })).join('')
-        : '<p class="empty">Todavía no hay estaciones que mostrar.</p>';
       surfaceNewAlerts(open);
       refresh.done();
       return data.devices.map((item) => ({ id: item.device.id, name: item.device.name }));
@@ -827,9 +863,8 @@ function loadDemoAnalysis() {
   return demoAnalysisPromise;
 }
 
-// Orden de lectura del panel: resumen actual → avisos relevantes → evolución
-// → detalles. Lo que explica, documenta o calcula se pliega en «Detalles» para
-// que quien solo viene a consultar el valor de ahora no lo atraviese.
+// El panel de solo lectura comparte los tres bloques simples con el panel de
+// finca; el periodo, los gráficos y la explicación completa quedan plegados.
 async function renderDemoPanel(root) {
   // Tres palabras con significados que no deben mezclarse: los datos de este
   // panel son REALES (vienen de la estación urbana), el acceso es de CONSULTA y
@@ -840,32 +875,27 @@ async function renderDemoPanel(root) {
       <div><p class="eyebrow">ESTACIÓN URBANA REAL · ACCESO DE CONSULTA</p><h1>Panel ampliado</h1>
         <p class="hint">Datos reales medidos por la estación. Solo lectura: este acceso no permite editar, borrar ni configurar nada.</p>
         <p class="hint panel-context" data-panel-context></p></div>
-      <div class="row-actions">
-        <label class="period-label">Periodo
-          <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
-        </label>
-        ${refreshControls()}
-      </div>
+      <div class="row-actions">${refreshControls()}</div>
     </div>
     <p class="error" data-error role="alert"></p>
-    <div id="demo-hero" class="hero-first-slot"></div>
-    <section class="panel" data-panel-section="estado">
-      <div class="section-heading"><div><p class="eyebrow">ESTADO ACTUAL</p><h2>Últimas mediciones</h2></div></div>
-      <div id="demo-state"></div>
-    </section>
-    <section class="panel" data-panel-section="avisos">
-      <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Lo que requiere tu atención</h2></div>
-        <a class="link" href="#/avisos">Centro de avisos</a></div>
-      <div id="demo-alerts" class="plain-alerts"></div>
-    </section>
-    <section class="panel" data-panel-section="evolucion">
-      <div class="section-heading"><div><p class="eyebrow">EVOLUCIÓN</p><h2>Gráficos del periodo</h2></div>
-        <label class="period-label">Estación <select id="demo-device"></select></label></div>
-      <div id="demo-overview"></div>
-      <div id="demo-stations" class="station-list"></div>
-    </section>
+    <section class="panel" data-panel-section="estado"><div id="demo-summary"></div></section>
     <details class="technical-details" data-panel-section="detalles">
-      <summary>Ver detalles del periodo y cómo se han calculado</summary>
+      <summary>Ver más detalles</summary>
+      <label class="period-label">Periodo del histórico
+        <select id="period"><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select>
+      </label>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">AVISOS</p><h2>Avisos de las estaciones</h2></div><a class="link" href="#/avisos">Centro de avisos</a></div>
+        <div id="demo-alerts" class="plain-alerts"></div>
+        <div class="section-heading"><div><p class="eyebrow">LECTURAS</p><h2>Otras mediciones</h2></div></div>
+        <div id="demo-state"></div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">EVOLUCIÓN</p><h2>Gráficos del periodo</h2></div>
+          <label class="period-label">Estación <select id="demo-device"></select></label></div>
+        <div id="demo-overview"></div>
+        <div id="demo-stations" class="station-list"></div>
+      </section>
       <section class="panel">
         <div class="section-heading"><div><p class="eyebrow">DETALLES DEL PERIODO</p><h2>Resúmenes diarios, punto de rocío y comparación con AEMET</h2></div></div>
         <div id="demo-analysis"></div>
@@ -891,7 +921,6 @@ async function renderDemoPanel(root) {
   resetStationDetails();
   renderSupport(root);
   let lastDevices = [];
-  let heroFocused = false;
   const refresh = createRefreshState(root);
 
   const loadAnalysis = async () => {
@@ -921,9 +950,7 @@ async function renderDemoPanel(root) {
       const data = await api(`/api/v1/dashboard?period=${encodeURIComponent($('#period', root).value)}`);
       resetStationDetails();
       lastDevices = data.devices || [];
-      setPanelContext(root, lastDevices);
-      $('#demo-hero', root).innerHTML = heroFirstSection(primaryReading(lastDevices));
-      $('#demo-state', root).innerHTML = renderStateCards(lastDevices);
+      setPanelContext(root, lastDevices, { includeStations: false });
       // Los avisos llegan del mismo /dashboard, ya acotados por el servidor a las
       // estaciones concedidas: aquí no se decide a quién pertenece un aviso.
       const engineOk = data.engine_verified !== false;
@@ -931,6 +958,7 @@ async function renderDemoPanel(root) {
         : list.filter((alert) => classifyNotice({ ...alert, engineVerified: engineOk }).category !== 'threshold'));
       const open = visible(data.alerts).filter((alert) => !alert.closedAt);
       const caveat = coverageCaveat(lastDevices);
+      $('#demo-summary', root).innerHTML = renderUserSummary(primaryReading(lastDevices), open, caveat, { engineOk });
       $('#demo-alerts', root).innerHTML = open.length
         ? open.map(renderOpenAlert).join('')
         : emptyAlertsHtml(caveat);
@@ -941,7 +969,6 @@ async function renderDemoPanel(root) {
       const previous = select.value;
       select.innerHTML = lastDevices.map((item) => `<option value="${escapeText(item.device.id)}">${escapeText(item.device.name)}</option>`).join('');
       if (lastDevices.some((item) => item.device.id === previous)) select.value = previous;
-      if (!heroFocused && lastDevices.length) { heroFocused = true; focusHeroSlot($('#demo-hero', root)); }
       refresh.done();
       await loadAnalysis();
     } catch (error) {

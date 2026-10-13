@@ -40,7 +40,7 @@ test('la última consulta no se confunde con la última medición', () => {
   assert.doesNotMatch(helper, /última medición:|Última medición:/,
     'la marca de refresco no debe nombrarse como la medición');
   // El estado distingue los tres momentos: pendiente, consultando y consultado.
-  const state = slice(panel, 'function createRefreshState', '// Panel sencillo para el agricultor');
+  const state = slice(panel, 'function createRefreshState', '// Panel para personas usuarias');
   assert.match(state, /Última consulta: pendiente/);
   assert.match(state, /Consultando/);
   assert.match(state, /Última consulta: \$\{dateText\(lastQueryAt\)\}/);
@@ -72,7 +72,7 @@ test('mientras llega la respuesta se conservan los datos anteriores', () => {
     assert.ok(done > request, `en ${name} la consulta se marca antes de recibir datos`);
     assert.match(body, /refresh\.fail\(\);/, `en ${name} el error no devuelve el estado a reposo`);
   }
-  const state = slice(panel, 'function createRefreshState', '// Panel sencillo para el agricultor');
+  const state = slice(panel, 'function createRefreshState', '// Panel para personas usuarias');
   assert.match(state, /se conservan los datos anteriores/);
   // La carga se anuncia sobre el bloque que la cabecera encabeza.
   assert.match(state, /setAttribute\('aria-busy', 'true'\)/);
@@ -122,16 +122,22 @@ test('el título del documento sigue a la sección abierta', () => {
   assert.match(showLogin, /setPageTitle\('entrar'\)/);
 });
 
-test('al entrar en el panel el título y el selector de periodo siguen visibles', () => {
+test('el periodo de usuario se elige dentro de Ver más detalles y administración conserva el foco del título', () => {
   const focus = slice(panel, 'function focusHeroSlot', 'function comparisonBlock');
   assert.match(focus, /hero\.focus\(\{ preventScroll: true \}\)/, 'el foco debe ir a la tarjeta');
   assert.match(focus, /querySelector\('\.page-heading'\)/, 'la vista se ancla a la cabecera');
   assert.match(focus, /block: 'start'/, 'la cabecera debe quedar arriba');
   assert.doesNotMatch(focus, /block: 'center'/,
     'centrar la tarjeta dejaba título y periodo fuera de pantalla en móvil');
-  // Solo la primera carga mueve el scroll: el guardia heroFocused sigue ahí.
-  assert.equal((panel.match(/heroFocused = true; focusHeroSlot/g) || []).length, 2);
+  // Solo administración conserva el salto de foco a su tarjeta técnica.
+  assert.equal((panel.match(/heroFocused = true; focusHeroSlot/g) || []).length, 1);
   assert.match(panel, /if \(!heroFocused && data\.devices\.length\)/);
+  for (const fn of ['renderSimplePanel', 'renderDemoPanel']) {
+    const start = panel.indexOf(`async function ${fn}`);
+    const details = panel.indexOf('<details class="technical-details"', start);
+    const period = panel.indexOf('<select id="period"', start);
+    assert.ok(period > details, `${fn} mantiene el periodo dentro del desplegable`);
+  }
   // Y la ruta arranca cada sección en su cabecera, también el panel: antes
   // conservaba el scroll de la pantalla anterior.
   const route = slice(app, 'async function route()', 'setUnauthorizedHandler');

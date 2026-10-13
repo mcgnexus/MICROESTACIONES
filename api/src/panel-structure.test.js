@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { renderStateCards } from '../public/js/farm-cards.js';
-import { renderStationCard } from '../public/js/panel.js';
+import { primaryReading, renderStationCard, renderUserSummary } from '../public/js/panel.js';
 
 const source = await readFile(new URL('../public/js/panel.js', import.meta.url), 'utf8');
 
@@ -17,39 +16,40 @@ function skeleton(fnName) {
 
 const order = (html) => [...html.matchAll(/data-panel-section="([^"]+)"/g)].map((match) => match[1]);
 
-test('los tres paneles se leen en el mismo orden: resumen, avisos, evolución, detalles', () => {
-  for (const [name, fn] of [['panel del agricultor', 'renderSimplePanel'],
-    ['panel de administración', 'renderPanel'], ['panel de demostración', 'renderDemoPanel']]) {
-    const sections = order(skeleton(fn));
-    assert.deepEqual(sections, ['estado', 'avisos', 'evolucion', 'detalles'],
-      `el ${name} no declara las cuatro secciones en orden`);
+test('los paneles de usuario muestran primero el resumen y pliegan los detalles; administración conserva sus secciones', () => {
+  for (const [name, fn] of [['panel del agricultor', 'renderSimplePanel'], ['panel de demostración', 'renderDemoPanel']]) {
+    assert.deepEqual(order(skeleton(fn)), ['estado', 'detalles'], `el ${name} deja contenido técnico fuera del desplegable`);
+    assert.match(skeleton(fn), /<summary>Ver más detalles<\/summary>/);
   }
+  assert.deepEqual(order(skeleton('renderPanel')), ['estado', 'avisos', 'evolucion', 'detalles']);
 });
 
-test('la sección de evolución se ve sin desplegar nada', () => {
-  for (const [name, fn] of [['panel del agricultor', 'renderSimplePanel'],
-    ['panel de administración', 'renderPanel'], ['panel de demostración', 'renderDemoPanel']]) {
-const html = skeleton(fn);
-    // Solo el contenido de la sección: su etiqueta de cierre la delimita, para
-    // que no cuente el <details> siguiente.
-    const start = html.indexOf('data-panel-section="evolucion"');
-    const evolution = html.slice(start, html.indexOf('</section>', start));
-    assert.doesNotMatch(evolution, /<details/, `en el ${name} la evolución queda dentro del desplegable`);
-    assert.match(evolution, /station-list/, `en el ${name} la evolución no tiene gráficas`);
-  }
-});
-
-test('la cabecera conserva la temperatura como primera lectura y el detalle va plegado', () => {
-  for (const [name, fn] of [['panel del agricultor', 'renderSimplePanel'],
-    ['panel de administración', 'renderPanel'], ['panel de demostración', 'renderDemoPanel']]) {
+test('gráficas y estación detallada solo aparecen dentro de Ver más detalles en paneles de usuario', () => {
+  const simple = skeleton('renderSimplePanel');
+  const simpleDetails = simple.indexOf('<details class="technical-details"');
+  assert.ok(simple.indexOf('id="simple-stations"') > simpleDetails);
+  assert.match(source.slice(source.indexOf('function renderSimplePanel')), /data\.devices\.map\(renderStationCard\)/);
+  for (const fn of ['renderDemoPanel']) {
     const html = skeleton(fn);
-    const hero = html.indexOf('hero-first-slot');
-    assert.ok(hero > -1, `el ${name} pierde la tarjeta grande de temperatura`);
-    assert.ok(hero < html.indexOf('data-panel-section="estado"'),
-      `en el ${name} la cabecera ya no va antes del estado`);
-    assert.match(html, /<details class="technical-details" data-panel-section="detalles">/,
-      `el ${name} no pliega los detalles`);
+    const details = html.indexOf('<details class="technical-details"');
+    assert.ok(details > -1);
+    assert.match(html.slice(details), /Gráficos del periodo|Estación <select/);
+    assert.match(html.slice(details), /station-list/);
   }
+});
+
+test('los tres bloques simples preceden a Ver más detalles; administración conserva la cabecera técnica', () => {
+  for (const [fn, id] of [['renderSimplePanel', 'simple-summary'], ['renderDemoPanel', 'demo-summary']]) {
+    const html = skeleton(fn);
+    const summary = html.indexOf(`id="${id}"`);
+    const details = html.indexOf('<details class="technical-details"');
+    assert.ok(summary > -1 && summary < details);
+  }
+  assert.match(source, /renderUserSummary\(primaryReading\(data\.devices\)/);
+  assert.match(source, /renderUserSummary\(primaryReading\(lastDevices\)/);
+  for (const block of ['now', 'trend', 'alerts']) assert.match(renderUserSummary(null), new RegExp(`data-summary-block="${block}"`));
+  assert.match(skeleton('renderPanel'), /hero-first-slot/);
+  assert.match(skeleton('renderPanel'), /<details class="technical-details" data-panel-section="detalles">/);
 });
 
 test('lo que se explica se pliega y no interrumpe el resumen', () => {
@@ -72,8 +72,7 @@ test('lo que se explica se pliega y no interrumpe el resumen', () => {
 test('el panel de demostración lista los avisos reales en lugar de solo enlazarlos', () => {
   const demo = skeleton('renderDemoPanel');
   assert.match(demo, /id="demo-alerts"/);
-  // La sección de avisos va antes de la evolución, no después de un bloque largo.
-  assert.ok(demo.indexOf('id="demo-alerts"') < demo.indexOf('data-panel-section="evolucion"'));
+  assert.ok(demo.indexOf('id="demo-alerts"') > demo.indexOf('<details class="technical-details"'));
   const loader = source.slice(source.indexOf('const load = async () =>', source.indexOf('function renderDemoPanel')));
   assert.match(loader, /renderOpenAlert/);
   assert.match(loader, /emptyAlertsHtml/);
@@ -81,22 +80,91 @@ test('el panel de demostración lista los avisos reales en lugar de solo enlazar
   assert.match(source, /Sin avisos abiertos, pero esto no significa que no haya riesgo/);
 });
 
-test('el estado actual no repite la temperatura que ya está en la cabecera', () => {
-  const devices = [{
+test('el resumen de usuario muestra la estación escogida, temperatura, humedad y antigüedad', () => {
+  const item = {
     device: { id: 'station-1', name: 'Huéscar', sensors: { temperature: true, humidity: true } },
     status: { connectivity: 'online', dataFreshness: 'fresh', batteryLevel: 'ok' },
-    latest: { observedAt: '2026-01-01T12:00:00Z', temperatureC: 18, humidityPct: 55, pressurePa: 90000 },
-  }];
-  const cards = renderStateCards(devices);
-  assert.doesNotMatch(cards, /Temperatura actual/);
-  assert.doesNotMatch(cards, /Humedad actual/);
-  // Las decisiones se conservan: son lo que el usuario tiene que decidir.
-  for (const label of ['Riesgo de helada', 'Riesgo de calor', 'Riesgo de tormenta',
-    'Última comunicación', 'Estado de la estación']) {
-    assert.match(cards, new RegExp(label));
-  }
-  // La lectura cruda sigue disponible para quien la necesite junto a los estados.
-  assert.match(renderStateCards(devices, new Date(), { readings: true }), /Temperatura actual/);
+    latest: { observedAt: '2026-01-01T12:03:00Z', temperatureC: 18, humidityPct: 55, pressurePa: 90000, isValidated: true },
+    trendHistory: [
+      { observedAt: '2026-01-01T12:00:00Z', temperatureC: 16 },
+      { observedAt: '2026-01-01T12:02:00Z', temperatureC: 17 },
+      { observedAt: '2026-01-01T12:03:00Z', temperatureC: 18 },
+    ],
+  };
+  const html = renderUserSummary(item, [], null, { now: new Date('2026-01-01T12:05:00Z') });
+  assert.match(html, /Huéscar/);
+  assert.match(html, /18 °C/);
+  assert.match(html, /55 %/);
+  assert.match(html, /hace 2 min/);
+  assert.match(html, /data-summary-block="now"/);
+  assert.match(html, /data-summary-block="trend"/);
+  assert.match(html, /<p class="quick-summary-value">Sube<\/p>/);
+});
+
+test('el resumen no presenta una lectura antigua como actual ni inventa una tendencia', () => {
+  const old = renderUserSummary({
+    device: { name: 'Castril', sensors: { humidity: true } },
+    status: { dataFreshness: 'stale' },
+    latest: { observedAt: '2026-01-01T10:00:00Z', temperatureC: 4, humidityPct: 70 },
+    history: [{ observedAt: '2026-01-01T10:00:00Z', temperatureC: 4 }],
+  }, [], { text: 'La estación no envía datos recientes.' }, { now: new Date('2026-01-01T12:00:00Z') });
+  assert.match(old, /Último dato/);
+  assert.match(old, /hace 2 h/);
+  assert.match(old, /Sin tendencia todavía/);
+  assert.match(old, /No se pudo comprobar/);
+  assert.doesNotMatch(old, /data-alert-state="none"/);
+});
+
+test('la tendencia indica sube, baja o estable y no presume estabilidad con pocas lecturas', () => {
+  const make = (values) => ({
+    device: { name: 'Huéscar', sensors: { humidity: true } },
+    latest: { observedAt: '2026-01-01T12:10:00Z', temperatureC: values.at(-1), humidityPct: 50 },
+    trendHistory: values.map((temperatureC, index) => ({
+      observedAt: new Date(Date.parse('2026-01-01T12:00:00Z') + index * 5 * 60_000).toISOString(), temperatureC,
+    })),
+  });
+  const render = (values) => renderUserSummary(make(values), [], null, { now: new Date('2026-01-01T12:10:00Z') });
+  assert.match(render([10, 11, 12]), /<p class="quick-summary-value">Sube<\/p>/);
+  assert.match(render([12, 11, 10]), /<p class="quick-summary-value">Baja<\/p>/);
+  assert.match(render([10, 10, 10]), /<p class="quick-summary-value">Estable<\/p>/);
+  assert.match(render([10, 11]), /Sin tendencia todavía/);
+});
+
+test('con varias estaciones el resumen identifica la lectura fresca más reciente y no promedia microclimas', () => {
+  const devices = [
+    { device: { name: 'Huéscar' }, status: { dataFreshness: 'fresh' }, latest: { observedAt: '2026-01-01T12:00:00Z', temperatureC: 5, humidityPct: 60 } },
+    { device: { name: 'Castril' }, status: { dataFreshness: 'fresh' }, latest: { observedAt: '2026-01-01T12:04:00Z', temperatureC: 15, humidityPct: 40 } },
+  ];
+  const summary = renderUserSummary(primaryReading(devices), [
+    { id: 1, deviceId: 'huescar', closedAt: null },
+    { id: 2, deviceId: 'castril', closedAt: null },
+  ]);
+  assert.match(summary, /Castril/);
+  assert.match(summary, /15 °C/);
+  assert.doesNotMatch(summary, /10 °C/);
+  assert.match(summary, /2 avisos abiertos/);
+});
+
+test('el resumen mantiene activo el riesgo y distingue el envío pendiente', () => {
+  const item = { device: { name: 'Huéscar' }, latest: { temperatureC: 18, humidityPct: 55, observedAt: '2026-01-01T12:00:00Z' } };
+  const active = renderUserSummary(item, [{ id: 1, closedAt: null, deliveryStatus: 'delivered' }]);
+  assert.match(active, /data-alert-state="active"/);
+  assert.match(active, />Activo<\/strong>/);
+  assert.doesNotMatch(active, /Envío pendiente/);
+  const pending = renderUserSummary(item, [{ id: 1, closedAt: null, deliveryStatus: 'pending' }]);
+  assert.match(pending, /data-alert-state="active"/);
+  assert.match(pending, /data-delivery-pending="true"/);
+  assert.match(pending, /Envío pendiente/);
+});
+
+test('solo afirma que no hay avisos cuando la consulta está en condiciones de comprobarlos', () => {
+  const item = { device: { name: 'Huéscar' }, latest: { temperatureC: 18, humidityPct: 55, observedAt: '2026-01-01T12:00:00Z' } };
+  const none = renderUserSummary(item, [], null);
+  assert.match(none, /data-alert-state="none"/);
+  assert.match(none, />Ninguno<\/strong>/);
+  const unavailable = renderUserSummary(item, [], null, { engineOk: false });
+  assert.match(unavailable, /data-alert-state="unknown"/);
+  assert.match(unavailable, /No se pudo comprobar/);
 });
 
 test('la tarjeta de estación se reduce a sus gráficas en la sección de evolución', () => {
@@ -130,17 +198,17 @@ test('la cabecera sitúa la estación, su tipo y el permiso antes del resumen', 
   assert.match(source, /function setPanelContext\(/);
   assert.match(source, /locationLabel\(item\.device\.locationType\)/);
   assert.match(source, /roleLabel\(session\.me\.role\)/);
-  assert.match(source, /setPanelContext\(root, data\.devices\)/);
-  assert.match(source, /setPanelContext\(root, lastDevices\)/);
+  assert.match(source, /setPanelContext\(root, data\.devices, \{ includeStations: false \}\)/);
+  assert.match(source, /setPanelContext\(root, lastDevices, \{ includeStations: false \}\)/);
+  assert.match(source, /setPanelContext\(root, data\.devices\)/, 'administración mantiene el contexto completo');
 });
 
-test('el análisis del periodo se parte entre el resumen y el detalle', async () => {
+test('el análisis del periodo y sus explicaciones se mantienen dentro del detalle ampliado', async () => {
   // El análisis vive en su propio módulo, cargado bajo demanda (F6).
   const analysis = await readFile(new URL('../public/js/demo-analysis.js', import.meta.url), 'utf8');
   assert.match(analysis, /export function renderDemoOverview\(data\)/);
   assert.match(analysis, /export function renderDemoDetails\(data\)/);
-  // El resumen visible lleva las métricas del periodo; lo que documenta el
-  // cálculo, las coberturas y la comparación externa, no.
+  // El análisis del periodo está disponible dentro de «Ver más detalles».
   const overview = analysis.slice(analysis.indexOf('export function renderDemoOverview'),
     analysis.indexOf('export function renderDemoDetails'));
   assert.match(overview, /demoMetricCard/);

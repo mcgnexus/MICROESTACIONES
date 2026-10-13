@@ -606,6 +606,15 @@ td.row-actions button,td button{padding:6px 10px;font-size:15px}
 .technical-details{margin-top:22px;border:1px solid #e0e6df;border-radius:var(--r-xl);background:#f7faf7;padding:5px 16px 16px}
 .technical-details>summary{cursor:pointer;font-weight:750;color:var(--c-primary);padding:12px 4px;font-size:15px}
 .technical-details[open]>summary{margin-bottom:6px}
+.quick-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:4px 0}
+.quick-summary-card{min-width:0;border:1px solid #e0e6df;border-radius:var(--r-lg);padding:18px;background:var(--c-surface)}
+.quick-summary-card h2{margin:0 0 14px;font-size:18px}
+.quick-summary-card p{margin:7px 0;color:var(--c-muted)}
+.quick-summary-card .quick-summary-value{display:block;margin:0 0 8px;color:var(--c-ink);font-size:clamp(22px,3vw,30px);font-weight:800}
+.quick-summary-card .quick-summary-note,.quick-summary-card .quick-summary-station{font-size:13px}
+.quick-summary-card .quick-summary-station{font-weight:700;color:var(--c-ink)}
+.quick-summary-card .link{display:inline-block;margin-top:8px}
+@media(max-width:760px){.quick-summary-grid{grid-template-columns:1fr;gap:10px}.quick-summary-card{padding:15px}}
 
 /* ---- Páginas públicas de la landing --------------------------------------- */
 .landing-section{max-width:900px;margin:56px auto 0;padding:0 2px}
