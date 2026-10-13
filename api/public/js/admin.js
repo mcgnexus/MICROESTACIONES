@@ -1,5 +1,5 @@
 import {
-  $, api, escapeText, dateText, roleLabel, planLabel, isAdmin,
+  $, api, escapeText, dateText, roleLabel, planLabel, isAdmin, prepareResponsiveTables,
 } from './ui.js';
 import { mountAdminStatistics } from './admin-statistics.js';
 import { mountProspects } from './prospects.js';
@@ -188,6 +188,7 @@ export async function renderAdmin(root) {
     return;
   }
   root.innerHTML = `
+    <div class="admin-view">
     <div class="page-heading"><div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Usuarios, accesos y trazabilidad</h1></div></div>
     <nav class="admin-tabs" role="tablist" aria-label="Secciones de administración">
       <button type="button" role="tab" data-tab="usuarios" class="active" aria-selected="true">Usuarios y accesos</button>
@@ -260,7 +261,8 @@ export async function renderAdmin(root) {
           <tbody data-audit data-tbody="audit"></tbody>
         </table></div>
       </section>
-    </section>`;
+    </section>
+    </div>`;
 
   const error = (panel, message) => {
     const el = $(`section[data-panel="${panel}"] > [data-error]`, root);
@@ -275,30 +277,35 @@ export async function renderAdmin(root) {
       $('[data-audience-counts]', root).textContent =
         `Registrados: ${counts.registered} · Verificados: ${counts.verified} · Autorizados para publicidad: ${counts.advertising}`;
     }
+    prepareResponsiveTables(root);
   }
 
   async function loadOutbox() {
     const { outbox } = await api('/api/v1/admin/outbox?status=manual');
     $('[data-manual]', root).innerHTML = outbox.map(manualRow).join('')
       || '<tr><td colspan="4">No hay envíos manuales pendientes.</td></tr>';
+    prepareResponsiveTables(root);
   }
 
   async function loadPilots() {
     const { requests } = await api('/api/v1/admin/pilot-requests');
     $('[data-pilots]', root).innerHTML = requests.map(pilotRow).join('')
       || '<tr><td colspan="6">Sin solicitudes de piloto.</td></tr>';
+    prepareResponsiveTables(root);
   }
 
   async function loadLeads() {
     const { leads } = await api('/api/v1/admin/leads');
     $('[data-leads]', root).innerHTML = leads.map(leadRow).join('')
       || '<tr><td colspan="6">Sin solicitudes web.</td></tr>';
+    prepareResponsiveTables(root);
   }
 
   async function loadAudit() {
     const audit = await api('/api/v1/admin/audit?limit=100');
     $('[data-audit]', root).innerHTML = audit.entries.map(auditRow).join('')
       || '<tr><td colspan="6">Sin registros de auditoría.</td></tr>';
+    prepareResponsiveTables(root);
   }
 
   // Cada lista falla por su cuenta: un endpoint caído no vacía toda la pestaña.

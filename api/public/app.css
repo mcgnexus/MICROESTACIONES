@@ -961,3 +961,25 @@ body.data-offline .topbar { position: static; }
 .refresh-meta{flex:1 0 100%;margin:0;text-align:right}
 [data-refresh][disabled]{opacity:.65;cursor:default}
 @media(max-width:560px){.refresh-meta{text-align:left}}
+
+/* Vista de administración en móvil: filas de tabla como tarjetas etiquetadas,
+   pestañas y controles a ancho completo. La clase .stack-table la añade
+   prepareResponsiveTables(), que copia la etiqueta de cada columna. */
+@media (max-width:600px){
+  .admin-view .admin-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .admin-view .admin-tabs button{width:100%;justify-content:center}
+  .admin-view .section-heading{flex-direction:column;align-items:flex-start;gap:10px}
+  .admin-view .section-heading button{width:100%}
+  .admin-view input[data-search]{max-width:100%;width:100%}
+  .admin-view .row-actions button{width:100%}
+  .admin-view .stats-actions{display:grid;grid-template-columns:1fr}
+  .admin-view .stats-actions button{width:100%}
+  .stack-wrap{overflow:visible;border:0}
+  .stack-table{min-width:0}
+  .stack-table thead{display:none}
+  .stack-table,.stack-table tbody,.stack-table tr,.stack-table td,.stack-table th{display:block;width:auto}
+  .stack-table tr{border:1px solid var(--c-border);border-radius:var(--r-md);margin:0 0 12px;padding:8px 12px;background:var(--c-surface)}
+  .stack-table td,.stack-table th{padding:6px 0;border:0;white-space:normal}
+  .stack-table td[data-label]::before{content:attr(data-label);display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--c-muted);margin-bottom:2px}
+  .stack-table td[colspan]{text-align:center}
+}

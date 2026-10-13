@@ -94,6 +94,10 @@
       "destination": "/api/index"
     },
     {
+      "source": "/api/v1/measurements.csv",
+      "destination": "/api/index"
+    },
+    {
       "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)",
       "destination": "/api/index"
     }

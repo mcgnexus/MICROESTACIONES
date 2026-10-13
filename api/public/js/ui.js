@@ -116,6 +116,29 @@ export function fieldError(root, message) {
   target.textContent = message || '';
 }
 
+// Vista de administración: las tablas anchas pasan a tarjetas apiladas en móvil.
+// Copia la etiqueta de cada columna (thead) a data-label en cada celda, para que
+// el CSS la muestre encima del valor sin duplicar los encabezados en cada
+// plantilla de fila. Las filas de estado vacío (una sola celda con colspan) se
+// dejan sin etiqueta. Se puede llamar tras cada repintado: solo añade clases
+// (idempotente) y vuelve a etiquetar las filas, así una tabla rellenada más
+// tarde también queda preparada.
+export function prepareResponsiveTables(scope = document) {
+  scope.querySelectorAll?.('.table-wrap table').forEach((table) => {
+    const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      const cells = [...row.children];
+      if (cells.length === 1 && cells[0].hasAttribute('colspan')) return;
+      cells.forEach((cell, index) => {
+        const label = headers[index];
+        if (label) cell.dataset.label = label;
+      });
+    });
+    table.classList.add('stack-table');
+    table.closest('.table-wrap')?.classList.add('stack-wrap');
+  });
+}
+
 // ---- Insignias -------------------------------------------------------------
 const VFLAG_LABELS = [
   [1, 'temperatura fuera de rango'],

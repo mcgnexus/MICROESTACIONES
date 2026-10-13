@@ -1,4 +1,4 @@
-import { api, escapeText as e } from './ui.js';
+import { api, escapeText as e, prepareResponsiveTables } from './ui.js';
 const events = {
   home_visit: 'Apertura consentida de portada (carga de página; no visitantes únicos)',
   locked_tool_open: 'Apertura de herramienta bloqueada (opcional)',
@@ -52,6 +52,7 @@ export async function mountAdminAnalytics(root) {
           <div class="table-wrap"><table><thead><tr><th>Canal</th><th>Solicitudes</th><th>Cualificadas / solicitudes</th><th>Permiso vigente / solicitudes</th></tr></thead><tbody>${leads.channels.map((r) => `<tr><th scope="row">${e(r.bucket.split('|').join(' · '))}</th><td>${r.registered}</td><td>${percent(r.rates.qualified)}</td><td>${percent(r.rates.authorized)}</td></tr>`).join('') || '<tr><td colspan="4">Sin datos en este período.</td></tr>'}</tbody></table></div>
           <p class="hint">Una solicitud de finca sin cuenta aparece solo en esta serie. La relación lead↔cuenta no se resuelve aquí, así que no se suman como personas.</p>`);
       }
+      prepareResponsiveTables(root);
     } catch (err) { root.querySelector('[data-error]').textContent = `No se pudieron cargar las métricas: ${err.message}`; }
     finally { button.disabled = false; }
   }

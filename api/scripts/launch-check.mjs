@@ -7,6 +7,7 @@
 // No imprime secretos. Los puntos manuales (identidad legal, pruebas en móvil,
 // precios acordados) quedan fuera y se revisan a mano.
 import 'dotenv/config';
+import { readFile } from 'node:fs/promises';
 import postgres from 'postgres';
 
 const env = process.env;
@@ -44,6 +45,21 @@ const sendEnabled = String(env.ALERT_SEND_ENABLED ?? 'true').toLowerCase() !== '
 const engineVerified = String(env.ALERT_ENGINE_VERIFIED ?? 'true').toLowerCase() !== 'false';
 if (!sendEnabled) warn('Avisos externos', 'ALERT_SEND_ENABLED=false: fase de evaluación, sin envíos externos');
 if (!engineVerified) warn('Motor de avisos', 'ALERT_ENGINE_VERIFIED=false: avisos locales ocultos a visitantes');
+
+// ---- Configuración de despliegue (Vercel) ----------------------------------
+// La regla catch-all de rewrites excluye las URL con extensión, así que las
+// rutas de API terminadas en .csv/.txt/.xml necesitan un rewrite explícito.
+// Sin él, Vercel responde 404 de plataforma antes de llegar a Express.
+try {
+  const { rewrites = [] } = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const csvIndex = rewrites.findIndex((r) => r.source === '/api/v1/measurements.csv');
+  const catchAllIndex = rewrites.findIndex((r) => r.source.includes('?!'));
+  if (csvIndex === -1) fail('Rewrite CSV', 'falta el rewrite de /api/v1/measurements.csv: la exportación devolvería 404 en producción');
+  else if (catchAllIndex !== -1 && csvIndex > catchAllIndex) fail('Rewrite CSV', 'el rewrite debe colocarse antes de la regla catch-all');
+  else pass('Rewrite CSV', '/api/v1/measurements.csv → /api/index');
+} catch (error) {
+  warn('Rewrite CSV', `no se pudo verificar vercel.json: ${error.message}`);
+}
 
 // ---- Base de datos ---------------------------------------------------------
 if (!env.DATABASE_URL) {
