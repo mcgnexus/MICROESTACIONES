@@ -218,7 +218,7 @@ export function renderDayHistory(station, now = Date.now()) {
     ${temperature.length >= 2 ? makeChart('Temperatura · últimas 24 horas', temperature, 'temperatureC', '#c97742', '°C', 1) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de temperatura en las últimas 24 horas.</div>'}
     ${humidity.length >= 2 ? makeChart('Humedad · últimas 24 horas', humidity, 'humidityPct', '#168b80', '%', 0) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de humedad en las últimas 24 horas.</div>'}
   </div>
-  <div class="landing-actions"><a class="cta secondary" href="#/entrar" data-return="evolucion">Ver el histórico ampliado</a></div>
+  <div class="landing-actions"><a class="cta secondary" href="#/entrar" data-return="evolucion">Consultar histórico</a></div>
   <p class="hint">El panel añade periodos de 7 y 30 días; los datos cubren desde la puesta en servicio de la estación, no antes.</p>`;
 }
 

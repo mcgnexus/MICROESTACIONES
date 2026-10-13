@@ -94,9 +94,9 @@ test('the day graph only draws supplied real points and has an explicit empty st
   assert.match(html, /Humedad · últimas 24 horas/);
   assert.match(html, /8/);
   assert.match(html, /62/);
-  // Al pie de la muestra de 24 h va el paso al histórico ampliado: mismo
+  // Al pie de la muestra de 24 h va el acceso al histórico: mismo
   // destino declarado que el CTA del hero (vuelve a esta sección tras entrar).
-  assert.match(html, /href="#\/entrar" data-return="evolucion">Ver el histórico ampliado/);
+  assert.match(html, /href="#\/entrar" data-return="evolucion">Consultar histórico/);
   // Los periodos del panel se nombran como capacidad, no como datos
   // garantizados: las series cubren desde la puesta en servicio.
   assert.match(html, /7 y 30 d[íi]as/);
@@ -107,7 +107,7 @@ test('the day graph only draws supplied real points and has an explicit empty st
   assert.match(renderDayHistory({ history: [] }, now), /No hay datos suficientes/);
   assert.doesNotMatch(renderDayHistory({ history: [] }, now), /chart-box/);
   // Sin gráfica no hay CTA colgando: el estado vacío se queda como estaba.
-  assert.doesNotMatch(renderDayHistory({ history: [] }, now), /Ver el histórico ampliado/);
+  assert.doesNotMatch(renderDayHistory({ history: [] }, now), /Consultar histórico/);
 });
 
 test('public landing has loading containers and a single access request form, without sample readings', async () => {
@@ -117,8 +117,8 @@ test('public landing has loading containers and a single access request form, wi
   assert.match(html, /id="public-evolution"/);
   assert.equal((html.match(/data-lead-embed/g) || []).length, 1);
   assert.doesNotMatch(html, /3,1 °C|82 %|hace 12 min|Solicitar piloto/);
-  assert.match(html, /Ver el histórico ampliado gratis/);
-  assert.match(html, /Quiero información para mi finca/);
+  assert.match(html, /Consultar histórico/);
+  assert.match(html, /Pedir información para instalar una estación/);
 });
 
 test('the big weather card is the first element of the public landing section', async () => {

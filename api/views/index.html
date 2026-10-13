@@ -53,7 +53,7 @@
           { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están separadas por menos de 10 minutos. Si no, cada lectura se muestra por separado con su hora." } },
           { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
           { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
-          { "@type": "Question", "name": "¿Qué diferencia hay entre entrar con tu correo y consultar una instalación?", "acceptedAnswer": { "@type": "Answer", "text": "Entrar con tu correo da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo de un solo uso: no espera a nadie. Consultar una instalación es la única vía que revisa el equipo: hasta que te contacten no hay acceso concedido, y el envío no es automático: no programa una instalación ni reserva ninguna visita. La simulación no requiere registro y muestra datos inventados. Ninguna vía solicita automáticamente una llamada." } }
+          { "@type": "Question", "name": "¿Qué diferencia hay entre consultar el histórico y pedir información para instalar una estación?", "acceptedAnswer": { "@type": "Answer", "text": "Consultar el histórico con tu correo da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo de un solo uso. Pedir información para instalar una estación envía una solicitud que revisa el equipo: no es automática, hasta que te contacten no hay acceso concedido, y no programa una instalación ni reserva una visita. La simulación no requiere registro y muestra datos inventados." } }
         ]
       }
     ]
@@ -74,9 +74,9 @@
     <nav id="public-nav" class="topnav" aria-label="Página pública">
       <a href="#/tiempo-local">Tiempo local</a>
       <a class="nav-optional" href="#/vias">Cómo empezar</a>
-      <a class="nav-optional" href="#/fincas">Medir en finca</a>
-      <a class="nav-access" href="#/solicitar-piloto">Consultar instalación</a>
-      <a href="#/entrar">Entrar</a>
+      <a class="nav-optional" href="#/fincas">Fincas</a>
+      <a class="nav-access" href="#/solicitar-piloto">Pedir información para instalar una estación</a>
+      <a href="#/entrar">Consultar histórico</a>
     </nav>
     <div class="topbar-right">
       <span id="session-chip" class="chip hidden"></span>
@@ -100,8 +100,8 @@
           <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
           <div id="local-weather-card"></div>
           <div class="landing-actions hero-actions">
-            <a class="cta" href="#/entrar" data-return="evolucion">Ver el histórico ampliado gratis</a>
-            <a class="cta secondary" href="#/solicitar-piloto">Quiero información para mi finca</a>
+            <a class="cta" href="#/entrar" data-return="evolucion">Consultar histórico</a>
+            <a class="cta secondary" href="#/solicitar-piloto">Pedir información para instalar una estación</a>
           </div>
           <p id="ios-install-hint" class="pwa-install-hint hidden">En iPhone o iPad: pulsa <strong>Compartir</strong> y elige <strong>Añadir a pantalla de inicio</strong>. <button type="button" class="quiet hint-dismiss" data-dismiss-install-hint>Entendido</button></p>
           <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
@@ -130,14 +130,14 @@
         <p class="section-intro">Cada acción lleva a una cosa distinta: consultar las mediciones reales o pedir que estudiemos tu finca.</p>
         <div class="vias-grid">
           <article class="via-card">
-            <h3>Consulta el histórico con tu correo</h3>
+            <h3>Consultar histórico</h3>
             <p class="via-outcome"><strong>Resultado:</strong> escribes tu correo, confirmas el enlace que te enviamos y tienes acceso de consulta a las mediciones reales.</p>
-            <p><a class="via-link" href="#/entrar" data-return="evolucion">Entrar con tu correo</a></p>
+            <p><a class="via-link" href="#/entrar" data-return="evolucion">Consultar histórico</a></p>
           </article>
           <article class="via-card">
-            <h3>Cuéntanos dónde está tu finca para estudiar una instalación</h3>
+            <h3>Pedir información para instalar una estación</h3>
             <p class="via-outcome"><strong>Resultado:</strong> revisamos tu solicitud y te contactamos para estudiarla.</p>
-            <p><a class="via-link" href="#/solicitar-piloto">Consultar una instalación</a></p>
+            <p><a class="via-link" href="#/solicitar-piloto">Pedir información para instalar una estación</a></p>
           </article>
         </div>
         <p class="hint">¿Solo quieres ver cómo funciona? Prueba la <a href="#/demo-agricola">simulación con datos inventados</a>.</p>
@@ -153,7 +153,7 @@
           <article><span class="nav-icon" data-icon="heat"></span><h3>Calor</h3><p>Sigue los episodios cálidos en el punto que te interesa.</p></article>
           <article><span class="nav-icon" data-icon="humidity"></span><h3>Humedad</h3><p>Consulta la humedad medida junto con la hora de cada lectura.</p></article>
         </div>
-        <div class="landing-actions"><a class="cta secondary" href="#/solicitar-piloto">Quiero información para mi finca</a></div>
+        <div class="landing-actions"><a class="cta secondary" href="#/solicitar-piloto">Pedir información para instalar una estación</a></div>
       </section>
 
       <section id="demo-agricola" class="landing-section">
@@ -176,7 +176,7 @@
         <a class="access-link" href="#/vias">Ver cómo empezar</a>
       </section>
 
-      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-request-type="installation_info" data-lead-title="Consultar una instalación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
+      <section id="solicitar-piloto" class="landing-section lead-block panel access-request" data-lead-embed data-lead-request-type="installation_info" data-lead-title="Pedir información para instalar una estación" data-lead-description="Cuéntanos de tu actividad y zona. Revisamos la solicitud y te contactamos para estudiarla; hasta que te escribamos no hay acceso concedido. El envío no programa una instalación automática." data-lead-success="Solicitud recibida. La revisamos y te contactamos."></section>
 
       <section id="avisos-whatsapp" class="landing-section panel" data-wa-signup>
         <div class="section-heading"><div><p class="eyebrow">AVISOS POR WHATSAPP</p><h2 data-wa-title>Recibe los avisos disponibles de esta estación</h2></div></div>
@@ -189,7 +189,7 @@
           <details><summary>¿Qué mide la tarjeta del tiempo local?</summary><p>Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no se presenta como representativa de cada calle o finca.</p></details>
           <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están separadas por menos de 10 minutos. Si no, mostramos cada lectura por separado con su hora y no calculamos la diferencia.</p></details>
           <details><summary>¿La lectura del casco representa mi finca?</summary><p>No necesariamente. Hondonadas, vegas y zonas altas pueden tener condiciones distintas según su emplazamiento y las condiciones del momento. Medir en la finca permite observar ese punto concreto.</p></details>
-          <details><summary>¿Qué diferencia hay entre entrar con tu correo y consultar una instalación?</summary><p><a href="#/entrar">Entrar con tu correo</a> da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo: no espera a nadie. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única vía que revisa el equipo: hasta que te contacten no hay acceso concedido, y el envío no es automático: no programa una instalación ni reserva ninguna visita. <a href="#/demo-agricola">La simulación</a> no requiere registro y muestra datos inventados. Ninguna vía solicita automáticamente una llamada.</p></details>
+          <details><summary>¿Qué diferencia hay entre consultar el histórico y pedir información para instalar una estación?</summary><p><a href="#/entrar">Consultar histórico</a> da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo. <a href="#/solicitar-piloto">Pedir información para instalar una estación</a> envía una solicitud que revisa el equipo: no es automática, hasta que te contacten no hay acceso concedido, y no programa una instalación ni reserva una visita. <a href="#/demo-agricola">La simulación</a> no requiere registro y muestra datos inventados.</p></details>
           <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Se muestran avisos oficiales y riesgo estimado. Una detección local precisa requeriría sensores adicionales.</p></details>
         </div>
       </section>
@@ -208,7 +208,7 @@
     </section>
     <section id="login-view" class="login-card hidden">
       <p class="eyebrow">ACCESO · SIN CONTRASEÑA</p>
-      <h1 id="magic-title">Consulta el histórico ampliado</h1>
+      <h1 id="magic-title">Consultar histórico</h1>
       <p id="magic-description">Escribe tu correo y recibe un enlace de un solo uso para entrar sin contraseña. Sin crear cuenta con antelación.</p>
       <div id="magic-confirm" class="hidden">
         <p><strong>Ya casi estás dentro.</strong> El enlace solo se usa cuando lo confirmas aquí, así que una visita automática no inicia tu sesión.</p>

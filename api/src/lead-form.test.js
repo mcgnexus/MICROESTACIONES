@@ -23,8 +23,9 @@ test('la modalidad se declara con request_type acotado y visible', () => {
   // Radios sin opción marcada: la preselección la decide el origen (embed o
   // campaña), nunca el formulario por su cuenta.
   assert.match(LEAD_FORM_HTML, /¿Qué necesitas\?/);
-  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="installation_info"/);
-  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="pilot"/);
+  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="installation_info"> Pedir información para instalar una estación/);
+  assert.match(LEAD_FORM_HTML, /type="radio" name="request_type" value="pilot"> Solicitar una prueba del servicio en mi finca/);
+  assert.match(LEAD_FORM_HTML, /href="#\/entrar">Consultar histórico</);
   assert.doesNotMatch(LEAD_FORM_HTML, /name="request_type"[^>]*checked/);
   assert.match(LEAD_FORM_HTML, /data-request-type-note/);
 });
@@ -33,7 +34,7 @@ test('la preselección por embed o campaña se muestra y se puede cambiar', asyn
   const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
   assert.match(source, /data-lead-request-type/);
   assert.match(source, /tipo=instalacion|value === 'instalacion'/, 'acepta el parámetro de campaña');
-  assert.match(source, /Has abierto la /, 'anuncia la modalidad abierta por campaña');
+  assert.match(source, /Modalidad seleccionada: \$\{REQUEST_TYPE_LABELS\[campaignRequestType\]\}/, 'anuncia la modalidad abierta por campaña');
 });
 
 test('cada canal muestra su campo y WhatsApp explica para qué se usa el número', () => {
@@ -108,7 +109,7 @@ test('la confirmación concreta qué se recibió y por qué canal se responde', 
   assert.match(source, /Te responderemos por \$\{channelLabel\}/);
   assert.match(source, /dentro de 1-2 d[ií]as laborables/);
   assert.match(source, /No hace falta que hagas nada más/);
-  assert.match(source, /consulta sobre una instalación/);
+  assert.match(source, /petición para recibir información sobre una instalación/);
   // Ante fallo, lo escrito queda en pantalla para reintentar sin reescribir.
   assert.match(source, /Sin resetear: lo escrito queda en pantalla/);
   assert.match(source, /Comprueba tu conexión y vuelve a pulsar Enviar/);
@@ -116,7 +117,7 @@ test('la confirmación concreta qué se recibió y por qué canal se responde', 
 
 test('el envío valida la modalidad y solo envía lo declarado', async () => {
   const source = await readFile(new URL('../public/js/leads.js', import.meta.url), 'utf8');
-  assert.match(source, /Elige qué necesitas: información de instalación o probar el servicio\./);
+  assert.match(source, /Elige qué necesitas: pedir información para instalar una estación o solicitar una prueba del servicio en tu finca\./);
   assert.match(source, /request_type: requestType/);
   assert.match(source, /if \(data\.get\('activity'\)\) body\.activity = data\.get\('activity'\);/);
   assert.match(source, /if \(data\.get\('interest'\)\) body\.interest = data\.get\('interest'\);/);

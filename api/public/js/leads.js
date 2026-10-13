@@ -50,21 +50,21 @@ const campaignRequestType = (() => {
 })();
 
 const REQUEST_TYPE_LABELS = {
-  installation_info: 'Información para estudiar una instalación',
-  pilot: 'Probar el servicio en mi finca',
+  installation_info: 'Pedir información para instalar una estación',
+  pilot: 'Solicitar una prueba del servicio en mi finca',
 };
 
 export const LEAD_FORM_HTML = `
   <div class="section-heading"><div><p class="eyebrow">SOLICITUD</p><h2 data-lead-title></h2></div></div>
     <p class="hint" data-lead-description>Déjanos tus datos y revisaremos la solicitud.</p>
-    <p class="hint"><strong>Esta no es la vía de acceso inmediato.</strong> Para entrar ahora mismo con tu correo, usa <a href="#/entrar">Entrar</a>. Y para ver un ejemplo con datos inventados, está la <a href="#/demo-agricola">simulación</a>.</p>
+    <p class="hint"><strong>Esta no es la vía de acceso inmediato.</strong> Para consultar el histórico con tu correo, usa <a href="#/entrar">Consultar histórico</a>. Y para ver un ejemplo con datos inventados, está la <a href="#/demo-agricola">simulación</a>.</p>
   <form class="rule-form" data-lead-form>
     <label>Tu nombre<input name="name" required minlength="2" maxlength="120" autocomplete="name"></label>
     <label>Municipio<input name="zone" required maxlength="160" autocomplete="address-level2"></label>
     <fieldset class="contact-choice span-all">
       <legend>¿Qué necesitas?</legend>
-      <label class="check"><input type="radio" name="request_type" value="installation_info"> Información para estudiar una instalación</label>
-      <label class="check"><input type="radio" name="request_type" value="pilot"> Probar el servicio en mi finca</label>
+      <label class="check"><input type="radio" name="request_type" value="installation_info"> Pedir información para instalar una estación</label>
+      <label class="check"><input type="radio" name="request_type" value="pilot"> Solicitar una prueba del servicio en mi finca</label>
     </fieldset>
     <p class="hint span-all hidden" data-request-type-note></p>
     <fieldset class="contact-choice span-all">
@@ -160,7 +160,7 @@ export async function submitLead(event) {
   const requestType = data.get('request_type');
   const channel = data.get('preferred_channel');
   if (!requestType) {
-    const message = 'Elige qué necesitas: información de instalación o probar el servicio.';
+      const message = 'Elige qué necesitas: pedir información para instalar una estación o solicitar una prueba del servicio en tu finca.';
     const requestError = scope.querySelector('[data-request-type-note]');
     if (requestError) {
       requestError.textContent = message;
@@ -237,7 +237,7 @@ export async function submitLead(event) {
     // reservada: la solicitud solo se ha guardado para revisión.
     const channelLabel = channel === 'whatsapp' ? 'WhatsApp' : 'el correo electrónico';
     const kind = requestType === 'installation_info'
-      ? 'tu consulta sobre una instalación' : 'tu solicitud para probar el servicio';
+      ? 'tu petición para recibir información sobre una instalación' : 'tu solicitud para probar el servicio en tu finca';
     const received = `${kind}${body.zone ? ` en ${body.zone}` : ''}`;
     showNotice(scope, '[data-lead-ok]',
       `${scope.dataset.leadSuccess ? `${scope.dataset.leadSuccess} ` : ''}Hemos recibido ${received}. Te responderemos por ${channelLabel} dentro de 1-2 días laborables. No hace falta que hagas nada más.`);
@@ -255,7 +255,7 @@ export function mountLeadForms(root = document) {
   root.querySelectorAll('[data-lead-embed]').forEach((section) => {
     section.innerHTML = LEAD_FORM_HTML;
     const title = section.querySelector('[data-lead-title]');
-    if (title) title.textContent = section.dataset.leadTitle || 'Cuéntanos de tu finca';
+    if (title) title.textContent = section.dataset.leadTitle || 'Pedir información para instalar una estación';
     const description = section.querySelector('[data-lead-description]');
     if (description && section.dataset.leadDescription) description.textContent = section.dataset.leadDescription;
     const success = section.querySelector('[data-lead-ok]');
@@ -271,7 +271,7 @@ export function mountLeadForms(root = document) {
       if (campaignRequestType) {
         const note = form.querySelector('[data-request-type-note]');
         if (note) {
-          note.textContent = `Has abierto la ${REQUEST_TYPE_LABELS[campaignRequestType].toLowerCase()}: si no es lo que buscabas, cámbialo aquí abajo.`;
+          note.textContent = `Modalidad seleccionada: ${REQUEST_TYPE_LABELS[campaignRequestType]}. Si no es lo que buscabas, cámbiala aquí abajo.`;
           note.classList.remove('hidden');
         }
       }

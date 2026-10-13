@@ -378,7 +378,7 @@ function renderMagicView() {
   if (!form || !notice) return;
   const title = $('#magic-title');
   const description = $('#magic-description');
-  if (title) title.textContent = pendingMagicToken ? 'Confirma tu acceso' : 'Consulta el histórico ampliado';
+  if (title) title.textContent = pendingMagicToken ? 'Confirma tu acceso' : 'Consultar histórico';
   if (description) description.textContent = pendingMagicToken
     ? 'Tu enlace está listo. Pulsa «Confirmar y entrar»; no necesitas volver a escribir tu correo.'
     : 'Escribe tu correo y recibe un enlace de un solo uso para entrar sin contraseña. Sin crear cuenta con antelación.';

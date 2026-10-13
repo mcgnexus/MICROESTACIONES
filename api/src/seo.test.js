@@ -7,6 +7,11 @@ test('el sitemap contiene las páginas públicas servidas y excluye acceso y dat
   for (const path of ['/entrar', '/panel', '/admin', '/cuenta', '/api/v1/me']) assert.ok(!SITEMAP_PATHS.includes(path));
   assert.match(sitemapXml('https://example.test'), /<loc>https:\/\/example.test\/demo-agricola<\/loc>/);
 });
+test('las páginas de inicio de solicitud usan los nombres de acción acordados', () => {
+  assert.match(PUBLIC_PAGES['/vias'][0], /Cómo empezar con TecRural/);
+  assert.match(PUBLIC_PAGES['/vias'][1], /Consulta el histórico con tu correo o pide información para instalar una estación/);
+  assert.match(PUBLIC_PAGES['/solicitar-piloto'][0], /Pedir información para instalar una estación/);
+});
 test('el dominio público elimina consultas y rechaza credenciales y protocolos ajenos a web', () => {
   assert.equal(siteOrigin('https://example.test/?token=secret'), 'https://example.test');
   assert.throws(() => siteOrigin('https://user:password@example.test'));

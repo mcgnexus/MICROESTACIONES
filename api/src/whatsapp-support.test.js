@@ -46,6 +46,8 @@ test('server exposes the conditional block and keeps the number separate', () =>
 
 test('la página de contacto usa el bloque condicional de WhatsApp', () => {
   assert.match(contacto, /<!--SUPPORT_WHATSAPP-->/);
+  assert.match(contacto, /Pedir información para instalar una estación/);
+  assert.doesNotMatch(contacto, /Solicitar acceso gratuito/);
   // Ya no se remite al número de voz para WhatsApp: hay enlace propio o nada.
   assert.doesNotMatch(contacto, /escríbenos por WhatsApp a ese mismo número/);
 });
