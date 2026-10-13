@@ -95,6 +95,6 @@ test('la nota global del pie no repite lo que ya declara cada pantalla', () => {
   // La advertencia de fuentes y de validación ya vive en la documentación y en
   // las etiquetas; el pie conserva solo lo que no se ve en ninguna otra parte.
   assert.doesNotMatch(footnote, /se identifican por su proveedor/, 'el pie repite lo que ya dice la etiqueta');
-  assert.match(footnote, /Las gráficas muestran solo mediciones validadas/);
+  assert.match(footnote, /Las gráficas muestran solo datos comprobados/);
   assert.match(footnote, /etiqueta de procedencia/);
 });

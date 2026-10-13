@@ -44,7 +44,7 @@ export function durationText(seconds) {
 function alertRow(alert, editable) {
   const pressure = alert.ruleSnapshot?.metric === 'pressure';
   const alertValue = pressure && typeof alert.value === 'number'
-    ? `${pressureText(alert.value)} mbar` : JSON.stringify(alert.value);
+    ? `${pressureText(alert.value)} milibares` : JSON.stringify(alert.value);
   const status = alert.closedAt
     ? `<span class="badge badge-muted">${alert.autoResolved ? 'Recuperado' : 'Cerrado'} ${dateText(alert.closedAt)}${alert.closureReason ? ` · ${escapeText(alert.closureReason)}` : ''}</span>`
     : '<span class="badge badge-warn">Abierto</span>';
@@ -52,9 +52,9 @@ function alertRow(alert, editable) {
     ? `<span class="badge badge-valid">Reconocido ${dateText(alert.acknowledgedAt)}</span>`
     : '<span class="badge badge-invalid">Sin reconocer</span>';
   const ruleInfo = alert.ruleId
-    ? `<span class="source-tag">Regla ${escapeText(METRIC_LABELS[alert.ruleSnapshot?.metric] || alert.ruleSnapshot?.metric || '')} ${escapeText(COMPARATOR_LABELS[alert.ruleSnapshot?.comparator] || '')} ${pressure ? `${pressureText(alert.ruleSnapshot?.threshold)} mbar` : escapeText(alert.ruleSnapshot?.threshold ?? '')}`
+    ? `<span class="source-tag">Regla ${escapeText(METRIC_LABELS[alert.ruleSnapshot?.metric] || alert.ruleSnapshot?.metric || '')} ${escapeText(COMPARATOR_LABELS[alert.ruleSnapshot?.comparator] || '')} ${pressure ? `${pressureText(alert.ruleSnapshot?.threshold)} milibares` : escapeText(alert.ruleSnapshot?.threshold ?? '')}`
       + `${alert.ruleSnapshot?.min_duration_s ? ` · exige ${durationText(alert.ruleSnapshot.min_duration_s)}` : ''}`
-      + `${alert.ruleSnapshot?.margin ? ` · margen ${pressure ? `${pressureText(alert.ruleSnapshot.margin)} mbar` : escapeText(String(alert.ruleSnapshot.margin))}` : ''}`
+      + `${alert.ruleSnapshot?.margin ? ` · margen ${pressure ? `${pressureText(alert.ruleSnapshot.margin)} milibares` : escapeText(String(alert.ruleSnapshot.margin))}` : ''}`
       + `${alert.ruleSnapshot?.urgent ? ' · urgente' : ''}</span>`
     : '';
   const actions = editable ? [
@@ -83,8 +83,8 @@ function alertRow(alert, editable) {
 
 function ruleRow(rule, editable) {
   const pressure = rule.metric === 'pressure';
-  const threshold = pressure ? `${pressureText(rule.threshold)} mbar` : numberText(rule.threshold);
-  const margin = pressure ? `${pressureText(rule.recoveryMargin)} mbar` : numberText(rule.recoveryMargin);
+  const threshold = pressure ? `${pressureText(rule.threshold)} milibares` : numberText(rule.threshold);
+  const margin = pressure ? `${pressureText(rule.recoveryMargin)} milibares` : numberText(rule.recoveryMargin);
   const actions = editable && !rule.system ? [
     `<button type="button" data-toggle-rule="${rule.id}" data-next="${rule.enabled ? 'false' : 'true'}">${rule.enabled ? 'Desactivar' : 'Activar'}</button>`,
     `<button type="button" class="danger" data-delete-rule="${rule.id}">Eliminar</button>`,
@@ -135,7 +135,7 @@ export async function renderStationAlertsTab(content, stationId) {
       <thead><tr><th>Nivel</th><th>Aviso</th><th>Estación</th><th>Dato</th><th>Fuente</th><th>Destinatario</th><th>Estado</th><th></th></tr></thead>
       <tbody>${alerts.alerts.map((alert) => alertRow(alert, editable)).join('') || '<tr><td colspan="8">Sin avisos registrados.</td></tr>'}</tbody>
     </table></div>
-    ${alerts.engine_verified === false ? '<p class="warn-box">El motor de avisos no está comprobado en esta instalación: los avisos de umbral local no se presentan como tales.</p>' : ''}
+    ${alerts.engine_verified === false ? '<p class="warn-box">El motor de avisos no está comprobado en esta instalación: los avisos por superar un límite no se presentan como tales.</p>' : ''}
     ${deliveryNote()}
   </section>
   ${rulesSection(rules.rules || [], stationId, editable)}
@@ -146,7 +146,7 @@ export async function renderStationAlertsTab(content, stationId) {
 
 function rulesSection(rules, stationId, editable) {
   return `<section class="panel">
-    <div class="section-heading"><div><p class="eyebrow">REGLAS</p><h2>Umbrales de aviso</h2></div></div>
+    <div class="section-heading"><div><p class="eyebrow">REGLAS</p><h2>Límites de aviso</h2></div></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Métrica</th><th>Condición</th><th>Exige</th><th>Margen</th><th>Urgente</th><th>Mensaje</th><th>Destinatario</th><th>Estado</th><th></th></tr></thead>
       <tbody>${rules.map((rule) => ruleRow(rule, editable)).join('') || '<tr><td colspan="9">Sin reglas definidas.</td></tr>'}</tbody>
@@ -157,7 +157,7 @@ function rulesSection(rules, stationId, editable) {
     ${editable ? `<form data-rule-form class="rule-form">
       <label>Métrica<select name="metric">${Object.entries(METRIC_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label>
       <label>Condición<select name="comparator">${Object.entries(COMPARATOR_LABELS).map(([key, label]) => `<option value="${key}">${escapeText(label)}</option>`).join('')}</select></label>
-      <label data-threshold-label>Umbral<input type="number" step="any" name="threshold" required></label>
+      <label data-threshold-label>Límite de la regla<input type="number" step="any" name="threshold" required></label>
       <label>Nivel<select name="level"><option value="2">Aviso</option><option value="1">Prioritario</option></select></label>
       <label>Categoría<select name="category">${Object.entries(CATEGORY_LABELS).map(([key, label]) => `<option value="${key}" ${key === 'general' ? 'selected' : ''}>${escapeText(label)}</option>`).join('')}</select></label>
       <label>Se sostiene (s)<input type="number" name="min_duration_s" min="0" max="86400" step="60" value="0"></label>
@@ -207,8 +207,8 @@ function wireActions(content, stationId, reload) {
   if (ruleForm) {
     const updatePressureLabels = () => {
       const isPressure = ruleForm.elements.metric.value === 'pressure';
-      $('[data-threshold-label]', ruleForm).firstChild.textContent = isPressure ? 'Umbral (mbar)' : 'Umbral';
-      $('[data-margin-label]', ruleForm).firstChild.textContent = isPressure ? 'Margen de recuperación (mbar)' : 'Margen de recuperación';
+      $('[data-threshold-label]', ruleForm).firstChild.textContent = isPressure ? 'Límite (milibares)' : 'Límite de la regla';
+      $('[data-margin-label]', ruleForm).firstChild.textContent = isPressure ? 'Margen de recuperación (milibares)' : 'Margen de recuperación';
     };
     ruleForm.elements.metric.addEventListener('change', updatePressureLabels);
     updatePressureLabels();
@@ -349,14 +349,14 @@ export function signupBlock({ me, engineVerified, whatsappDelivery, prefs = null
   const steps = signupSteps({ me, engineVerified, whatsappDelivery, prefs, prefsKnown });
   const complete = steps.every((step) => step.state === 'ok');
   const headline = complete
-    ? 'Tu alta de avisos está completa. En el periodo consultado, ninguna condición ha superado los umbrales; si esperabas un aviso, revisa la cobertura de datos de arriba.'
+    ? 'Tu alta de avisos está completa. En el periodo consultado, ninguna condición ha pasado de su límite; si esperabas un aviso, revisa la calidad de los datos recibidos de arriba.'
     : 'Tu alta de avisos está incompleta: aunque hubiera riesgo, con el alta a medias no te llegaría ningún aviso.';
   return `<section class="panel" data-signup>
     <div class="section-heading"><div><p class="eyebrow">ESTADO DE ALTA</p><h2>Por qué puede que no haya avisos</h2></div></div>
     <p class="hint">${escapeText(headline)}</p>
     ${renderSignupSteps(steps)}
     <p class="hint">Este bloque habla de tu configuración. Que no haya avisos tampoco significa que no haya riesgo:
-      la cobertura de datos de arriba indica qué fuentes están activas y cuáles no.</p>
+      la calidad de los datos recibidos de arriba indica qué fuentes están activas y cuáles no.</p>
   </section>`;
 }
 

@@ -14,7 +14,7 @@ function coverageScopeNote(gaps) {
   if (!gaps?.evaluated || !gaps.truncatedToNow) return '';
   const evaluated = new Date(gaps.evaluated.to);
   const requested = new Date(gaps.requested?.to || gaps.to);
-  return ` · cobertura hasta ahora (hasta el ${dayText(evaluated)})`
+  return ` · calidad de los datos hasta ahora (hasta el ${dayText(evaluated)})`
     + ` · el rango pedido llega al ${dayText(requested)}; ese futuro no resta fiabilidad`;
 }
 
@@ -23,7 +23,7 @@ function gapsSummary(gaps) {
   return ` · faltan por tiempo: ${gaps.timeMissing ?? '—'}`
     + ` · huecos de secuencia: ${gaps.sequence?.gaps?.length ?? 0} (${gaps.sequence?.total ?? 0} muestras)`
     + ` · reinicios de secuencia: ${gaps.sequence?.resets?.length ?? 0}`
-    + ` · cobertura de recibidas ${gaps.receivedPct ?? '—'} %`
+    + ` · datos recibidos ${gaps.receivedPct ?? '—'} %`
     + coverageScopeNote(gaps);
 }
 
@@ -124,7 +124,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
       <td>${dateText(row.observedAt)}</td>
       <td>${cell(row.temperatureC, '°C')}</td>
       <td>${cell(row.humidityPct, '%')}</td>
-      <td class="pressure-cell">${row.pressurePa == null ? '—' : `${pressureText(row.pressurePa)} mbar`}</td>
+      <td class="pressure-cell">${row.pressurePa == null ? '—' : `${pressureText(row.pressurePa)} milibares`}</td>
       <td>${validationBadge(row)}</td>
       <td class="row-actions">${actions}</td>
     </tr>`;
@@ -206,7 +206,7 @@ export function mountMeasurements(root, { stations = [], fixedStation = null } =
         <dt>Hora observada</dt><dd>${dateText(row.observedAt)} · calidad ${escapeText(row.timeQuality)}</dd>
         <dt>Hora de recepción</dt><dd>${dateText(row.receivedAt)}</dd>
         <dt>Estado</dt><dd>${validationBadge(row)} ${flags.map(escapeText).join(' · ')}</dd>
-        <dt>Valores</dt><dd>${numberText(row.temperatureC)} °C · ${numberText(row.humidityPct)} % · ${pressureText(row.pressurePa)} mbar · ${numberText(row.batteryMv, 0)} mV · ${numberText(row.lux, 0)} lux</dd>
+        <dt>Valores</dt><dd>${numberText(row.temperatureC)} °C · ${numberText(row.humidityPct)} % · ${pressureText(row.pressurePa)} milibares · ${numberText(row.batteryMv, 0)} mV · ${numberText(row.lux, 0)} lux</dd>
         <dt>Origen / flags</dt><dd>${escapeText(row.source || '—')} · ${escapeText(row.flags)} · validación ${escapeText(row.validationFlags)}</dd>
         <dt>Valor recibido (raw)</dt><dd><code>${escapeText(row.rawPayload ? JSON.stringify(row.rawPayload) : '—')}</code></dd>
       </dl>`;

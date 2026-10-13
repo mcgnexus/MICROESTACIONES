@@ -182,12 +182,12 @@ test('un estado normal no se presenta como garantía ni como un no actuar', () =
   const frost = assessFrost(item());
   assert.equal(frost.tone, 'ok');
   assert.doesNotMatch(frost.meaning, /Sin riesgo de helada/);
-  assert.match(frost.meaning, /por encima del umbral de helada/);
+  assert.match(frost.meaning, /por encima del límite de helada/);
   assert.doesNotMatch(frost.action, /No hace falta hacer nada/);
 
   const heat = assessHeat(item());
   assert.equal(heat.tone, 'ok');
-  assert.match(heat.meaning, /por debajo del umbral de calor/);
+  assert.match(heat.meaning, /por debajo del límite de calor/);
   assert.doesNotMatch(heat.action, /No hace falta hacer nada/);
 
   const none = nextRisk([item()], []);
@@ -271,7 +271,7 @@ test('risk cards say whether the claim is real, forecast or calculated', () => {
   // Y la tarjeta renderizada muestra la insignia con la pista.
   const html = renderStateCards([forecastItem]);
   assert.match(html, /Previsión externa o aviso oficial[^"]*">Previsto</);
-  assert.match(html, /Dato observado o medido[^"]*">Real</);
+  assert.match(html, /Medido por una estación[^"]*">Real</);
 });
 
 test('next risk prefers an open alert, then the nearest advisory', () => {

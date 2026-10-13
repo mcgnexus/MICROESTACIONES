@@ -37,7 +37,7 @@ test('public temperature comparison shows sources, exact hours, sign, metadata a
   assert.match(html, /5051X/);
   assert.match(html, /\+1,1 °C/);
   assert.match(html, /-1 °C/);
-  assert.match(html, /±10 minutos/);
+  assert.match(html, /menos de 10 minutos/);
   assert.match(html, /coordenadas AEMET/);
   assert.match(html, /Previsión · independiente de las observaciones/);
 });
@@ -48,9 +48,9 @@ test('public no-pair and CAP states do not imply a measured difference or no ale
     aemet: { ...station().aemet, warnings: [], warningStatus: 'stale', warningsAgeSeconds: 3600 },
   })]);
   assert.match(html, /No calculada/);
-  assert.match(html, /Sin pareja dentro de ±10 min/);
+  assert.match(html, /Sin datos comparables: las dos lecturas se separan más de 10 minutos/);
   assert.match(html, /Consulta no disponible/);
-  assert.match(html, /sin avisos vigentes en esa respuesta/);
+  assert.match(html, /sin avisos vigentes en ese dato/);
   assert.doesNotMatch(html, /AEMET − AEMET/);
 });
 
@@ -103,8 +103,8 @@ test('the day graph only draws supplied real points and has an explicit empty st
   assert.match(html, /puesta en servicio/);
   // Una muestra de hace más de 24 h no entra en la ventana.
   const old = { history: [{ observedAt: new Date(now - 30 * 60 * 60_000).toISOString(), temperatureC: 1 }] };
-  assert.match(renderDayHistory(old, now), /No hay suficientes mediciones reales/);
-  assert.match(renderDayHistory({ history: [] }, now), /No hay suficientes mediciones reales/);
+  assert.match(renderDayHistory(old, now), /No hay datos suficientes/);
+  assert.match(renderDayHistory({ history: [] }, now), /No hay datos suficientes/);
   assert.doesNotMatch(renderDayHistory({ history: [] }, now), /chart-box/);
   // Sin gráfica no hay CTA colgando: el estado vacío se queda como estaba.
   assert.doesNotMatch(renderDayHistory({ history: [] }, now), /Ver el histórico ampliado/);

@@ -111,7 +111,7 @@ test('un tramo sin duración no genera esperadas ni una cobertura inventada', ()
 test('la tabla distingue el rango pedido del evaluado cuando el filtro llega a futuro', () => {
   const source = readFileSync(new URL('../public/js/measurements.js', import.meta.url), 'utf8');
   // El texto tiene que nombrar el periodo evaluado y decir que el futuro no resta.
-  assert.match(source, /cobertura hasta ahora/);
+  assert.match(source, /calidad de los datos hasta ahora/);
   assert.match(source, /ese futuro no resta fiabilidad/);
   assert.match(source, /gaps\.evaluated\.to/);
   // Y no puede anunciarlo cuando el rango pedido ya está en pasado.

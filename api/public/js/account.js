@@ -314,8 +314,8 @@ export async function renderAccount(root) {
       <p class="hint">Esta verificación es la del correo con el que entras: confirma tu acceso. Es distinta de la verificación por código de un destinatario de avisos, que se hace arriba, en cada canal.</p>
     </section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">REFERENCIA PARA EL EQUIPO</p><h2>Umbrales que te servirían</h2></div></div>
-      <p class="hint"><strong>Preferencia para valorar con el equipo. Todavía no modifica tus avisos.</strong> Estos valores no cambian los avisos que recibes: los umbrales que disparan las alertas los fija el equipo por estación y no se editan desde aquí.</p>
+      <div class="section-heading"><div><p class="eyebrow">REFERENCIA PARA EL EQUIPO</p><h2>Límites que te servirían</h2></div></div>
+      <p class="hint"><strong>Preferencia para valorar con el equipo. Todavía no modifica tus avisos.</strong> Estos valores no cambian los avisos que recibes: los límites que disparan las alertas los fija el equipo por estación y no se editan desde aquí.</p>
       <p class="hint">Déjanos los que tú usarías: los revisamos contigo al ajustar el piloto. Rellenarlo es opcional.</p>
       <form data-thresholds-form class="rule-form">
         <label>A partir de qué °C te preocuparía la helada (°C)<input type="number" step="0.5" placeholder="${FROST_C}" name="frost_c" value="${prefs.customThresholds?.frost_c ?? ''}"></label>
@@ -560,7 +560,7 @@ export async function renderAccount(root) {
       await renderAccount(root);
       $('[data-thresholds-ok]', root).textContent = 'Recibido. Lo revisamos contigo al ajustar el piloto; no cambia tus avisos.';
     } catch (err) {
-      error(`No se pudieron enviar los umbrales: ${err.message}`);
+      error(`No se pudieron enviar los límites: ${err.message}`);
     }
   });
 

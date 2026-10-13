@@ -51,31 +51,31 @@ test('cada lectura mantiene su ubicación y su hora por separado', () => {
   assert.equal(readingTimes.length, 2, 'debe haber dos horas, una por lectura');
 });
 
-test('la diferencia aparece debajo, con el signo y el matiz de pareja', () => {
+test('la diferencia aparece debajo, con el signo y la lectura de calor o frío', () => {
   const html = renderPublicZones([station()]);
   const diffBlock = html.slice(html.indexOf('comparison-diff'));
   assert.match(diffBlock, /\+1,1 °C/);
-  assert.match(diffBlock, /microestación más cálida/);
-  assert.match(diffBlock, /pareja dentro de ±10 min/);
+  assert.match(diffBlock, /En este punto hace más calor/);
+  assert.match(diffBlock, /las dos lecturas se separan menos de 10 minutos/);
 });
 
-test('la diferencia negativa declara "más fría" y mantiene las dos horas', () => {
+test('la diferencia negativa declara "hace más frío" y mantiene las dos horas', () => {
   const html = renderPublicZones([station({ comparison: {
     ...station().comparison, local: { ...station().comparison.local, temperatureC: 8.1 }, differenceC: -1.0,
   } })]);
   assert.match(html, /-1 °C/);
-  assert.match(html, /microestación más fría/);
+  assert.match(html, /En este punto hace más frío/);
   const readingTimes = html.match(/class="reading-time">/g) || [];
   assert.equal(readingTimes.length, 2, 'las dos horas se mantienen');
 });
 
-test('sin pareja no se calcula diferencia y el estado lo deja claro', () => {
+test('sin lecturas comparables no se calcula diferencia y el estado lo deja claro', () => {
   const html = renderPublicZones([station({ comparison: {
     ...station().comparison, state: 'no_pair', differenceC: null, timeOffsetSeconds: 1800,
   } })]);
   assert.match(html, /No calculada/);
-  assert.match(html, /Sin pareja dentro de ±10 min/);
-  assert.doesNotMatch(html, /más cálida|más fría/);
+  assert.match(html, /Sin datos comparables: las dos lecturas se separan más de 10 minutos/);
+  assert.doesNotMatch(html, /En este punto hace más calor|En este punto hace más frío/);
 });
 
 test('la distancia y la altitud se ofrecen en un desplegable', () => {
@@ -86,10 +86,10 @@ test('la distancia y la altitud se ofrecen en un desplegable', () => {
   assert.match(html, /coordenadas AEMET/);
 });
 
-// F5 · P2: cuando la pareja con AEMET es anterior a la última lectura, la
+// F5 · P2: cuando la lectura comparada con AEMET es anterior a la última, la
 // comparación se fecha (no describe el «ahora») y se dice que la última lectura
-// aún no tiene pareja. Así solo hay un valor «actual»: el de la tarjeta hero.
-test('una pareja anterior a la última lectura se presenta como histórica', () => {
+// aún no se ha comparado. Así solo hay un valor «actual»: el de la tarjeta hero.
+test('una lectura anterior a la última se presenta como histórica', () => {
   const html = renderPublicZones([station({
     temperatureC: 16.3, temperatureObservedAt: '2026-10-07T21:47:00Z',
     comparison: {
@@ -99,20 +99,20 @@ test('una pareja anterior a la última lectura se presenta como histórica', () 
       differenceC: 0.5,
     },
   })]);
-  // La diferencia va fechada y la lectura local se marca como pareja, no actual.
+  // La diferencia va fechada y la lectura local se marca como anterior, no actual.
   assert.match(html, /a las \d{2}:\d{2} · \+0,5 °C/);
-  assert.match(html, /Pareja con AEMET · no es la última lectura/);
-  // Y se declara que la última lectura (16,3 °C a las 21:47) no tiene pareja.
-  assert.match(html, /La última lectura \(16,3 °C a las \d{2}:\d{2}\) todavía no tiene pareja con AEMET/);
+  assert.match(html, /Comparación con la estación oficial de una lectura anterior/);
+  // Y se declara que la última lectura (16,3 °C a las 21:47) no se ha comparado.
+  assert.match(html, /La última lectura \(16,3 °C a las \d{2}:\d{2}\) todavía no se ha podido comparar con la estación oficial/);
 });
 
-test('cuando la pareja es la última lectura no se marca como histórica', () => {
+test('cuando la lectura comparada es la última no se marca como histórica', () => {
   const html = renderPublicZones([station({
     temperatureObservedAt: '2026-10-07T12:05:00Z',
     comparison: { ...station().comparison, isLatestLocal: true },
   })]);
   assert.match(html, /\+1,1 °C/);
   assert.doesNotMatch(html, /a las \d{2}:\d{2} · \+1,1 °C/);
-  assert.doesNotMatch(html, /todavía no tiene pareja/);
-  assert.doesNotMatch(html, /no es la última lectura/);
+  assert.doesNotMatch(html, /todavía no se ha podido comparar/);
+  assert.doesNotMatch(html, /de una lectura anterior/);
 });

@@ -20,13 +20,13 @@ export const SIM_SCENARIOS = [
   {
     id: 'noche-fria',
     title: 'Noche fría',
-    short: 'Descenso nocturno y cruce de un umbral',
+    short: 'Descenso nocturno y cruce de un límite',
     start: { hour: 18, minute: 0 },
     durationMinutes: 720,
     stepMinutes: 30,
     comparator: 'below',
     threshold: { default: 2, min: -6, max: 10, step: 0.5 },
-    intro: 'Una noche de invierno. La temperatura desciende y cruza un umbral que tú eliges.',
+    intro: 'Una noche de invierno. La temperatura desciende y cruza un límite que tú eliges.',
     distinguishForecast: true,
     series: [
       {
@@ -46,7 +46,7 @@ export const SIM_SCENARIOS = [
           [360, 1.3], [420, 0.3], [480, -0.6], [540, -1.4], [600, -2.0], [660, -2.3], [720, -1.7]],
       },
     ],
-    summary: 'La previsión ayuda a prepararse, pero el aviso local se basa en lo medido en tu emplazamiento: por eso las dos curvas pueden cruzar el umbral a horas distintas.',
+    summary: 'La previsión ayuda a prepararse, pero el aviso local se basa en lo medido en tu emplazamiento: por eso las dos curvas pueden cruzar el límite a horas distintas.',
   },
   {
     id: 'jornada-calurosa',
@@ -69,7 +69,7 @@ export const SIM_SCENARIOS = [
           [720, 30.0], [780, 26.5], [840, 23.0]],
       },
     ],
-    summary: 'La duración por encima del umbral importa tanto como el valor máximo: una hora muy alta y varias horas seguidas plantean situaciones distintas.',
+    summary: 'La duración por encima del límite importa tanto como el valor máximo: una hora muy alta y varias horas seguidas plantean situaciones distintas.',
   },
   {
     id: 'zonas-finca',
@@ -206,18 +206,18 @@ export function formatDuration(minutes) {
 // demostración; repetirlo aquí solo añadiría ruido.
 export function heatStressNote(minutes) {
   if (minutes <= 0) {
-    return { tone: 'muted', text: 'No se alcanza el umbral durante ningún tramo.' };
+    return { tone: 'muted', text: 'No se alcanza el límite durante ningún tramo.' };
   }
   const duration = formatDuration(minutes);
   if (minutes < 120) {
     return {
       tone: 'warn',
-      text: `Temperatura por encima del umbral durante ${duration}. Condiciones cálidas puntuales: conviene revisar sombra, agua y ventilación del ganado.`,
+      text: `Temperatura por encima del límite durante ${duration}. Condiciones cálidas puntuales: conviene revisar sombra, agua y ventilación del ganado.`,
     };
   }
   return {
     tone: 'alert',
-    text: `Temperatura por encima del umbral durante ${duration} seguidos. Riesgo orientativo de estrés térmico por el calor sostenido: refuerza sombra, agua y ventilación.`,
+    text: `Temperatura por encima del límite durante ${duration} seguidos. Riesgo orientativo de estrés térmico por el calor sostenido: refuerza sombra, agua y ventilación.`,
   };
 }
 
@@ -281,7 +281,7 @@ function chartSvg(scenario, built) {
   }).join('');
   const thresholdLine = `
     <line x1="${left}" y1="${y(built.threshold)}" x2="${width - right}" y2="${y(built.threshold)}" class="sim-threshold-line"/>
-    <text x="${width - right}" y="${y(built.threshold) - 6}" class="sim-threshold-svg" text-anchor="end">Umbral ${thresholdText(built.threshold)} °C</text>`;
+    <text x="${width - right}" y="${y(built.threshold) - 6}" class="sim-threshold-svg" text-anchor="end">Límite ${thresholdText(built.threshold)} °C</text>`;
   const paths = built.series.map((item) => {
     const d = item.points.map((point, index) => (
       `${index ? 'L' : 'M'}${x(point.t).toFixed(1)} ${y(point.temperatureC).toFixed(1)}`
@@ -291,7 +291,7 @@ function chartSvg(scenario, built) {
       : '';
     return `<path d="${d}" fill="none" stroke="${item.color}" stroke-width="2.5"${item.dashed ? ' stroke-dasharray="7 5"' : ''}/>${marker}`;
   }).join('');
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Serie simulada del escenario ${escapeText(scenario.title)} con el umbral ajustado">
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Datos simulados del escenario ${escapeText(scenario.title)} con el límite ajustado">
     ${grid}${xTicks}${thresholdLine}${paths}
   </svg>`;
 }
@@ -299,11 +299,11 @@ function chartSvg(scenario, built) {
 function legend(scenario, built) {
   return `<ul class="sim-legend">${built.series.map((item) => `
     <li><span class="sim-swatch${item.dashed ? ' is-dashed' : ''}" style="--swatch:${item.color}"></span>${escapeText(item.label)}</li>`).join('')}
-    <li><span class="sim-swatch is-threshold"></span>Umbral local ajustable</li></ul>`;
+    <li><span class="sim-swatch is-threshold"></span>Límite que tú eliges</li></ul>`;
 }
 
 function crossingText(scenario, item, threshold) {
-  if (!item.crossing) return 'No se cruzaría con este umbral.';
+  if (!item.crossing) return 'No se cruzaría con este límite.';
   const when = `Cruzaría a las ${clockLabel(scenario.start, item.crossing.t)}`;
   return scenario.comparator === 'above'
     ? `${when} y se mantendría hasta ${clockLabel(scenario.start, item.intervals[item.intervals.length - 1].to)}.`
@@ -321,7 +321,7 @@ function resultRows(scenario, built) {
     rows.push(`
       <div class="sim-result-row">
         <span class="sim-swatch is-threshold"></span>
-        <strong>Umbral local</strong>
+        <strong>Límite que tú eliges</strong>
         <span>${thresholdText(built.threshold)} °C, el valor que tú eliges para que se genere el aviso.</span>
       </div>`);
   }
@@ -335,7 +335,7 @@ function scenarioSummary(scenario, built) {
     const peak = item.points.reduce((max, point) => (point.temperatureC > max.temperatureC ? point : max), item.points[0]);
     const note = heatStressNote(item.sustained);
     return `<div class="sim-summary">
-      <p class="sim-facts">Máximo <strong>${numberText(peak.temperatureC, 1)} °C</strong> a las ${clockLabel(scenario.start, peak.t)} · por encima del umbral <strong>${formatDuration(item.sustained)}</strong></p>
+      <p class="sim-facts">Máximo <strong>${numberText(peak.temperatureC, 1)} °C</strong> a las ${clockLabel(scenario.start, peak.t)} · por encima del límite <strong>${formatDuration(item.sustained)}</strong></p>
       <p class="sim-note tone-${note.tone}">${escapeText(note.text)}</p>
       <p class="hint">Valor orientativo basado únicamente en temperatura y duración: no es un diagnóstico veterinario ni una recomendación válida para toda la ganadería.</p>
     </div>`;
@@ -382,10 +382,10 @@ export function renderSimulationShell() {
         <div class="sim-controls">
           <p class="sim-scenario-title" data-sim-title></p>
           <p class="hint" data-sim-intro></p>
-          <label class="sim-threshold-label" for="sim-threshold">Umbral del aviso
+          <label class="sim-threshold-label" for="sim-threshold">Límite del aviso
             <output id="sim-threshold-value" for="sim-threshold"></output></label>
           <input type="range" id="sim-threshold" data-sim-threshold min="0" max="1" step="0.5" value="0">
-          <p class="sim-threshold-hint">Simulación: ajusta el umbral y observa cuándo aparecería un aviso.</p>
+          <p class="sim-threshold-hint">Simulación: ajusta el límite y observa cuándo aparecería un aviso.</p>
         </div>
         <div class="sim-chart" data-sim-chart></div>
         <div class="sim-result" data-sim-result aria-live="polite"></div>
@@ -397,7 +397,7 @@ export function renderSimulationShell() {
       </details>
       ${originLegend([
         { kind: 'simulated' },
-        { kind: 'forecast', provider: 'openmeteo', text: 'Serie discontinua: lo que un proveedor externo habría previsto. También es un dato inventado para el ejemplo.' },
+        { kind: 'forecast', provider: 'openmeteo', text: 'Datos discontinuos: lo que un proveedor externo habría previsto. También es un dato inventado para el ejemplo.' },
       ])}
     </div>
     <div class="sim-lead hidden" data-sim-lead>

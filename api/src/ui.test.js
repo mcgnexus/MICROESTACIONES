@@ -26,7 +26,7 @@ test('pressure values are converted from Pa to mbar in the UI and station charts
   const history = [0, 1, 2].map((index) => ({ observedAt: new Date(index * 3600000).toISOString(), pressurePa: 90000 + index * 100 }));
   const section = chartSection(history, { pressure_min: 90000, pressure_max: 90200, pressure_avg: 90100 });
   assert.match(section, /<h3>Presión<\/h3>/);
-  assert.match(section, /chart-current"><strong>902<\/strong><small>mbar<\/small>/);
+  assert.match(section, /chart-current"><strong>902<\/strong><small>milibares<\/small>/);
   assert.match(section, /900/);
   assert.doesNotMatch(section, /Presión · Pa/);
 });
@@ -50,7 +50,7 @@ test('station cards compare microstation and AEMET, and prefer AEMET daily forec
   });
   assert.match(html, /Microestación/);
   assert.match(html, /AEMET/);
-  assert.match(html, /<strong>900<\/strong><small>mbar<\/small>/);
+  assert.match(html, /<strong>900<\/strong><small>milibares<\/small>/);
   assert.match(html, /5051X/);
   assert.match(html, /MICROESTACIÓN · MEDICIÓN DIRECTA/);
   // 14 · P2: las capacidades futuras ya no ocupan la rejilla operativa. La

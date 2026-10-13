@@ -21,7 +21,7 @@ export async function renderStatisticsTab(content, stationId, station) {
   const metricCards = Object.entries(data.metrics).map(([key, sourceMetric]) => {
     const metric = key === 'pressure_pa' ? {
       ...sourceMetric,
-      unit: 'mbar', digits: 1,
+      unit: 'milibares', digits: 1,
       min: pressureMbar(sourceMetric.min), max: pressureMbar(sourceMetric.max),
       avg: pressureMbar(sourceMetric.avg), stddev: pressureMbar(sourceMetric.stddev),
       p10: pressureMbar(sourceMetric.p10), p50: pressureMbar(sourceMetric.p50), p90: pressureMbar(sourceMetric.p90),
@@ -60,11 +60,11 @@ export async function renderStatisticsTab(content, stationId, station) {
     if (!result) return '';
     const pressure = key === 'pressure_pa';
     const value = result.suspectedValue == null ? '—'
-      : pressure ? `${numberText(pressureMbar(result.suspectedValue), 1)} mbar`
+      : pressure ? `${numberText(pressureMbar(result.suspectedValue), 1)} milibares`
         : `${numberText(result.suspectedValue, metric.digits ?? 1)} ${metric.unit}`;
     const label = result.status === 'possible_outlier' ? 'Extremo a revisar'
       : result.status === 'no_outlier' ? 'Sin atípico detectado'
-        : result.status === 'no_variation' ? 'Serie constante' : 'Muestras insuficientes';
+        : result.status === 'no_variation' ? 'Valores constantes' : 'Muestras insuficientes';
     const badgeClass = result.status === 'possible_outlier' ? 'badge badge-warn' : 'badge badge-muted';
     return `<article class="dixon-card">
       <div class="dixon-card-head"><strong>${escapeText(metric.label)}</strong><span class="${badgeClass}">${label}</span></div>
@@ -112,8 +112,8 @@ export async function renderStatisticsTab(content, stationId, station) {
       <div class="fact-grid">
         <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
         <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
-        <div><span>Cobertura de recibidas</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
-        <div><span>Cobertura de aceptadas</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
+        <div><span>Datos recibidos</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
+        <div><span>Datos aceptados</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
         <div><span>Aceptadas</span><strong>${coverage.valid} (${coverage.invalid} inválidas)</strong></div>
         <div><span>Avisos del periodo</span><strong>${data.alerts.total}${data.alerts.open ? ` · ${data.alerts.open} abiertos` : ''}</strong></div>
       </div>

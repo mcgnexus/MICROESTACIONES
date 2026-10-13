@@ -28,7 +28,7 @@ test('the three scenarios are simulated and clearly labelled as such', () => {
   // El detalle plegado sigue declarando que no hay avisos reales ni envíos.
   assert.match(shell, /no crean avisos reales, no envían mensajes/);
   // El control del umbral se anuncia como simulación y como acción a explorar.
-  assert.match(shell, /Simulación: ajusta el umbral y observa cuándo aparecería un aviso/);
+  assert.match(shell, /Simulación: ajusta el límite y observa cuándo aparecería un aviso/);
 });
 
 test('interpolating control points stays inside the declared range', () => {
@@ -58,7 +58,7 @@ test('a threshold that the series never reaches produces no crossing', () => {
   const heatPoints = sampleSeries(heat, heat.series[0]);
   assert.equal(firstCrossing(heatPoints, 60, 'above'), null, 'la jornada simulada no llega a 60 °C');
   const html = renderSimulationResult(cold, -50);
-  assert.match(html, /No se cruzaría con este umbral/);
+  assert.match(html, /No se cruzaría con este límite/);
 });
 
 test('the cold scenario distinguishes forecast, observed descent and local threshold', () => {
@@ -72,7 +72,7 @@ test('the cold scenario distinguishes forecast, observed descent and local thres
   const html = renderSimulationResult(cold, 2);
   assert.match(html, /Previsión externa/);
   assert.match(html, /Descenso observado/);
-  assert.match(html, /Umbral local/);
+  assert.match(html, /Límite que tú eliges/);
   assert.match(html, /2,0 °C/);
   // Las dos curvas son distintas: la previsión ilustrativa no replica lo medido.
   assert.notDeepEqual(built.series[0].points.map((point) => point.temperatureC),
@@ -84,7 +84,7 @@ test('sustained heat is measured as duration, not as a diagnosis', () => {
   const item = built.series[0];
   assert.ok(item.sustained > 240, `horas por encima del umbral: ${item.sustained}`);
   const html = renderSimulationResult(heat, 30);
-  assert.match(html, /por encima del umbral/i);
+  assert.match(html, /por encima del límite/i);
   assert.match(html, /orientativo/);
   assert.match(html, /no es un diagnóstico veterinario ni una recomendación válida/);
   assert.doesNotMatch(html, /golpe de calor/);

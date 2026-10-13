@@ -50,7 +50,7 @@
         "@type": "FAQPage",
         "mainEntity": [
           { "@type": "Question", "name": "¿Qué mide la tarjeta del tiempo local?", "acceptedAnswer": { "@type": "Answer", "text": "Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no representa todas las calles ni las fincas." } },
-          { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están dentro de la ventana temporal configurada. Si no hay pareja, ambas lecturas se muestran por separado." } },
+          { "@type": "Question", "name": "¿Cómo se calcula la diferencia con AEMET?", "acceptedAnswer": { "@type": "Answer", "text": "Solo se calcula cuando la medición local y la observación de AEMET están separadas por menos de 10 minutos. Si no, cada lectura se muestra por separado con su hora." } },
           { "@type": "Question", "name": "¿Detectáis tormentas con precisión local?", "acceptedAnswer": { "@type": "Answer", "text": "No. Con los sensores actuales mostramos avisos oficiales y riesgo meteorológico estimado. Detectar tormentas localmente necesitaría pluviómetro, anemómetro y datos de rayos." } },
           { "@type": "Question", "name": "¿Sirve también para ganadería?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. Además de heladas y calor, orientamos sobre estrés térmico del ganado con recomendaciones de sombra, agua y ventilación." } },
           { "@type": "Question", "name": "¿Qué diferencia hay entre entrar con tu correo y consultar una instalación?", "acceptedAnswer": { "@type": "Answer", "text": "Entrar con tu correo da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo de un solo uso: no espera a nadie. Consultar una instalación es la única vía que revisa el equipo: hasta que te contacten no hay acceso concedido, y el envío no es automático: no programa una instalación ni reserva ninguna visita. La simulación no requiere registro y muestra datos inventados. Ninguna vía solicita automáticamente una llamada." } }
@@ -86,6 +86,15 @@
   </header>
   <main id="main-content" tabindex="-1">
     <section id="landing-view">
+      <section id="portada-minima" class="landing-section public-first-section">
+        <div class="public-hero">
+          <p class="eyebrow">MEDICIÓN LOCAL · HUÉSCAR</p>
+          <h1>Tecnología local para el campo</h1>
+          <p class="landing-lead">TecRural acerca mediciones y herramientas meteorológicas a las fincas de Huéscar. Cada emplazamiento tiene su propio microclima.</p>
+          <p class="hint">Conoce las <a href="#/tiempo-local">mediciones actuales y su evolución</a> o <a href="#/fincas">cómo medir en tu finca</a>.</p>
+        </div>
+      </section>
+
       <section id="tiempo-local" class="landing-section public-first-section">
         <div class="public-hero">
           <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
@@ -99,6 +108,20 @@
           <h1>Tiempo local medido en Huéscar</h1>
           <p class="landing-lead">Una microestación mide temperatura y humedad en un punto del casco urbano de Huéscar. Cada lectura indica su hora y describe ese emplazamiento: no representa todas las calles ni tu finca.</p>
         </div>
+      </section>
+
+      <section id="comparacion-aemet" class="landing-section">
+        <p class="eyebrow">DOS FUENTES · DOS UBICACIONES</p>
+        <h2>Comparación con la estación oficial</h2>
+        <p class="section-intro">Comparamos la medición de nuestra estación con la de AEMET solo cuando las dos horas están separadas por menos de 10 minutos. Si no lo están, mostramos cada valor con su hora y no calculamos la diferencia.</p>
+        <div id="public-comparison" class="public-loading" aria-live="polite">Cargando el dato de la estación oficial…</div>
+      </section>
+
+      <section id="evolucion" class="landing-section">
+        <p class="eyebrow">ÚLTIMAS 24 HORAS</p>
+        <h2>Evolución de las mediciones</h2>
+        <p class="section-intro">La gráfica utiliza únicamente datos comprobados del punto urbano publicado. Los huecos se muestran como tales: no se interpolan.</p>
+        <div id="public-evolution" class="public-loading" aria-live="polite">Cargando los datos de las últimas 24 horas…</div>
       </section>
 
       <section id="vias" class="landing-section">
@@ -120,20 +143,6 @@
         <p class="hint">¿Solo quieres ver cómo funciona? Prueba la <a href="#/demo-agricola">simulación con datos inventados</a>.</p>
       </section>
 
-      <section id="comparacion-aemet" class="landing-section">
-        <p class="eyebrow">DOS FUENTES · DOS UBICACIONES</p>
-        <h2>Comparación con AEMET</h2>
-        <p class="section-intro">Solo calculamos la diferencia cuando la medición local y la observación de AEMET están temporalmente emparejadas. Si no lo están, mostramos cada valor con su hora.</p>
-        <div id="public-comparison" class="public-loading" aria-live="polite">Cargando observaciones…</div>
-      </section>
-
-      <section id="evolucion" class="landing-section">
-        <p class="eyebrow">ÚLTIMAS 24 HORAS</p>
-        <h2>Evolución de las mediciones</h2>
-        <p class="section-intro">La gráfica utiliza únicamente muestras reales y validadas del punto urbano publicado. Los huecos se muestran como tales: no se interpolan.</p>
-        <div id="public-evolution" class="public-loading" aria-live="polite">Cargando la serie reciente…</div>
-      </section>
-
       <section id="fincas" class="landing-section">
         <p class="eyebrow">EL PUNTO DE MEDIDA IMPORTA</p>
         <h2>Lo que ocurre en el casco no siempre ocurre en la finca</h2>
@@ -150,7 +159,7 @@
       <section id="demo-agricola" class="landing-section">
         <p class="eyebrow">SIMULACIÓN INTERACTIVA · DATOS INVENTADOS</p>
         <h2>Explora cómo se vería una estación en tu finca</h2>
-        <p class="section-intro">Tres escenarios con datos inventados que no proceden de ninguna estación ni de ninguna finca existente. Mueve el umbral para ver cuándo se generaría un aviso; la simulación no crea avisos reales ni cambia nada. Las mediciones reales están en «Tiempo local», arriba.</p>
+        <p class="section-intro">Tres escenarios con datos inventados que no proceden de ninguna estación ni de ninguna finca existente. Mueve el límite para ver cuándo se generaría un aviso; la simulación no crea avisos reales ni cambia nada. Los datos medidos están en «Tiempo local», arriba.</p>
         <div data-farm-sim></div>
       </section>
 
@@ -178,7 +187,7 @@
         <h2>Dudas habituales</h2>
         <div class="faq">
           <details><summary>¿Qué mide la tarjeta del tiempo local?</summary><p>Temperatura y humedad de una estación situada en un punto del casco urbano. Se indica la hora y la ubicación general; no se presenta como representativa de cada calle o finca.</p></details>
-          <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están dentro de la ventana configurada. Si no hay pareja, no mostramos una diferencia directa.</p></details>
+          <details><summary>¿Cómo se calcula la diferencia con AEMET?</summary><p>Comparamos la medición local con la observación de la estación AEMET indicada solo cuando sus horas están separadas por menos de 10 minutos. Si no, mostramos cada lectura por separado con su hora y no calculamos la diferencia.</p></details>
           <details><summary>¿La lectura del casco representa mi finca?</summary><p>No necesariamente. Hondonadas, vegas y zonas altas pueden tener condiciones distintas según su emplazamiento y las condiciones del momento. Medir en la finca permite observar ese punto concreto.</p></details>
           <details><summary>¿Qué diferencia hay entre entrar con tu correo y consultar una instalación?</summary><p><a href="#/entrar">Entrar con tu correo</a> da acceso de consulta, solo lectura, a las mediciones reales con un enlace de correo: no espera a nadie. <a href="#/solicitar-piloto">Consultar una instalación</a> es la única vía que revisa el equipo: hasta que te contacten no hay acceso concedido, y el envío no es automático: no programa una instalación ni reserva ninguna visita. <a href="#/demo-agricola">La simulación</a> no requiere registro y muestra datos inventados. Ninguna vía solicita automáticamente una llamada.</p></details>
           <details><summary>¿Detectáis tormentas con precisión local?</summary><p>No. Se muestran avisos oficiales y riesgo estimado. Una detección local precisa requeriría sensores adicionales.</p></details>
@@ -194,7 +203,7 @@
 
       <details class="landing-footnote">
         <summary>Nota técnica sobre los datos</summary>
-        <p class="footnote">Las gráficas muestran solo mediciones validadas de la estación; las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. No se calculan predicciones meteorológicas propias. Cada dato lleva su etiqueta de procedencia: «Medido», «Previsión», «Calculado» o «Simulación», con su proveedor y su hora.</p>
+        <p class="footnote">Las gráficas muestran solo datos comprobados de la estación; las lecturas extrañas se conservan con su rastro y las borradas permanecen en el registro. No se calculan predicciones meteorológicas propias. Cada dato lleva su etiqueta de procedencia: «Medido», «Previsión», «Calculado» o «Simulación», con su proveedor y su hora.</p>
       </details>
     </section>
     <section id="login-view" class="login-card hidden">

@@ -43,7 +43,7 @@ export function renderDemoOverview(data) {
     <div class="stat-grid">
       ${demoMetricCard(data.metrics.temperature_c, '°C', 1)}
       ${demoMetricCard(data.metrics.humidity_pct, '%', 1)}
-      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour) } : null }, 'mbar', 1)}
+      ${demoMetricCard({ ...data.metrics.pressure_pa, min: pressureMbar(data.metrics.pressure_pa.min), max: pressureMbar(data.metrics.pressure_pa.max), avg: pressureMbar(data.metrics.pressure_pa.avg), trend: data.metrics.pressure_pa.trend ? { ...data.metrics.pressure_pa.trend, slopePerHour: pressureMbar(data.metrics.pressure_pa.trend.slopePerHour) } : null }, 'milibares', 1)}
     </div>
     <p class="${data.period.complete ? 'hint' : 'warn-box'}">${escapeText(data.period.note)}</p>`;
 }
@@ -53,8 +53,8 @@ export function renderDemoDetails(data) {
   const coverageBlock = `<div class="fact-grid">
     <div><span>Recibidos</span><strong>${coverage.received}</strong></div>
     <div><span>Esperados</span><strong>${coverage.expected ?? '—'}</strong></div>
-    <div><span>Cobertura de recibidas</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
-    <div><span>Cobertura de aceptadas</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
+    <div><span>Datos recibidos</span><strong>${coverage.receivedPct != null ? `${numberText(coverage.receivedPct, 1)} %` : '—'}</strong></div>
+    <div><span>Datos aceptados</span><strong>${coverage.validPct != null ? `${numberText(coverage.validPct, 1)} %` : '—'}</strong></div>
     <div><span>Aceptadas</span><strong>${coverage.valid} (${coverage.invalid} inválidas)</strong></div>
     <div><span>Faltantes por tiempo</span><strong>${coverage.timeMissing ?? '—'}</strong></div>
   </div>`;
@@ -64,11 +64,11 @@ export function renderDemoDetails(data) {
   const comparison = data.aemet.comparison;
   const aemetBlock = comparison.matched
     ? `<div class="fact-grid">
-        <div><span>Parejas (±${comparison.windowMinutes} min)</span><strong>${comparison.matched}</strong></div>
+        <div><span>Lecturas comparables (menos de ${comparison.windowMinutes} min)</span><strong>${comparison.matched}</strong></div>
         <div><span>Diferencia media</span><strong>${numberText(comparison.differences.avg, 2)} °C</strong></div>
         <div><span>Rango de diferencia</span><strong>${numberText(comparison.differences.min, 1)} … ${numberText(comparison.differences.max, 1)} °C</strong></div>
-      </div><p class="hint">Diferencia = microestación − AEMET. Proveedor AEMET · estación ${escapeText(data.aemet.stationId || '—')} · última observación ${escapeText(stampText(data.aemet.lastObservedAt))}.</p>`
-    : `<p class="empty">Sin observaciones AEMET emparejables en el periodo (${data.aemet.observations} observaciones disponibles).</p>`;
+      </div><p class="hint">La diferencia es la medida de tu estación menos la de la oficial. Proveedor AEMET · estación ${escapeText(data.aemet.stationId || '—')} · última observación ${escapeText(stampText(data.aemet.lastObservedAt))}.</p>`
+    : `<p class="empty">Sin lecturas de AEMET comparables en el periodo (${data.aemet.observations} observaciones disponibles).</p>`;
   return `
     ${coverageBlock}
     <h3>Resúmenes diarios · temperatura</h3>

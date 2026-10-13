@@ -112,7 +112,7 @@ export function resetStationDetails() {
 const METRIC_META = {
   temperatureC: { label: 'Temperatura', unit: '°C', digits: 1, color: '#c97742', icon: 'temperature', aemet: 'temperatureC' },
   humidityPct: { label: 'Humedad', unit: '%', digits: 1, color: '#168b80', icon: 'humidity', aemet: 'humidityPct' },
-  pressureMbar: { label: 'Presión', unit: 'mbar', digits: 1, color: '#079ab1', icon: 'pressure', aemet: 'pressureHpa' },
+  pressureMbar: { label: 'Presión', unit: 'milibares', digits: 1, color: '#079ab1', icon: 'pressure', aemet: 'pressureHpa' },
   batteryMv: { label: 'Batería', unit: 'mV', digits: 0, color: '#217a4b', icon: 'battery', aemet: null },
   lux: { label: 'Iluminancia', unit: 'lux', digits: 0, color: '#d99a1f', icon: 'lux', aemet: null },
 };
@@ -120,7 +120,7 @@ const METRIC_META = {
 const AEMET_META = {
   temperatureC: { label: 'Temperatura', unit: '°C', digits: 1, icon: 'temperature', kind: 'temperature', local: 'temperatureC' },
   humidityPct: { label: 'Humedad', unit: '%', digits: 1, icon: 'humidity', kind: 'humidity', local: 'humidityPct' },
-  pressureHpa: { label: 'Presión', unit: 'mbar', digits: 1, icon: 'pressure', kind: 'pressure', local: 'pressureMbar' },
+  pressureHpa: { label: 'Presión', unit: 'milibares', digits: 1, icon: 'pressure', kind: 'pressure', local: 'pressureMbar' },
   precipitationMm: { label: 'Precipitación', unit: 'mm', digits: 1, icon: 'rain', kind: 'rain', local: null },
   windKmh: { label: 'Viento', unit: 'km/h', digits: 1, icon: 'wind', kind: 'wind', local: null },
   windGustKmh: { label: 'Racha', unit: 'km/h', digits: 1, icon: 'wind', kind: 'wind', local: null },
@@ -340,7 +340,7 @@ function heroBlock({ latest, history, weather, status, detailKey }) {
         <div class="hero-temperature"><strong>${numberText(temperature)}</strong><span>°C</span></div>
         <div class="hero-forecast"><span class="hero-weather-icon">${icon(forecast ? (aemetDay ? 'cloud' : 'cloud') : 'station', { size: 22 })}</span><strong>${escapeText(forecastSky)}</strong><small>${forecastProvider ? `Previsión · ${forecastProvider}` : 'Previsión no disponible'}</small>${minimum != null || maximum != null ? `<small>${numberText(minimum)}° / ${numberText(maximum)}°</small>` : ''}</div>
       </div>
-      <div class="hero-readout-footer"><span>Medición local · ${freshness(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} mbar</span></div>
+      <div class="hero-readout-footer"><span>Medición local · ${freshness(latest?.observedAt)}</span>${!currentLocal ? '<span class="badge badge-warn">No representa el tiempo actual</span>' : ''}<span class="hero-separator">·</span><span>Humedad ${numberText(latest?.humidityPct)}%</span><span class="hero-separator">·</span><span>Presión ${pressureText(latest?.pressurePa)} milibares</span></div>
     </div>
   </section>`;
 }
@@ -392,7 +392,7 @@ function comparisonBlock({ latest, history, trendHistory, weather, sensors, stat
   const local = [
     readingCard({ label: 'Temperatura', icon: 'temperature', value: numberText(latest?.temperatureC), unit: '°C', tone: valueTone('temperature', latest?.temperatureC), trend: trendArrow(trends, 'temperatureC'), detail: detailAttrs(detailKey, 'temperatureC') }),
     readingCard({ label: 'Humedad', icon: 'humidity', value: numberText(latest?.humidityPct), unit: '%', tone: valueTone('humidity', latest?.humidityPct), trend: trendArrow(trends, 'humidityPct'), detail: detailAttrs(detailKey, 'humidityPct') }),
-    readingCard({ label: 'Presión', icon: 'pressure', value: pressureText(latest?.pressurePa), unit: 'mbar', tone: valueTone('pressure', localPressure, historyPressure), trend: trendArrow(trends, 'pressurePa'), detail: detailAttrs(detailKey, 'pressurePa') }),
+    readingCard({ label: 'Presión', icon: 'pressure', value: pressureText(latest?.pressurePa), unit: 'milibares', tone: valueTone('pressure', localPressure, historyPressure), trend: trendArrow(trends, 'pressurePa'), detail: detailAttrs(detailKey, 'pressurePa') }),
     sensors.battery === false ? '' : readingCard({ label: 'Batería', icon: 'battery', value: numberText(latest?.batteryMv, 0), unit: 'mV', tone: `tone-battery-${status.batteryLevel || 'unknown'}`, trend: trendArrow(trends, 'batteryMv'), detail: detailAttrs(detailKey, 'batteryMv') }),
     ...(sensors.lux === true && latest?.lux != null
       ? [readingCard({ label: 'Iluminancia', icon: 'lux', value: numberText(latest.lux, 0), unit: 'lux', tone: 'tone-normal', trend: trendArrow(trends, 'lux'), detail: detailAttrs(detailKey, 'lux') })]
@@ -401,14 +401,14 @@ function comparisonBlock({ latest, history, trendHistory, weather, sensors, stat
   const aemetCards = [
     readingCard({ label: 'Temperatura', icon: 'temperature', value: numberText(observation?.temperatureC), unit: '°C', tone: valueTone('temperature', observation?.temperatureC), detail: detailAttrs(detailKey, 'temperatureC', 'aemet') }),
     readingCard({ label: 'Humedad', icon: 'humidity', value: numberText(observation?.humidityPct), unit: '%', tone: valueTone('humidity', observation?.humidityPct), detail: detailAttrs(detailKey, 'humidityPct', 'aemet') }),
-    readingCard({ label: 'Presión', icon: 'pressure', value: numberText(observation?.pressureHpa), unit: 'mbar', tone: valueTone('pressure', observation?.pressureHpa, historyPressure), detail: detailAttrs(detailKey, 'pressureHpa', 'aemet') }),
+    readingCard({ label: 'Presión', icon: 'pressure', value: numberText(observation?.pressureHpa), unit: 'milibares', tone: valueTone('pressure', observation?.pressureHpa, historyPressure), detail: detailAttrs(detailKey, 'pressureHpa', 'aemet') }),
     readingCard({ label: 'Precipitación', icon: 'rain', value: numberText(observation?.precipitationMm), unit: 'mm', tone: valueTone('rain', observation?.precipitationMm), detail: detailAttrs(detailKey, 'precipitationMm', 'aemet') }),
     readingCard({ label: 'Viento', icon: 'wind', value: numberText(observation?.windKmh), unit: 'km/h', tone: valueTone('wind', observation?.windKmh), detail: detailAttrs(detailKey, 'windKmh', 'aemet') }),
     readingCard({ label: 'Racha', icon: 'pressure', value: numberText(observation?.windGustKmh), unit: 'km/h', tone: valueTone('wind', observation?.windGustKmh), detail: detailAttrs(detailKey, 'windGustKmh', 'aemet') }),
   ].join('');
   const observationStatus = weather.aemet?.observationStatus || 'unavailable';
   const observationCacheAge = weather.aemet?.observationAgeSeconds == null ? ''
-    : ` · respuesta utilizable hace ${Math.round(weather.aemet.observationAgeSeconds / 60)} min`;
+    : ` · el último dato que sí nos llegó es de hace ${Math.round(weather.aemet.observationAgeSeconds / 60)} min`;
   const aemetStatus = observation
     ? `Estación ${escapeText(observation.stationId)} · medida ${freshness(observation.observedAt)}${observationStatus === 'stale' ? ` · caché antigua${observationCacheAge}` : ''}`
     : observationStatus === 'unconfigured' ? 'Consulta AEMET no configurada'
@@ -441,28 +441,28 @@ function temperatureComparisonBlock(comparison) {
   if (!comparison) return '';
   const local = comparison.local;
   const aemet = comparison.aemet;
-  // El titular dice qué se está comparando: la última pareja dentro de la
-  // ventana, que no tiene por qué ser la lectura de ahora. Sin ese matiz, dos
-  // horas distintas en la misma tarjeta se leen como un error.
+  // El titular dice qué se está comparando: las dos últimas lecturas que sí
+  // se pueden comparar, que no tienen por qué ser la lectura de ahora. Sin ese
+  // matiz, dos horas distintas en la misma tarjeta se leen como un error.
   const pairTitle = local?.observedAt && aemet?.observedAt
-    ? `Última pareja comparable · ${clockLabel(local.observedAt)}–${clockLabel(aemet.observedAt)}`
-    : 'Última pareja comparable';
-  if (!local || !aemet) return `<section class="detail-block temperature-comparison"><h4>${pairTitle}</h4><p class="hint">No hay mediciones emparejables. Las observaciones local y AEMET se mantienen independientes.</p></section>`;
+    ? `Últimos datos comparables · ${clockLabel(local.observedAt)}–${clockLabel(aemet.observedAt)}`
+    : 'Últimos datos comparables';
+  if (!local || !aemet) return `<section class="detail-block temperature-comparison"><h4>${pairTitle}</h4><p class="hint">No hay lecturas comparables. La medición local y la de la estación oficial se muestran por separado, cada una con su hora.</p></section>`;
   const difference = comparison.state === 'matched' && comparison.differenceC != null
     ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
     : 'Sin diferencia directa';
   const offset = comparison.timeOffsetSeconds == null ? ''
     : ` · separación ${Math.abs(comparison.timeOffsetSeconds)} s (microestación ${comparison.timeOffsetSeconds >= 0 ? 'posterior' : 'anterior'})`;
   const reason = comparison.state === 'matched'
-    ? `Emparejadas dentro de ±${comparison.windowMinutes} min. Diferencia = microestación − AEMET${offset}.`
-    : `No hay pareja dentro de ±${comparison.windowMinutes} min; se muestran ambas horas y no se calcula diferencia${offset}.`;
+    ? `Las dos lecturas están separadas por menos de ${comparison.windowMinutes} minutos. La diferencia es la medida de tu estación menos la de la oficial${offset}.`
+    : `No hay dos lecturas separadas por menos de ${comparison.windowMinutes} minutos; se muestran ambas horas y no se calcula la diferencia${offset}.`;
   const proximity = comparison.proximity;
   const metadata = proximity ? `<p class="aemet-proximity">${numberText(proximity.distanceKm, 1)} km · altitud AEMET ${proximity.aemetAltitudeM == null ? '—' : `${numberText(proximity.aemetAltitudeM, 0)} m`} (${escapeText(proximity.aemetAltitudeSource || 'fuente no disponible')}) · microestación ${proximity.microAltitudeM == null ? '—' : `${numberText(proximity.microAltitudeM, 0)} m`} (${escapeText(proximity.microAltitudeSource || 'fuente no disponible')}).</p>` : '';
   return `<section class="detail-block temperature-comparison"><h4>${pairTitle}</h4><div class="reading-grid">
-    ${readingCard({ label: `Microestación · ${escapeText(local.location || 'zona configurada')}`, icon: 'temperature', value: numberText(local.temperatureC), unit: `°C · ${dateText(local.observedAt)}`, tone: 'tone-neutral' })}
-    ${readingCard({ label: `AEMET · ${escapeText(aemet.stationId || 'estación')}`, icon: 'station', value: numberText(aemet.temperatureC), unit: `°C · ${dateText(aemet.observedAt)}`, tone: 'tone-neutral' })}
-    ${readingCard({ label: 'Microestación − AEMET', icon: 'difference', value: difference, unit: '', tone: comparison.state === 'matched' ? 'tone-neutral' : 'tone-muted' })}
-  </div><p class="hint">${escapeText(reason)} Esta comparación no describe el instante presente: usa la pareja más reciente dentro de la ventana, y la lectura de ahora puede ser más nueva. Diferencia positiva: microestación más cálida; negativa: más fría.</p>${metadata}<p class="hint">La diferencia puede relacionarse con distancia, altitud, exposición y entorno. No se atribuye a un único factor.</p></section>`;
+    ${readingCard({ label: `Tu estación · ${escapeText(local.location || 'zona configurada')}`, icon: 'temperature', value: numberText(local.temperatureC), unit: `°C · ${dateText(local.observedAt)}`, tone: 'tone-neutral' })}
+    ${readingCard({ label: `Estación oficial · ${escapeText(aemet.stationId || 'estación')}`, icon: 'station', value: numberText(aemet.temperatureC), unit: `°C · ${dateText(aemet.observedAt)}`, tone: 'tone-neutral' })}
+    ${readingCard({ label: 'Comparación con la estación oficial', icon: 'difference', value: difference, unit: '', tone: comparison.state === 'matched' ? 'tone-neutral' : 'tone-muted' })}
+  </div><p class="hint">${escapeText(reason)} Esta comparación no describe el instante presente: usa las dos lecturas más recientes comparables y la de ahora puede ser más nueva. Si el número es positivo, en tu punto hace más calor; si es negativo, hace más frío.</p>${metadata}<p class="hint">La diferencia puede relacionarse con distancia, altitud, exposición y entorno. No se atribuye a un único factor.</p></section>`;
 }
 
 // Hora corta para titulares de comparación: 22:00, sin fecha ni segundos.
@@ -484,7 +484,7 @@ function weatherBlock(weather, detailKey) {
       <div><span><span class="weather-icon">${icon('rain', { size: 15 })}</span> Lluvia</span><strong>${numberText(current.rainMm ?? current.precipitationMm)} mm</strong></div>
       <div><span><span class="weather-icon">${icon('wind', { size: 15 })}</span> Viento</span><strong>${numberText(current.windKmh)} km/h</strong></div>
       <div><span><span class="weather-icon">${icon('pressure', { size: 15 })}</span> Racha</span><strong>${numberText(current.windGustKmh)} km/h</strong></div>
-      <div><span><span class="weather-icon">${icon('compass', { size: 15 })}</span> Presión</span><strong>${numberText(current.pressureHpa, 1)} mbar</strong></div>
+      <div><span><span class="weather-icon">${icon('compass', { size: 15 })}</span> Presión</span><strong>${numberText(current.pressureHpa, 1)} milibares</strong></div>
     </div>
     <p class="hint">Estimación de modelo para ${escapeText(weather.location)}; no es una observación de la microestación ni de un pluviómetro local.</p>
   </div>` : '';
@@ -511,7 +511,7 @@ function weatherBlock(weather, detailKey) {
   const warningAge = weather.aemet?.warningsAgeSeconds == null ? '' : ` · última consulta hace ${Math.round(weather.aemet.warningsAgeSeconds / 60)} min`;
   const warningStatusText = warningStatus === 'current' ? `Consulta completada ${dateText(weather.aemet?.warningsFetchedAt)}`
     : warningStatus === 'empty' ? `AEMET no devolvió datos (${dateText(weather.aemet?.warningsCheckedAt)}): no se interpreta como ausencia de avisos`
-      : warningStatus === 'stale' ? `No se pudo actualizar; se conserva la última respuesta utilizable${warningAge}${weather.aemet?.warnings?.length ? '' : ', que no contiene avisos vigentes'}`
+      : warningStatus === 'stale' ? `No se pudo actualizar; se conserva el último dato que sí nos llegó${warningAge}${weather.aemet?.warnings?.length ? '' : ', que no contiene avisos vigentes'}`
         : warningStatus === 'unconfigured' ? 'Consulta AEMET no configurada para esta zona'
           : 'No se ha podido consultar AEMET';
   const officialAlerts = weather.aemet?.warnings?.length ? `<div class="weather-alert-group"><h4>Avisos oficiales AEMET</h4><p class="hint">${escapeText(warningStatusText)} · área ${escapeText(weather.aemet.warningsAreaCode || 'no indicada')}</p>${weather.aemet.warnings.map((alert) => `<article class="weather-alert official">
@@ -531,7 +531,7 @@ function weatherBlock(weather, detailKey) {
   });
   // El rótulo ya dice «Riesgos orientativos» y nombra al proveedor: la nota solo
 // añade el límite que la etiqueta no puede expresar.
-const advisoriesBlock = advisories.length ? `<div class="weather-alert-group"><h4>Riesgos orientativos · ${aemetHasForecast ? 'AEMET' : 'Open-Meteo'}</h4>${advisories.map((notice) => `<article class="weather-alert advisory"><strong>${escapeText(notice.text)}</strong><span>${dayText(`${notice.date}T12:00:00`)}</span></article>`).join('')}<p class="hint">Indicadores con umbrales generales, no umbrales específicos del cultivo o ganado.</p></div>` : '';
+const advisoriesBlock = advisories.length ? `<div class="weather-alert-group"><h4>Riesgos orientativos · ${aemetHasForecast ? 'AEMET' : 'Open-Meteo'}</h4>${advisories.map((notice) => `<article class="weather-alert advisory"><strong>${escapeText(notice.text)}</strong><span>${dayText(`${notice.date}T12:00:00`)}</span></article>`).join('')}<p class="hint">Indicadores con límites generales, no límites específicos del cultivo o ganado.</p></div>` : '';
   const missing = weather.aemetMissing || [];
   // El error crudo («AEMET previsión municipal: 429») no dice qué se conserva ni
   // qué recurso sigue válido: se traduce al estado de cada recurso, separando
@@ -571,15 +571,15 @@ const sensorState = Object.entries({ Temperatura: sensors.temperature, Humedad: 
       ? '<span class="badge badge-valid" title="Aceptada por los controles automáticos (rango, marcas del equipo y hora). No demuestra calibración ni exactitud del sensor.">Última lectura aceptada</span>'
       : `<span class="badge badge-invalid" title="${escapeText(latest.invalidatedReason || '')}">Última lectura inválida</span>`)
     : '<span class="badge badge-muted">Sin lecturas</span>';
-  const coverage = summary.expected
-    ? `Cobertura ${numberText(summary.coverage_pct)} % · ${summary.valid_count} aceptadas por controles · ${summary.invalid_count} inválidas de ${summary.expected} esperadas`
-    : 'Sin intervalo configurado para la cobertura';
+  const reliability = summary.expected
+    ? `Calidad de los datos recibidos ${numberText(summary.coverage_pct)} % · ${summary.valid_count} aceptadas por controles · ${summary.invalid_count} inválidas de ${summary.expected} esperadas`
+    : 'Sin intervalo configurado para medir la calidad de los datos';
   const coverageClass = summary.expected && summary.coverage_pct < 90 ? 'warn-box reliability-summary' : 'coverage reliability-summary';
   const nearbyRows = nearby.stations.length
     ? nearby.stations.map((station) => `<div class="nearby-row"><span>${escapeText(station.name)} · última conexión ${dateText(station.lastSeenAt)}</span><strong>${numberText(station.distanceKm, 1)} km</strong></div>`).join('')
     : '';
   const nearbyBlock = nearby.stations.length || !/ubicación.*no configurada/i.test(nearby.message)
-    ? `<div class="subsection"><h3>Estaciones cercanas</h3><p class="coverage">${escapeText(nearby.message)} ${nearby.representative ? 'Cobertura representativa disponible.' : 'La cobertura puede ser insuficiente.'}</p>${nearbyRows}</div>`
+    ? `<div class="subsection"><h3>Estaciones cercanas</h3><p class="coverage">${escapeText(nearby.message)} ${nearby.representative ? 'Hay estaciones suficientes cerca.' : 'Puede que no haya estaciones suficientes cerca.'}</p>${nearbyRows}</div>`
     : '';
 
   // En la sección de evolución el valor actual ya está en la cabecera: la
@@ -610,7 +610,7 @@ const sensorState = Object.entries({ Temperatura: sensors.temperature, Humedad: 
     ${heroBlock({ latest: displayLatest, history: trendHistory, weather, status, detailKey })}
     ${comparisonBlock({ latest: displayLatest, history, trendHistory, weather, sensors, status, detailKey })}
     ${weatherBlock(weather, detailKey)}
-    <div class="${coverageClass}"><strong>Fiabilidad de lecturas</strong><p>${escapeText(coverage)}</p>${summary.expected && summary.coverage_pct < 90 ? '<p>La estación está perdiendo lecturas y requiere revisión de conectividad.</p>' : ''}</div>
+    <div class="${coverageClass}"><strong>Fiabilidad de lecturas</strong><p>${escapeText(reliability)}</p>${summary.expected && summary.coverage_pct < 90 ? '<p>La estación está perdiendo lecturas y requiere revisión de conectividad.</p>' : ''}</div>
     <p class="coverage">Sensores: ${sensorState}</p>
     ${chartSection(history, summary, { detailKey, sensors, trendHistory })}
     ${nearbyBlock}
@@ -815,7 +815,7 @@ const DEMO_PERIOD_HOURS = { '24h': 24, '7d': 168, '30d': 720 };
 const DEMO_EXPLANATIONS = [
   ['Temperatura', 'Es la medida directa del aire. La mínima suele darse de madrugada y la máxima a primera hora de la tarde; por eso se indica la hora de cada extremo.', '°C'],
   ['Humedad', 'Es la humedad relativa: cuánto vapor de agua contiene el aire respecto al máximo que admitiría a esa temperatura. Sube al enfriarse por la noche.', '%'],
-  ['Presión', 'Es la presión atmosférica. Se muestra en milibares (1 mbar = 100 Pa). Bajadas rápidas suelen acompañar a cambios de tiempo.', 'mbar'],
+  ['Presión', 'Es la presión atmosférica. Se muestra en milibares (mbar); 1 mbar = 100 Pa. Bajadas rápidas suelen acompañar a cambios de tiempo.', 'milibares'],
 ];
 
 // El análisis del periodo (estadísticas, cobertura y comparación externa) vive
@@ -882,7 +882,7 @@ async function renderDemoPanel(root) {
         <div class="section-heading"><div><p class="eyebrow">CÓMO FUNCIONAN LOS AVISOS</p><h2>Qué llega aquí y por qué</h2></div></div>
         <p class="hint">Registrarte <strong>no te suscribe a los avisos de la estación urbana</strong>: solo verás los avisos de las estaciones que se te concedan expresamente.
           Cada aviso indica su categoría, su fuente, su fecha, su estado y su vigencia, y si es un dato <strong>real</strong>, una <strong>previsión</strong>,
-          un <strong>cálculo</strong> o una <strong>simulación</strong>. Los avisos de umbral local solo aparecen cuando el motor de avisos está comprobado,
+          un <strong>cálculo</strong> o una <strong>simulación</strong>. Los avisos por superar un límite solo aparecen cuando el motor de avisos está comprobado,
           y los simulados de la portada nunca se cuelan aquí.</p>
       </section>
     </details>

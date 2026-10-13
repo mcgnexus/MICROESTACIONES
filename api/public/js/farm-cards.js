@@ -161,7 +161,7 @@ export function assessFrost(item) {
     action: 'No se afirma que no haya riesgo: sencillamente no hay medición.' };
   const missingForecast = forecastMin == null && forecastProvider(item) == null;
   return { tone: 'ok', value: `${numberText(temperature)} °C`, since: observed, nature: 'real',
-    meaning: `Temperatura por encima del umbral de helada en la medición actual${missingForecast ? ' (sin previsión disponible: esto solo cubre este momento)' : ''}.`,
+    meaning: `Temperatura por encima del límite de helada en la medición actual${missingForecast ? ' (sin previsión disponible: esto solo cubre este momento)' : ''}.`,
     action: 'No hay una señal de frío ahora mismo; comprueba la previsión antes de dar el día por seguro.' };
 }
 
@@ -206,7 +206,7 @@ export function assessHeat(item) {
     action: 'No se afirma que la temperatura sea normal: no hay medición.' };
   const missingForecast = forecastMax == null && forecastProvider(item) == null;
   return { tone: 'ok', value: `${numberText(temperature)} °C`, since: observed, nature: 'real',
-    meaning: `Temperatura por debajo del umbral de calor en la medición actual${missingForecast ? ' (sin previsión disponible: esto solo cubre este momento)' : ''}.`,
+    meaning: `Temperatura por debajo del límite de calor en la medición actual${missingForecast ? ' (sin previsión disponible: esto solo cubre este momento)' : ''}.`,
     action: 'No hay una señal de calor ahora mismo; comprueba la previsión antes de dar el día por seguro.' };
 }
 
@@ -256,7 +256,7 @@ export function assessConnectivity(item) {
   if (status.connectivity === 'offline') {
     return { tone: 'alert', value: 'sin conexión', since: last, nature: 'real',
       meaning: 'La estación no está enviando datos.',
-      action: 'Comprueba la cobertura o avísanos para revisarla.' };
+      action: 'Comprueba la calidad de los datos recibidos o avísanos para revisarla.' };
   }
   if (status.connectivity === 'degraded') {
     return { tone: 'warn', value: 'intermitente', since: last, nature: 'real',

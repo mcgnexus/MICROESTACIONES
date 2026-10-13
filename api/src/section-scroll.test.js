@@ -22,7 +22,7 @@ const landingSource = landing
     landing.indexOf('export function scrollToPublicSection'),
     landing.indexOf('export function selectUrbanStation'),
   )
-  .replace('export function', 'function');
+  .replace(/export function/g, 'function');
 
 function scrollToSection(section, { reducedMotion = false, exists = true } = {}) {
   const focused = [];

@@ -17,8 +17,8 @@ const urban = {
 const shell = () => `<!doctype html><body>
   <div id="local-weather-state" class="public-loading" role="status" aria-live="polite"><span class="loading-dot" aria-hidden="true"></span> Cargando las últimas mediciones públicas…</div>
   <div id="local-weather-card"></div>
-  <div id="public-comparison" class="public-loading" aria-live="polite">Cargando observaciones…</div>
-  <div id="public-evolution" class="public-loading" aria-live="polite">Cargando la serie reciente…</div>
+  <div id="public-comparison" class="public-loading" aria-live="polite">Cargando el dato de la estación oficial…</div>
+  <div id="public-evolution" class="public-loading" aria-live="polite">Cargando los datos de las últimas 24 horas…</div>
   </body>`;
 
 test('renderPublicWeather reúne tarjeta, comparación y evolución de la estación urbana', () => {
@@ -27,7 +27,7 @@ test('renderPublicWeather reúne tarjeta, comparación y evolución de la estaci
   assert.match(parts.card, /public-now-card/);
   assert.match(parts.card, /Medido hace/);
   assert.match(parts.comparison, /AEMET/);
-  assert.match(parts.evolution, /chart-box|No hay suficientes mediciones reales/);
+  assert.match(parts.evolution, /chart-box|No hay datos suficientes/);
   assert.equal(parts.observedAt, '2026-10-07T12:00:00Z');
 });
 
@@ -46,8 +46,8 @@ test('injectLandingParts incrusta solo la tarjeta y marca el contenedor', () => 
   assert.doesNotMatch(html, /Cargando las últimas mediciones/);
   // La comparación y la evolución NO se incrustan (las carga el cliente): el HTML
   // no arrastra la gráfica de 24 h y el LCP no depende de JS.
-  assert.match(html, /<div id="public-comparison" class="public-loading" aria-live="polite">Cargando observaciones…<\/div>/);
-  assert.match(html, /<div id="public-evolution" class="public-loading" aria-live="polite">Cargando la serie reciente…<\/div>/);
+  assert.match(html, /<div id="public-comparison" class="public-loading" aria-live="polite">Cargando el dato de la estación oficial…<\/div>/);
+  assert.match(html, /<div id="public-evolution" class="public-loading" aria-live="polite">Cargando los datos de las últimas 24 horas…<\/div>/);
   // Idempotente: una segunda pasada no vuelve a tocar el HTML.
   assert.equal(injectLandingParts(html, card), html);
 });

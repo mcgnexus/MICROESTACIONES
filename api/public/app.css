@@ -638,6 +638,10 @@ a.cta{display:inline-block;text-decoration:none;color:white}
 .topnav .nav-access{font-weight:800;background:#e5f2e9;color:var(--c-primary-dark)}
 .topnav .nav-access:hover{background:var(--c-surface);color:var(--c-brand)}
 .landing-view{padding-bottom:28px}
+.public-first-section#portada-minima{margin-top:12px;padding-top:20px;padding-bottom:20px}
+.public-first-section#portada-minima .public-hero{gap:8px}
+.public-first-section#portada-minima .landing-lead{max-width:680px}
+.public-first-section#portada-minima .hint{margin:0}
 .public-first-section{max-width:1040px;margin-top:24px;padding:28px 30px;border:1px solid #dce8df;border-radius:22px;background:linear-gradient(145deg,#f8fcf8,#fff);box-shadow:0 12px 36px #153b2b0d}
 .public-first-section h1{font-size:clamp(30px,5vw,48px);letter-spacing:-.04em;line-height:1.05;margin-bottom:12px}
 /* Un solo bloque hero: la tarjeta abre el bloque y el titular y la entradilla

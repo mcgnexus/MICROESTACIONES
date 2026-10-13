@@ -1,7 +1,7 @@
 import { $, api, session, setUnauthorizedHandler, roleLabel, renderSupport, mountCharts, whatsappLink } from './js/ui.js';
 import { initAnalyticsChoice, homeMetric, lockedMetric } from './js/analytics.js';
 import { mountIcons } from './js/icons.js';
-import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, initLanding } from './js/landing.js';
+import { PRIVATE_SECTIONS, PUBLIC_SECTIONS, scrollToPublicSection, showPublicSections, initLanding } from './js/landing.js';
 
 const landingView = $('#landing-view');
 const loginView = $('#login-view');
@@ -288,6 +288,7 @@ async function route() {
       showLogin(); return;
     }
     showLanding();
+    showPublicSections(section);
     if (PUBLIC_SECTIONS.has(section)) scrollToPublicSection(section);
     return;
   }
@@ -304,10 +305,12 @@ async function route() {
       return;
     }
     showLandingView();
+    showPublicSections('landing');
     return;
   }
   if (PUBLIC_SECTIONS.has(section)) {
     showLandingView();
+    showPublicSections(section);
     scrollToPublicSection(section);
     return;
   }
@@ -670,6 +673,7 @@ const publicFirst = !magicReturn && isRouteFragment()
   && (initialRoute.section === 'landing' || PUBLIC_SECTIONS.has(initialRoute.section));
 if (publicFirst) {
   showLanding();
+  showPublicSections(initialRoute.section);
   homeMetric(initialRoute.section === 'landing');
   if (PUBLIC_SECTIONS.has(initialRoute.section)) scrollToPublicSection(initialRoute.section);
 }
@@ -677,6 +681,7 @@ await meReady;
 if (publicFirst && session.me) {
   // Con sesión, la portada pública conserva la navegación privada.
   showLandingView();
+  showPublicSections(initialRoute.section);
   if (PUBLIC_SECTIONS.has(initialRoute.section)) scrollToPublicSection(initialRoute.section);
 } else if (!publicFirst) {
   await route();

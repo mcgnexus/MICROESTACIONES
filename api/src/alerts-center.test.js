@@ -82,7 +82,7 @@ test('el bloque de alta vacía distingue alta incompleta de alta completa', () =
   assert.match(incomplete, /incompleta/);
   assert.match(incomplete, /tampoco significa que no haya riesgo/);
   const complete = signupBlock({ me: me(), engineVerified: true, whatsappDelivery: null, prefs: fullPrefs });
-  assert.match(complete, /ninguna condición ha superado los umbrales/);
+  assert.match(complete, /ninguna condición ha pasado de su límite/);
 });
 
 // C15 · el alta se calcula por canal y destinatario: cada canal se valora sobre
@@ -211,7 +211,7 @@ test('el estado de alta se explica aunque ya haya avisos si falta completarlo', 
 test('el alta completa no promete que no haya riesgo', () => {
   const complete = signupBlock({ me: me(), engineVerified: true, whatsappDelivery: null, prefs: fullPrefs });
   assert.doesNotMatch(complete, /es porque ninguna condición/);
-  assert.match(complete, /revisa la cobertura de datos/);
+  assert.match(complete, /revisa la calidad de los datos recibidos/);
 });
 
 test('los campos de contacto de Cuenta declaran autocomplete y tipo', () => {

@@ -52,7 +52,7 @@ export async function renderStations(root) {
           ${TEXT_FIELD('altitude', 'Altitud (m)', 'type="number" step="1" min="-500" max="9000"')}
           ${TEXT_FIELD('installation_date', 'Fecha de instalación', 'type="date"')}
           ${TEXT_FIELD('firmware_version', 'Versión de firmware', 'maxlength="60"')}
-          ${TEXT_FIELD('coverage_km', 'Cobertura (km)', 'type="number" step="0.1" min="0.1" max="500" placeholder="25"')}
+          ${TEXT_FIELD('coverage_km', 'Alcance (km)', 'type="number" step="0.1" min="0.1" max="500" placeholder="25"')}
         </div>
         <p class="hint">Open-Meteo usa las coordenadas automáticamente. Para AEMET, añade el código municipal, el indicativo de la estación observadora más cercana y el área de avisos; la API key debe estar guardada como variable privada AEMET_API_KEY en el servidor. Para Huéscar se sugieren el municipio 18098 y la estación observadora 5051X.</p>
         <fieldset class="sensor-set"><legend>Sensores activos</legend>${SENSOR_KEYS
@@ -86,7 +86,7 @@ export async function renderStations(root) {
             ${TEXT_FIELD('verification_limitations', 'Limitaciones', 'maxlength="1000"')}
             ${TEXT_FIELD('verification_responsible', 'Responsable', 'maxlength="200"')}
           </div>
-          <p class="hint">La tolerancia y el error dependen del modelo y del uso acordado: este formulario registra lo medido, no fija umbrales. Los controles automáticos de rango no sustituyen esta prueba.</p>
+          <p class="hint">La tolerancia y el error dependen del modelo y del uso acordado: este formulario registra lo medido, no fija límites. Los controles automáticos de rango no sustituyen esta prueba.</p>
         </fieldset>
         <div class="form-grid">
           <label class="check"><input type="checkbox" name="publish_permission"> Permitir datos públicos agregados</label>
@@ -106,7 +106,7 @@ export async function renderStations(root) {
 
   api('/api/v1/stations/sensors-catalog').then(({ sensors }) => {
     $('[data-catalog]', root).textContent = `Catálogo de sensores: ${sensors
-      .map((s) => `${s.name} (${s.id === 'pressure' ? 'mbar' : s.unit})`).join(' · ')}. La disponibilidad por estación se ajusta con las casillas anteriores.`;
+      .map((s) => `${s.name} (${s.id === 'pressure' ? 'milibares' : s.unit})`).join(' · ')}. La disponibilidad por estación se ajusta con las casillas anteriores.`;
   }).catch(() => {});
 
   async function loadList() {
@@ -117,7 +117,7 @@ export async function renderStations(root) {
         const status = station.status || {};
         const meta = [station.owner, station.publicZone, locationLabel(station.locationType),
           station.altitude == null ? null : `${station.altitude} m`,
-          `${numberText(station.coverageKm, 1)} km de cobertura`].filter(Boolean).join(' · ');
+          `${numberText(station.coverageKm, 1)} km de alcance`].filter(Boolean).join(' · ');
         const actions = [
           `<a class="button-link" href="#/estaciones/${encodeURIComponent(station.id)}">Detalle</a>`,
           canEdit() ? `<button type="button" data-edit="${escapeText(station.id)}">Editar</button>` : '',
@@ -315,15 +315,15 @@ async function renderResumen(content, stationId) {
   const item = (dashboard.devices || []).find((entry) => entry.device.id === stationId);
   content.innerHTML = item
     ? `${renderStationCard(item)}<section class="panel"><div class="section-heading"><div>
-        <p class="eyebrow">COBERTURA</p><h2>Integridad de la serie (7 días)</h2></div></div>
+        <p class="eyebrow">CALIDAD DE LOS DATOS</p><h2>Integridad de los datos (7 días)</h2></div></div>
         <p class="coverage">Periodo solicitado ${dateText(gaps.requested?.from)} → ${dateText(gaps.requested?.to)} ·
           con datos ${gaps.available?.from ? `${dateText(gaps.available.from)} → ${dateText(gaps.available.to)}` : 'sin datos'} ·
           denominador desde ${gaps.denominator?.basis === 'installation_date' ? 'la fecha de instalación' : 'la primera medición'} (${dateText(gaps.service?.from)})${gaps.truncatedToNow
-            ? ` · <strong>cobertura evaluada hasta el ${dateText(gaps.evaluated?.to)}</strong>, no hasta el final del periodo pedido`
+            ? ` · <strong>calidad de los datos evaluada hasta el ${dateText(gaps.evaluated?.to)}</strong>, no hasta el final del periodo pedido`
             : ''}</p>
         <p class="coverage">Recibidas ${gaps.received} · aceptadas ${gaps.valid} · inválidas ${gaps.invalid} ·
           esperadas por tiempo ${gaps.expected ?? '—'} · faltan por tiempo ${gaps.timeMissing ?? '—'} ·
-          cobertura de recibidas ${gaps.receivedPct ?? '—'} % · de aceptadas ${gaps.validPct ?? '—'} %</p>
+          datos recibidos ${gaps.receivedPct ?? '—'} % · datos aceptados ${gaps.validPct ?? '—'} %</p>
         <p class="coverage">Huecos de secuencia: ${gaps.sequence?.gaps?.length ?? 0} (${gaps.sequence?.total ?? 0} muestras) ·
           reinicios de secuencia: ${gaps.sequence?.resets?.length ?? 0} ·
           ausencia al inicio: ${gaps.leadingMissing ?? 0} · al final: ${gaps.trailingMissing ?? 0}</p>
@@ -363,7 +363,7 @@ const sensorState = SENSOR_KEYS
     ['Ubicación privada', station.latitude == null ? 'sin coordenadas' : `${station.latitude}, ${station.longitude}`],
     ['Altitud', station.altitude == null ? '—' : `${station.altitude} m`],
     ['Instalación', dateText(station.installationDate)],
-    ['Cobertura', `${numberText(station.coverageKm, 1)} km`],
+    ['Alcance', `${numberText(station.coverageKm, 1)} km`],
     ['Firmware', station.firmwareVersion],
     ['Modelo de sensor', site.sensor_model],
     ['Garita o abrigo', site.shelter],

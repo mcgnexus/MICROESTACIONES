@@ -29,9 +29,9 @@ export const NOTICE_CATEGORIES = {
     audience: 'visitor',
   },
   threshold: {
-    label: 'Umbral local',
+    label: 'Aviso por superar un límite',
     nature: 'real',
-    description: 'Una regla cruza un umbral sobre una medida real de la estación. Solo se muestra con el motor comprobado.',
+    description: 'Una regla que tú has fijado se activa al pasar de un límite sobre una medida real de la estación. Solo se muestra con el motor comprobado.',
     audience: 'visitor',
     requiresEngine: true,
   },
@@ -56,11 +56,11 @@ export const NOTICE_CATEGORIES = {
 };
 
 export const NOTICE_NATURES = {
-  real: { label: 'Real', hint: 'Dato observado o medido.' },
-  previsto: { label: 'Previsto', hint: 'Previsión externa o aviso oficial: aún no ha ocurrido.' },
-  calculado: { label: 'Calculado', hint: 'Derivado por una fórmula a partir de otros datos.' },
-  simulado: { label: 'Simulado', hint: 'Valor inventado de la simulación.' },
-  comunicacion: { label: 'Comunicación', hint: 'Mensaje operativo, no un aviso de riesgo.' },
+  real: { label: 'Real', hint: 'Medido por una estación.' },
+  previsto: { label: 'Previsto', hint: 'Previsión externa o aviso oficial: todavía no ha ocurrido.' },
+  calculado: { label: 'Calculado', hint: 'Obtenido a partir de otros datos.' },
+  simulado: { label: 'Simulado', hint: 'Datos inventados de la simulación.' },
+  comunicacion: { label: 'Comunicación', hint: 'Mensaje, no aviso de riesgo.' },
 };
 
 // Las cuatro que la aceptación pide poder distinguir de un vistazo.
@@ -180,8 +180,8 @@ export function originText(notice = {}) {
   switch (category) {
     case 'threshold':
       return value
-        ? `Medida de ${value} de tu estación${dayLabel ? ` el ${dayLabel}` : ''} que cruza el umbral de la regla.`
-        : 'Medida de tu estación que cruza el umbral de la regla.';
+        ? `Medida de ${value} de tu estación${dayLabel ? ` el ${dayLabel}` : ''} que pasa del límite de la regla.`
+        : 'Medida de tu estación que pasa del límite de la regla.';
     case 'forecast':
       if (notice.official === true || notice.source === 'official_warning') {
         return `Aviso oficial de AEMET${dayLabel ? ` con vigencia desde el ${dayLabel}` : ''}.`;
@@ -199,7 +199,7 @@ export function originText(notice = {}) {
         ? `Estado observado de la estación (${value}).`
         : 'Estado observado de la estación.';
     case 'simulated':
-      return 'Valor de una serie inventada dentro de la simulación.';
+      return 'Datos inventados dentro de la simulación.';
     case 'commercial':
       return 'Mensaje de novedades al que autorizaste expresamente por este canal.';
     case 'access':

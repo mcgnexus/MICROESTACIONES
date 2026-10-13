@@ -44,7 +44,9 @@ test('la palabra «simulación» queda reservada a los datos inventados', () => 
 });
 
 test('el simulador público se llama simulación en toda la portada', () => {
-  const vias = view.slice(view.indexOf('id="vias"'), view.indexOf('id="comparacion-aemet"'));
+  // La sección de vías ya no va seguida de la comparación: la comparación y la
+  // evolución se movieron a su propia página («Tiempo local»).
+  const vias = view.slice(view.indexOf('id="vias"'), view.indexOf('id="fincas"'));
   // La simulación ya no es una tarjeta de las vías: queda como enlace
   // secundario discreto al pie de la sección, y con su nombre correcto.
   assert.match(vias, /href="#\/demo-agricola">simulación con datos inventados/);

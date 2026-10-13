@@ -126,7 +126,7 @@ test('the origin always names the datum or forecast and never promises detection
   assert.match(originText({ source: 'external_forecast', temperatureC: -2 }), /Previsión externa de -2 °C/);
   assert.match(originText({ source: 'estimate', value: { value: 0 } }), /Estimación propia/);
   assert.match(originText({ source: 'official_warning' }), /Aviso oficial de AEMET/);
-  assert.match(originText({ simulated: true }), /serie inventada/);
+  assert.match(originText({ simulated: true }), /datos inventados/i);
   for (const input of [{ kind: 'access' }, { kind: 'commercial' }, { source: 'external_forecast' }]) {
     assert.doesNotMatch(originText(input), /detectamos|detectado|llega una helada/i);
   }
@@ -217,7 +217,7 @@ test('WhatsApp is never announced as automatic while it is sent by hand', () => 
   });
   assert.doesNotMatch(body, /automátic/i);
   assert.match(body, /Origen: Medición de tu estación · Tipo: Real/);
-  assert.match(body, /Categoría: Umbral local/);
+  assert.match(body, /Categoría: Aviso por superar un límite/);
   assert.match(body, /Vigencia: /);
 });
 

@@ -125,7 +125,7 @@ export function alertMeta(alert, { zone = null, engineVerified = true } = {}) {
     `Categoría: ${meta.categoryLabel}`,
     metric && METRIC_LABELS[metric] ? `Variable: ${METRIC_LABELS[metric]}` : null,
     value != null ? `Valor: ${value}` : null,
-    threshold != null ? `Umbral: ${formatValue(metric, threshold)}` : null,
+    threshold != null ? `Límite de la regla: ${formatValue(metric, threshold)}` : null,
     `Hora: ${dateText(alert.observedAt)}${alertSince(alert) ? ` (${alertSince(alert)})` : ''}`,
     `Fuente: ${meta.sourceLabel}`,
     meta.official ? 'Aviso oficial' : null,
@@ -154,7 +154,7 @@ export function renderAlertCard(alert, { zone = null, technical = false, engineV
     ? `<details class="alert-card-tech"><summary>Detalle técnico</summary><pre>${escapeText(JSON.stringify(alert.ruleSnapshot, null, 2))}</pre></details>`
     : '';
   const engineBlock = meta.requiresEngine && !engineVerified
-    ? '<p class="hint">Aviso de umbral local oculto: el motor de avisos no está comprobado en esta instalación.</p>'
+    ? '<p class="hint">Aviso por superar un límite oculto: el motor de avisos no está comprobado en esta instalación.</p>'
     : '';
   // Borrar un aviso es acción exclusiva de administración.
   const deleteBlock = admin
@@ -203,12 +203,12 @@ export function renderAlertsList(alerts, farms = [], {
   const hidden = alerts.length - visible.length;
   if (!visible.length) {
     const engineNote = hidden > 0
-      ? `<p class="hint">${hidden} aviso(s) de umbral local ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
+      ? `<p class="hint">${hidden} aviso(s) por superar un límite ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
       : '';
     return `<p class="empty">No hay avisos para estos filtros.</p>${caveatBlock(caveat)}${engineNote}`;
   }
   const extra = hidden > 0
-    ? `<p class="hint">${hidden} aviso(s) de umbral local ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
+    ? `<p class="hint">${hidden} aviso(s) por superar un límite ocultos: el motor de avisos no está comprobado en esta instalación.</p>`
     : '';
   return `${extra}<div class="alert-cards">${visible.map((alert) =>
     renderAlertCard(alert, { zone: zones.get(alert.deviceId) || null, technical, engineVerified, admin })).join('')}</div>`;

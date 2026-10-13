@@ -40,6 +40,19 @@ export function scrollToPublicSection(section) {
   target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
 }
 
+export function showPublicSections(section = 'landing') {
+  const weatherSections = new Set(['tiempo-local', 'comparacion-aemet', 'evolucion']);
+  document.querySelectorAll('#landing-view > .landing-section, #landing-view > .landing-footnote')
+    .forEach((element) => {
+      const show = section === 'landing'
+        ? element.id === 'portada-minima'
+        : section === 'tiempo-local'
+          ? weatherSections.has(element.id)
+          : element.id === section;
+      element.classList.toggle('hidden', !show);
+    });
+}
+
 export function selectUrbanStation(stations = []) {
   const urban = stations.filter((station) => station.locationType === 'urbano'
     && (station.temperatureObservedAt || station.humidityObservedAt));
@@ -62,7 +75,7 @@ export function renderLocalWeatherCard(station) {
   const point = station.zone || station.name || 'punto urbano';
   const stale = !tempFresh || !humidityFresh;
   return `<article class="public-data-card public-now-card${stale ? ' is-stale' : ''}">
-    <div class="public-now-heading"><div><p class="eyebrow">PUNTO DE MEDIDA · CASCO URBANO</p><h3>${escapeText(point)}</h3><p>${escapeText(station.name || '')} · un emplazamiento concreto, no toda la ciudad</p></div>
+    <div class="public-now-heading"><div><p class="eyebrow">PUNTO DE MEDIDA · CASCO URBANO</p><h3>${escapeText(point)}</h3><p>${escapeText(station.name || '')} · un punto concreto, no toda la ciudad</p></div>
       <span class="badge ${station.connectivity === 'offline' ? 'badge-invalid' : stale ? 'badge-warn' : 'badge-valid'}">${station.connectivity === 'offline' ? 'Sin conexión' : stale ? 'Lectura no reciente' : 'Datos recientes'}</span></div>
     <div class="public-now-readings">
       <div><span>Temperatura</span><strong>${station.temperatureC != null ? `${numberText(station.temperatureC, 1)} °C` : 'Sin lectura registrada'}</strong><small>${tempFresh ? `Medido ${sinceText(station.temperatureObservedAt) || dateText(station.temperatureObservedAt)}` : `Última medición ${dateText(station.temperatureObservedAt)}`}</small></div>
@@ -75,8 +88,8 @@ export function renderLocalWeatherCard(station) {
 // Comparación pública: dos valores enfrentados con su hora propia, la
 // diferencia debajo y los metadatos (distancia, altitud) en un desplegable. Así
 // se comparan en móvil sin barra horizontal y se mantienen las dos ubicaciones
-// y sus tiempos por separado. La diferencia solo se calcula con una pareja
-// dentro de la ventana; si no la hay, se dice y no se infiere.
+// y sus tiempos por separado. La diferencia solo se calcula con dos lecturas
+// comparables; si no las hay, se dice y no se infiere.
 export function renderPublicZones(stations) {
   const cards = stations.map((station) => {
     const comparison = station.comparison;
@@ -96,17 +109,17 @@ export function renderPublicZones(stations) {
     const aemetValue = aemetObservation?.temperatureC ?? station.aemet?.observation?.temperatureC;
     const aemetAt = aemetObservation?.observedAt;
     const localLabel = comparison?.local?.location || station.zone || station.name;
-    const locationKind = station.locationType === 'urbano' ? 'zona urbana'
+    const locationKind = station.locationType === 'urbano' ? 'casco urbano'
       : station.locationType === 'finca' ? 'finca' : null;
     const where = [station.zone, station.name, locationKind].filter(Boolean).join(' · ');
-    const localState = pairIsHistorical ? 'Pareja con AEMET · no es la última lectura'
-      : station.temperatureFreshness === 'stale' ? 'Dato antiguo'
-        : station.connectivity === 'offline' ? 'Estación sin conexión'
-          : station.temperatureFreshness === 'unknown' ? 'Sin dato válido' : 'Medición reciente';
+    const localState = pairIsHistorical ? 'Comparación con la estación oficial de una lectura anterior'
+      : station.temperatureFreshness === 'stale' ? 'El dato es de hace tiempo'
+        : station.connectivity === 'offline' ? 'La estación no envía datos'
+          : station.temperatureFreshness === 'unknown' ? 'Sin dato fiable' : 'Dato reciente';
     const aemetStatus = station.aemet?.observationStatus;
     const aemetState = aemetStatus === 'unconfigured' ? 'No configurada'
       : aemetStatus === 'unavailable' ? 'Consulta no disponible'
-        : aemetStatus === 'stale' ? 'Respuesta antigua' : null;
+        : aemetStatus === 'stale' ? 'El dato de AEMET está retrasado' : null;
     const diffValue = comparison?.state === 'matched' && comparison.differenceC != null
       ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
       : 'No calculada';
@@ -116,15 +129,15 @@ export function renderPublicZones(stations) {
       ? `a las ${timeText(localAt)} · ${diffValue}`
       : diffValue;
     const diffTone = comparison?.state === 'matched'
-      ? (comparison.differenceC > 0 ? 'más cálida' : comparison.differenceC < 0 ? 'más fría' : 'igual')
+      ? (comparison.differenceC > 0 ? 'hace más calor' : comparison.differenceC < 0 ? 'hace más frío' : 'hace la misma temperatura')
       : null;
     const windowNote = comparison?.state !== 'matched'
-      ? `Sin pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min`
+      ? `Sin datos comparables: las dos lecturas se separan más de ${numberText(comparison?.windowMinutes || 10, 0)} minutos`
       : null;
     // La última lectura permanece como único valor «actual» (lo muestra la
-    // tarjeta del tiempo local): aquí se dice que aún no tiene pareja.
+    // tarjeta del tiempo local): aquí se dice que aún no se ha comparado.
     const latestNoPairNote = pairIsHistorical && latestAt
-      ? `La última lectura${station.temperatureC != null ? ` (${numberText(station.temperatureC, 1)} °C a las ${timeText(latestAt)})` : ''} todavía no tiene pareja con AEMET.`
+      ? `La última lectura${station.temperatureC != null ? ` (${numberText(station.temperatureC, 1)} °C a las ${timeText(latestAt)})` : ''} todavía no se ha podido comparar con la estación oficial.`
       : null;
     const proximity = comparison?.proximity || aemetObservation?.proximity || station.aemet?.observation?.proximity;
     const metadata = proximity ? `<details class="comparison-metadata"><summary>Distancia y altitud</summary>
@@ -147,7 +160,7 @@ export function renderPublicZones(stations) {
       </div>
       <div class="comparison-diff">
         <strong>${escapeText(diff)}</strong>
-        ${diffTone ? `<span>microestación ${diffTone} · pareja dentro de ±${numberText(comparison?.windowMinutes || 10, 0)} min</span>` : ''}
+        ${diffTone ? `<span>En este punto ${diffTone} · las dos lecturas se separan menos de ${numberText(comparison?.windowMinutes || 10, 0)} minutos</span>` : ''}
         ${windowNote ? `<span>${escapeText(windowNote)}</span>` : ''}
         ${latestNoPairNote ? `<span>${escapeText(latestNoPairNote)}</span>` : ''}
       </div>
@@ -163,12 +176,12 @@ export function renderPublicZones(stations) {
     if (forecastKeys.has(key)) return '';
     forecastKeys.add(key);
     const age = station.aemet.forecastStatus === 'stale' && station.aemet.forecastAgeSeconds != null
-      ? ` · respuesta antigua (${Math.round(station.aemet.forecastAgeSeconds / 60)} min)` : '';
+      ? ` · el dato de AEMET está retrasado (${Math.round(station.aemet.forecastAgeSeconds / 60)} min)` : '';
     return `<article class="weather-provider"><h4>Previsión municipal AEMET · ${escapeText(key)}${age}</h4><div class="weather-days">${days.map((day) => `<div class="weather-day"><strong>${escapeText(String(day.date).slice(0, 10))}</strong><span>${escapeText(day.sky || 'Sin descripción')}</span><span>${numberText(day.temperatureMinC)}° / ${numberText(day.temperatureMaxC)} °C</span></div>`).join('')}</div></article>`;
   }).filter(Boolean).join('');
   const hasForecast = stations.some((station) => station.aemet?.forecast?.days?.length);
   const forecastNotice = !hasForecast && stations.some((station) => station.aemet)
-    ? `<article class="weather-provider"><h4>Previsión municipal · independiente de las observaciones</h4><p>${stations.some((station) => station.aemet?.forecastStatus === 'unconfigured') ? 'Previsión AEMET no configurada para esta ubicación.' : stations.some((station) => station.aemet?.forecastStatus === 'unavailable') ? 'No se ha podido consultar la previsión municipal AEMET.' : 'AEMET no ha devuelto días de previsión utilizables.'}</p></article>` : '';
+    ? `<article class="weather-provider"><h4>Previsión municipal · independiente de las observaciones</h4><p>${stations.some((station) => station.aemet?.forecastStatus === 'unconfigured') ? 'Previsión AEMET no configurada para esta ubicación.' : stations.some((station) => station.aemet?.forecastStatus === 'unavailable') ? 'No se ha podido consultar la previsión municipal AEMET.' : 'AEMET no ha devuelto días de previsión que podemos mostrar.'}</p></article>` : '';
   const warningKeys = new Set();
   const warnings = stations.map((station) => {
     const aemet = station.aemet;
@@ -182,11 +195,11 @@ export function renderPublicZones(stations) {
       ? active.length ? `Avisos vigentes · área ${aemet.warningsAreaCode || 'AEMET'} · consultado ${dateText(aemet.warningsFetchedAt)}`
         : `Sin avisos vigentes · área ${aemet.warningsAreaCode || 'AEMET'} · consultado ${dateText(aemet.warningsFetchedAt)}`
       : state === 'empty' ? `AEMET no devolvió datos de avisos (${dateText(aemet.warningsCheckedAt)}); no se interpreta como ausencia de avisos`
-        : state === 'stale' ? `Consulta no disponible; última respuesta utilizable ${dateText(aemet.warningsFetchedAt)} (hace ${Math.round((aemet.warningsAgeSeconds || 0) / 60)} min)${active.length ? '' : ', sin avisos vigentes en esa respuesta'}.`
+        : state === 'stale' ? `Consulta no disponible; el último dato que sí nos llegó es del ${dateText(aemet.warningsFetchedAt)} (hace ${Math.round((aemet.warningsAgeSeconds || 0) / 60)} min)${active.length ? '' : ', sin avisos vigentes en ese dato'}.`
           : state === 'unconfigured' ? 'Consulta de avisos AEMET no configurada.' : 'No se ha podido consultar avisos AEMET.';
     return `<article class="weather-provider"><h4>Avisos oficiales · ${escapeText(station.zone || station.name)}</h4><p>${escapeText(banner)}</p>${active.map((warning) => `<p><strong>${escapeText(warning.event || warning.headline || 'Aviso')} · ${escapeText(warning.severity || 'sin nivel')}</strong> ${escapeText(warning.area || '')} · ${warning.expires ? `vigente hasta ${escapeText(dateText(warning.expires))}` : ''}</p>`).join('')}</article>`;
   }).filter(Boolean).join('');
-  return `${cards}<p class="hint">Las diferencias solo se calculan cuando observación y medición están separadas por un máximo de ±10 minutos. Positivo significa que la urbana midió más; negativo, menos. La distancia, altitud, exposición y entorno pueden influir; no se atribuye el resultado a un factor único.</p>${forecasts || forecastNotice ? `<section class="public-forecast"><h3>Previsión · independiente de las observaciones</h3>${forecasts}${forecastNotice}</section>` : ''}${warnings ? `<section class="public-forecast"><h3>Avisos oficiales AEMET</h3>${warnings}</section>` : ''}`;
+  return `${cards}<p class="hint">Las diferencias solo se calculan cuando la medición y la observación oficial están separadas por menos de 10 minutos. Si el número es positivo, en este punto hace más calor; si es negativo, hace más frío. La distancia, la altitud, la exposición y el entorno pueden influir; no se atribuye el resultado a un factor único.</p>${forecasts || forecastNotice ? `<section class="public-forecast"><h3>Previsión · independiente de las observaciones</h3>${forecasts}${forecastNotice}</section>` : ''}${warnings ? `<section class="public-forecast"><h3>Avisos oficiales AEMET</h3>${warnings}</section>` : ''}`;
 }
 
 export function renderDayHistory(station, now = Date.now()) {
@@ -199,14 +212,14 @@ export function renderDayHistory(station, now = Date.now()) {
   const temperature = history.filter((row) => row.temperatureC != null);
   const humidity = history.filter((row) => row.humidityPct != null);
   if (temperature.length < 2 && humidity.length < 2) {
-    return `<p class="public-state-card tone-muted">No hay suficientes mediciones reales de las últimas 24 horas para dibujar una evolución.</p>`;
+    return `<p class="public-state-card tone-muted">No hay datos suficientes de las últimas 24 horas para dibujar una evolución.</p>`;
   }
   return `<div class="public-chart-grid">
     ${temperature.length >= 2 ? makeChart('Temperatura · últimas 24 horas', temperature, 'temperatureC', '#c97742', '°C', 1) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de temperatura en las últimas 24 horas.</div>'}
     ${humidity.length >= 2 ? makeChart('Humedad · últimas 24 horas', humidity, 'humidityPct', '#168b80', '%', 0) : '<div class="public-state-card tone-muted">Aún no hay dos mediciones de humedad en las últimas 24 horas.</div>'}
   </div>
   <div class="landing-actions"><a class="cta secondary" href="#/entrar" data-return="evolucion">Ver el histórico ampliado</a></div>
-  <p class="hint">El panel añade periodos de 7 y 30 días; las series cubren desde la puesta en servicio de la estación, no antes.</p>`;
+  <p class="hint">El panel añade periodos de 7 y 30 días; los datos cubren desde la puesta en servicio de la estación, no antes.</p>`;
 }
 
 // La vista se centra en la tarjeta grande del tiempo local al abrir la portada.

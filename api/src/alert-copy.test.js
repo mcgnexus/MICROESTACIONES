@@ -42,7 +42,7 @@ test('metadata includes category, station, zone, time, source, state, validity a
   const meta = alertMeta(alert({ level: 1 }), { zone: 'Vega' }).join(' · ');
   assert.match(meta, /Estación: Huéscar/);
   assert.match(meta, /Zona: Vega/);
-  assert.match(meta, /Categoría: Umbral local/);
+  assert.match(meta, /Categoría: Aviso por superar un límite/);
   assert.match(meta, /Fuente: Medición de tu estación/);
   assert.match(meta, /Tipo: Real/);
   assert.match(meta, /Estado: Activa/);
@@ -55,7 +55,7 @@ test('metadata names the variable, the measured value and the threshold', () => 
   const meta = alertMeta(alert({ ruleSnapshot: { metric: 'temperature', threshold: 0, category: 'frost' } })).join(' · ');
   assert.match(meta, /Variable: temperatura/);
   assert.match(meta, /Valor: 1,8 °C/);
-  assert.match(meta, /Umbral: 0 °C/);
+  assert.match(meta, /Límite de la regla: 0 °C/);
 });
 
 test('a generic message is completed with the variable instead of repeating the station', () => {
@@ -78,7 +78,7 @@ test('the explanation cites the datum or forecast that originates the notice', (
 
 test('a notice can be classified as real, forecast, calculated or simulated', () => {
   const cases = [
-    [{ source: 'station_measurement', ruleId: '1' }, 'real', 'Umbral local'],
+    [{ source: 'station_measurement', ruleId: '1' }, 'real', 'Aviso por superar un límite'],
     [{ source: 'external_forecast' }, 'previsto', 'Riesgo por previsión externa'],
     [{ source: 'estimate' }, 'calculado', 'Riesgo por previsión externa'],
     [{ simulated: true }, 'simulado', 'Aviso agrícola simulado'],

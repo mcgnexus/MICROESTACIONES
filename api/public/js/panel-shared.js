@@ -25,7 +25,7 @@ export function panelDocumentation() {
     <details class="technical-details">
       <summary>Metodología y calidad de datos</summary>
       <p class="hint">Las tendencias de cada gráfico son diferencias observadas entre la primera y la última lectura del periodo, no pendientes ajustadas ni pendientes pendientes de corregir.</p>
-      <p class="hint">La cobertura son las lecturas recibidas frente a las esperadas según el intervalo configurado, y no una medida del rendimiento del sensor. Las lecturas extrañas no se borran: se marcan como inválidas y siguen visibles, para que el histórico no pueda ocultar un problema de conectividad.</p>
+      <p class="hint">La calidad de los datos recibidos mide las lecturas recibidas frente a las esperadas según el intervalo configurado, y no el rendimiento del sensor. Las lecturas extrañas no se borran: se marcan como inválidas y siguen visibles, para que el histórico no pueda ocultar un problema de conectividad.</p>
       <p class="hint">Un vacío de avisos nunca significa «no hay riesgo»: si faltan datos o la previsión está caída, el panel lo dice en lugar de tranquilizar.</p>
       <p class="hint">Los avisos propios son orientativos y no son avisos oficiales.</p>
     </details>`;
