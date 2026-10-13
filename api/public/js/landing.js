@@ -44,11 +44,11 @@ export function showPublicSections(section = 'landing') {
   const weatherSections = new Set(['tiempo-local', 'comparacion-aemet', 'evolucion']);
   document.querySelectorAll('#landing-view > .landing-section, #landing-view > .landing-footnote')
     .forEach((element) => {
-      const show = section === 'landing'
-        ? element.id === 'portada-minima'
-        : section === 'tiempo-local'
-          ? weatherSections.has(element.id)
-          : element.id === section;
+      // La app abre en la pantalla de tiempo local: la ruta sin sección
+      // (landing) muestra lo mismo que #/tiempo-local.
+      const show = section === 'landing' || section === 'tiempo-local'
+        ? weatherSections.has(element.id)
+        : element.id === section;
       element.classList.toggle('hidden', !show);
     });
 }
@@ -222,7 +222,10 @@ export function renderDayHistory(station, now = Date.now()) {
   <p class="hint">El panel añade periodos de 7 y 30 días; los datos cubren desde la puesta en servicio de la estación, no antes.</p>`;
 }
 
-// La vista se centra en la tarjeta grande del tiempo local al abrir la portada.
+// La app abre en la pantalla de tiempo local: sin ruta (o con «#/») la vista se
+// centra en la tarjeta grande de temperatura y humedad.
+const isOpenRoute = () => !location.hash || location.hash === '#' || location.hash === '#/';
+
 function focusWeatherCard(container) {
   const card = container?.firstElementChild;
   if (!card || typeof card.scrollIntoView !== 'function') return;
@@ -230,6 +233,17 @@ function focusWeatherCard(container) {
   card.setAttribute('tabindex', '-1');
   card.focus({ preventScroll: true });
   card.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+}
+
+// Si no hay tarjeta que enfocar (fallo de carga sin SSR), el foco va al estado
+// de aviso de la propia sección para que no se pierda en un elemento oculto.
+function focusWeatherFallback(root) {
+  const card = root.querySelector('#local-weather-card');
+  const state = root.querySelector('#local-weather-state');
+  const target = card?.firstElementChild || state;
+  if (!target || typeof target.focus !== 'function') return;
+  target.setAttribute('tabindex', '-1');
+  target.focus({ preventScroll: true });
 }
 
 function setPublicFailure(root, message) {
@@ -284,7 +298,7 @@ export async function loadPublicWeather(root = document, { focus = true } = {}) 
     root.querySelector('#local-weather-card').innerHTML = parts.card;
     // Solo en la carga inicial y solo si se abre en la portada: en otras
     // secciones públicas el scroll lo manda la ruta y no se le disputa.
-    if (focus && (!location.hash || location.hash === '#' || location.hash === '#/')) {
+    if (focus && isOpenRoute()) {
       focusWeatherCard(root.querySelector('#local-weather-card'));
     }
     settle(root.querySelector('#public-comparison')).innerHTML = parts.comparison;
@@ -293,6 +307,7 @@ export async function loadPublicWeather(root = document, { focus = true } = {}) 
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('tecrural:data-loaded'));
   } catch {
     setPublicFailure(root, 'No se han podido cargar las mediciones públicas. Inténtalo de nuevo más tarde.');
+    if (focus && isOpenRoute()) focusWeatherFallback(root);
   } finally {
     publicWeatherInFlight = false;
   }

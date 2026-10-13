@@ -41,6 +41,13 @@ test('el h1 de Tiempo local precede a la tarjeta insertada por SSR o por el clie
   assert.doesNotMatch(renderLocalWeatherCard(urban), /<h3>/);
 });
 
+test('la app abre en tiempo local: no queda la portada breve y la ruta landing muestra las secciones meteorológicas', () => {
+  assert.doesNotMatch(view, /id="portada-minima"/, 'la portada breve quedó eliminada del HTML');
+  assert.doesNotMatch(landing, /portada-minima/);
+  // La ruta sin sección (landing) muestra lo mismo que #/tiempo-local.
+  assert.match(landing, /section === 'landing' \|\| section === 'tiempo-local'\s*\? weatherSections\.has\(element\.id\)/);
+});
+
 test('sin estación urbana la tarjeta explica el vacío, no inventa un dato', () => {
   const card = renderLocalWeatherCard(selectUrbanStation([]));
   assert.match(card, /No hay una medición urbana pública/);

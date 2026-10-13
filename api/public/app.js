@@ -297,6 +297,10 @@ async function route() {
     }
     showLanding();
     showPublicSections(section);
+    // La app abre en tiempo local: el enfoque de la tarjeta lo dirige
+    // focusWeatherCard tras cargar los datos; entrar en la portada (por el pie
+    // o por un enlace) vuelve siempre la vista al principio.
+    if (section === 'landing') { window.scrollTo({ top: 0 }); return; }
     if (PUBLIC_SECTIONS.has(section)) scrollToPublicSection(section);
     return;
   }
@@ -314,6 +318,7 @@ async function route() {
     }
     showLandingView();
     showPublicSections('landing');
+    window.scrollTo({ top: 0 });
     return;
   }
   if (PUBLIC_SECTIONS.has(section)) {

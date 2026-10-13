@@ -51,3 +51,16 @@ test('showLandingView conserva la chip y el botón de cierre de sesión', () => 
   assert.match(fn, /landingView\.classList\.remove\('hidden'\)/);
   assert.match(fn, /viewRoot\.classList\.add\('hidden'\)/);
 });
+
+test('al abrir sin ruta la portada vuelve al principio y la tarjeta recibe el foco tras cargar', async () => {
+  // Entrar en la portada (por ruta vacía o desde el pie) siempre empieza arriba.
+  const route = sliceBetween('if (!session.me) {', 'showApp();');
+  assert.match(route, /if \(section === 'landing'\) \{ window\.scrollTo\(\{ top: 0 \}\); return; \}/);
+  assert.match(appSource, /showPublicSections\('landing'\);\s*window\.scrollTo\(\{ top: 0 \}\)/);
+  // El enfoque de la tarjeta lo dirige loadPublicWeather solo en la ruta de
+  // apertura; los refrescos (focus: false) no roban el foco.
+  const landing = await readFile(new URL('../public/js/landing.js', import.meta.url), 'utf8');
+  assert.match(landing, /if \(focus && isOpenRoute\(\)\) \{\s*focusWeatherCard\(root\.querySelector\('#local-weather-card'\)\)/);
+  // Si la carga falla sin tarjeta SSR, el foco va al estado de aviso.
+  assert.match(landing, /if \(focus && isOpenRoute\(\)\) focusWeatherFallback\(root\)/);
+});
