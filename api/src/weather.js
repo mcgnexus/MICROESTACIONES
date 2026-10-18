@@ -34,9 +34,13 @@ export function normalizeOpenMeteo(payload) {
   const current = payload.current || {};
   const hourly = payload.hourly || {};
   const daily = payload.daily || {};
-  const now = Date.parse(current.time || new Date().toISOString());
+  // Las horas llegan locales de Madrid sin offset («2026-10-18T09:00»): el
+  // corte de frescura debe compararlas con el reloj de Madrid, no con la zona
+  // del servidor. Con Date.parse, por la mañana se descartaban justamente las
+  // horas más recientes (las únicas que permiten emparejar con la estación).
+  const now = parseMadridLocal(current.time) || Date.now();
   const times = hourly.time || [];
-  const hourlyForecast = times.map((time, index) => ({
+  const hourlyPoints = times.map((time, index) => ({
     forecastFor: time,
     temperatureC: at(hourly.temperature_2m, index),
     humidityPct: at(hourly.relative_humidity_2m, index),
@@ -47,7 +51,20 @@ export function normalizeOpenMeteo(payload) {
     windDirection: at(hourly.wind_direction_10m, index),
     windGustKmh: at(hourly.wind_gusts_10m, index),
     weatherCode: at(hourly.weather_code, index),
-  })).filter((point) => Date.parse(point.forecastFor) >= now).slice(0, 36);
+    at: parseMadridLocal(time),
+  }));
+  const hourlyForecast = hourlyPoints
+    .filter((point) => point.at >= now)
+    .slice(0, 36)
+    .map(({ at: _at, ...point }) => point);
+  // Para emparejar con las mediciones recientes también hacen falta las horas
+  // que ya empezaron (la hora en curso cubre las lecturas de sus primeros 59
+  // min). Dos horas de retrovisor, separadas de `hourly` para no mover las
+  // tarjetas de próximas horas del panel.
+  const hourlyRecent = hourlyPoints
+    .filter((point) => point.at >= now - 2 * 60 * 60 * 1000)
+    .slice(0, 6)
+    .map(({ at: _at, ...point }) => point);
   const days = (daily.time || []).map((date, index) => ({
     date,
     temperatureMaxC: at(daily.temperature_2m_max, index),
@@ -77,6 +94,7 @@ export function normalizeOpenMeteo(payload) {
       weatherCode: current.weather_code ?? null,
     },
     hourly: hourlyForecast,
+    hourlyRecent,
     daily: days,
   };
 }
@@ -713,7 +731,7 @@ export function parseMadridLocal(value) {
 
 export function modelPairForSample(sample, model, { windowMs = OPEN_METEO_PAIR_WINDOW_MS, now = new Date() } = {}) {
   const at = sample?.observedAt ? new Date(sample.observedAt).getTime() : NaN;
-  const hours = (model?.hourly || [])
+  const hours = (model?.hourlyRecent || model?.hourly || [])
     .map((hour) => ({ hour, start: parseMadridLocal(hour.forecastFor) }))
     .filter((entry) => Number.isFinite(entry.start));
   if (!Number.isFinite(at) || !hours.length) {
@@ -778,7 +796,7 @@ export function mostRecentModelComparison(history, model, options = {}) {
     if (pair.state === 'no_pair' && sample.observedAt === samples[0]?.observedAt) break;
   }
   const latest = samples[0] ?? null;
-  const hours = (model?.hourly || []).length;
+  const hours = ((model?.hourlyRecent || model?.hourly || [])).length;
   return {
     state: !latest || !hours ? 'no_model' : 'no_pair',
     windowMinutes: Math.round((options.windowMs ?? OPEN_METEO_PAIR_WINDOW_MS) / 60000),
