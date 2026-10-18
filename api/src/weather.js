@@ -42,6 +42,7 @@ export function normalizeOpenMeteo(payload) {
     humidityPct: at(hourly.relative_humidity_2m, index),
     precipitationMm: at(hourly.precipitation, index),
     precipitationProbabilityPct: at(hourly.precipitation_probability, index),
+    pressureHpa: at(hourly.surface_pressure, index),
     windKmh: at(hourly.wind_speed_10m, index),
     windDirection: at(hourly.wind_direction_10m, index),
     windGustKmh: at(hourly.wind_gusts_10m, index),
@@ -986,7 +987,7 @@ async function fetchOpenMeteo(latitude, longitude) {
   url.search = new URLSearchParams({
     latitude: String(latitude), longitude: String(longitude), timezone: 'auto', forecast_days: '5',
     current: 'temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
-    hourly: 'temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,rain,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
+    hourly: 'temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,rain,surface_pressure,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
     daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,weather_code',
   }).toString();
   return normalizeOpenMeteo(await fetchJson(url));
