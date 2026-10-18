@@ -39,7 +39,7 @@ export async function loadPublicStations() {
   const stationIds = rows.map((row) => row.id);
   const recentHistory = stationIds.length
     ? await sql`WITH ranked AS (
-        SELECT device_id, observed_at, temperature_c, humidity_pct, pressure_hpa,
+        SELECT device_id, observed_at, temperature_c, humidity_pct, pressure_pa / 100.0 AS pressure_hpa,
           row_number() OVER (PARTITION BY device_id ORDER BY observed_at) AS sample_no,
           count(*) OVER (PARTITION BY device_id) AS sample_count
         FROM measurements
