@@ -226,6 +226,11 @@ export function renderModelComparisonCard(stations) {
   const state = matched ? 'Estimación del modelo'
     : comparison.state === 'no_pair' ? `Sin pareja: la lectura se separa más de ${numberText(comparison.windowMinutes || 20, 0)} min de la hora del modelo`
       : 'El modelo no está disponible ahora mismo';
+  // Con el snapshot del modelo viejo (el refresco diferido puede no llegar en
+  // serverless), la ausencia de pareja se explica: no es fallo del sensor.
+  const snapshotStale = station.modelStaleSnapshot === true && !matched
+    ? '<span>El contraste se mostrará en cuanto llegue el modelo nuevo (máximo ~30 min); mientras tanto se muestra la última estimación disponible.</span>'
+    : '';
   const pressure = matched && comparison.pressureDifferenceHpa != null
     ? `<span>Presión: la estación marca ${comparison.pressureDifferenceHpa > 0 ? '+' : ''}${numberText(comparison.pressureDifferenceHpa, 1)} hPa frente a la superficie del modelo; refleja en parte la distinta altitud del emplazamiento y de la celda.</span>`
     : '';
@@ -249,6 +254,7 @@ export function renderModelComparisonCard(stations) {
       <strong>${escapeText(diff)}</strong>
       ${diffTone ? `<span>${escapeText(diffTone)} · las dos horas se separan menos de ${numberText(comparison.windowMinutes || 20, 0)} minutos</span>` : ''}
       <span>Diferencia esperable: el modelo describe una celda de ~11 km; la estación mide su punto exacto.</span>
+      ${snapshotStale}
       ${pressure}
     </div>
     <details class="comparison-metadata"><summary>Fuente del modelo</summary>

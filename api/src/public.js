@@ -117,6 +117,10 @@ export async function loadPublicStations() {
       modelComparison: weather
         ? mostRecentModelComparison(historyByStation.get(row.id) ?? [], weather.openMeteo)
         : null,
+      // Indica si la comparación podría existir con datos frescos: el snapshot
+      // sirv aquí viejo y el refresco diferido puede no completarse nunca en
+      // serverless. La tarjeta lo usa para explicar la ausencia de pareja.
+      modelStaleSnapshot: Boolean(weather?.openMeteo && weather.stale),
       openMeteo: weather?.openMeteo ? {
         fetchedAt: weather.openMeteo.fetchedAt ?? null,
         current: weather.openMeteo.current ?? null,
