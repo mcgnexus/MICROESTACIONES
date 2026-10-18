@@ -3,7 +3,7 @@
 import { Router } from 'express';
 import { sql } from './db.js';
 import { connectivityFor, dataFreshnessFor } from './station-status.js';
-import { weatherForDevice } from './weather.js';
+import { weatherForDevice, mostRecentModelComparison } from './weather.js';
 
 const router = Router();
 
@@ -39,14 +39,14 @@ export async function loadPublicStations() {
   const stationIds = rows.map((row) => row.id);
   const recentHistory = stationIds.length
     ? await sql`WITH ranked AS (
-        SELECT device_id, observed_at, temperature_c, humidity_pct,
+        SELECT device_id, observed_at, temperature_c, humidity_pct, pressure_hpa,
           row_number() OVER (PARTITION BY device_id ORDER BY observed_at) AS sample_no,
           count(*) OVER (PARTITION BY device_id) AS sample_count
         FROM measurements
         WHERE device_id = ANY(${stationIds}) AND is_validated AND deleted_at IS NULL
           AND observed_at >= now() - interval '24 hours' AND observed_at <= now()
       )
-      SELECT device_id, observed_at, temperature_c, humidity_pct
+      SELECT device_id, observed_at, temperature_c, humidity_pct, pressure_hpa
       FROM ranked
       WHERE sample_count <= 200 OR sample_no = 1 OR sample_no = sample_count
         OR mod(sample_no, ceil(sample_count::numeric / 200)::integer) = 0
@@ -59,6 +59,9 @@ export async function loadPublicStations() {
       observedAt: point.observedAt,
       temperatureC: point.temperatureC == null ? null : Number(point.temperatureC),
       humidityPct: point.humidityPct == null ? null : Number(point.humidityPct),
+      // Presión a nivel de estación (hPa): permite comparar con la presión de
+      // superficie del modelo y verificar altitud/calibración del sensor.
+      pressureHpa: point.pressureHpa == null ? null : Number(point.pressureHpa),
     });
   }
   const stations = await Promise.all(rows.map(async (row) => {
@@ -84,7 +87,8 @@ export async function loadPublicStations() {
       humidityObservedAt: row.humidityObservedAt ?? null,
       // Backward-compatible alias for the latest real urban temperature.
       observedAt: row.temperatureObservedAt ?? null,
-      history: historyByStation.get(row.id) ?? [],
+      // Contrato público estable: la presión interna del cálculo no se publica.
+      history: (historyByStation.get(row.id) ?? []).map(({ pressureHpa, ...point }) => point),
       aemet: weather ? {
         observation: weather.aemet?.observation ? {
           stationId: weather.aemet.observation.stationId,
@@ -107,6 +111,17 @@ export async function loadPublicStations() {
         errors: weather.errors ?? [],
       } : null,
       comparison: weather?.comparison ?? null,
+      // Comparación con el modelo (Open-Meteo): la historia de 24 h ya está en
+      // esta respuesta, así que el emparejamiento no cuesta consultas nuevas.
+      // La presión viaja solo en el cálculo interno; el histórico público no cambia.
+      modelComparison: weather
+        ? mostRecentModelComparison(historyByStation.get(row.id) ?? [], weather.openMeteo)
+        : null,
+      openMeteo: weather?.openMeteo ? {
+        fetchedAt: weather.openMeteo.fetchedAt ?? null,
+        current: weather.openMeteo.current ?? null,
+        stale: Boolean(weather.stale),
+      } : null,
       weatherErrors: weather?.errors ?? [],
     };
   }));

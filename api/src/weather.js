@@ -67,6 +67,7 @@ export function normalizeOpenMeteo(payload) {
       apparentTemperatureC: current.apparent_temperature ?? null,
       humidityPct: current.relative_humidity_2m ?? null,
       pressureHpa: current.pressure_msl ?? null,
+      surfacePressureHpa: current.surface_pressure ?? null,
       precipitationMm: current.precipitation ?? null,
       rainMm: current.rain ?? null,
       windKmh: current.wind_speed_10m ?? null,
@@ -673,6 +674,121 @@ export function mergeAemetSnapshot(previous, fresh) {
   return merged;
 }
 
+// ——— Comparación sensor vs Open-Meteo (modelo) ———
+// Pareja la medición local con el modelo más cercano en el tiempo. Difiere de la
+// comparación con AEMET en dos cosas: Open-Meteo no da una hora instantánea sino
+// la franja horaria que cubre la lectura (la pareja es la hora que contiene la
+// muestra), y la presión del modelo que es comparable es la de superficie, no la
+// de nivel del mar.
+export const OPEN_METEO_PAIR_WINDOW_MS = 20 * 60 * 1000;
+
+// Open-Meteo (timezone=auto) devuelve horas locales de Madrid SIN offset
+// («2026-10-18T05:00»). `Date.parse` las interpretaría en la zona del servidor
+// (UTC en producción) y desplazaría el emparejamiento 1–2 h. Punto fijo con el
+// reloj de Madrid, el mismo enfoque que `parseAemetInstantDetailed`.
+export function parseMadridLocal(value) {
+  const raw = String(value || '');
+  // Con offset explícito (Z o ±HH:MM) no hay ambigüedad: parseo directo.
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(raw.trim())) {
+    const direct = new Date(raw.trim());
+    return Number.isFinite(direct.getTime()) ? direct.getTime() : NaN;
+  }
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!match) return NaN;
+  const [, year, month, day, hour, minute] = match;
+  const targetUtc = Date.UTC(+year, +month - 1, +day, +hour, +minute);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  let guess = targetUtc;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(guess)).map((part) => [part.type, part.value]));
+    const representedUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute);
+    guess += targetUtc - representedUtc;
+  }
+  return guess;
+}
+
+export function modelPairForSample(sample, model, { windowMs = OPEN_METEO_PAIR_WINDOW_MS, now = new Date() } = {}) {
+  const at = sample?.observedAt ? new Date(sample.observedAt).getTime() : NaN;
+  const hours = (model?.hourly || [])
+    .map((hour) => ({ hour, start: parseMadridLocal(hour.forecastFor) }))
+    .filter((entry) => Number.isFinite(entry.start));
+  if (!Number.isFinite(at) || !hours.length) {
+    return { state: 'no_model', differenceC: null, timeOffsetSeconds: null };
+  }
+  const nearest = hours
+    .map((entry) => ({ ...entry, deltaMs: entry.start - at }))
+    .sort((a, b) => Math.abs(a.deltaMs) - Math.abs(b.deltaMs))[0];
+  if (Math.abs(nearest.deltaMs) > windowMs) {
+    return { state: 'no_pair', differenceC: null, timeOffsetSeconds: null };
+  }
+  const modelTemperature = numeric(nearest.hour.temperatureC);
+  const samplePressure = numeric(sample.pressureHpa);
+  // El modelo habla de la celda (~11 km); la microestación, de su punto exacto.
+  // La diferencia de temperatura es esperable y no es un error de ninguno.
+  const offsetMinutes = Math.round(nearest.deltaMs / 60000);
+  const result = {
+    state: 'matched',
+    windowMinutes: Math.round(windowMs / 60000),
+    local: { temperatureC: numeric(sample.temperatureC), observedAt: sample.observedAt, location: sample.location || null },
+    model: {
+      temperatureC: modelTemperature,
+      forecastFor: nearest.hour.forecastFor,
+      humidityPct: numeric(nearest.hour.humidityPct),
+      pressureHpa: numeric(nearest.hour.pressureHpa),
+    },
+    timeOffsetMinutes: offsetMinutes,
+    differenceC: modelTemperature == null || sample.temperatureC == null
+      ? null
+      : Math.round((sample.temperatureC - modelTemperature) * 10) / 10,
+    differenceDefinition: 'temperatura_microestacion_menos_OpenMeteo',
+  };
+  if (samplePressure != null && nearest.hour.pressureHpa != null) {
+    // hPa de superficie a nivel de estación: diferencia reducible a altitud.
+    result.pressureDifferenceHpa = Math.round((samplePressure - nearest.hour.pressureHpa) * 10) / 10;
+    result.pressureDifferenceDefinition = 'presion_microestacion_menos_OpenMeteo_superficie';
+  }
+  return result;
+}
+
+// Compara las horas del modelo con las 24 h de historia local que ya viajan en
+// /api/v1/public/stations (sin consultas nuevas a la base de datos). La pareja
+// «útil» es la lectura local más reciente con hora del modelo disponible y en
+// ventana: solo esa dice algo del presente (las horas del modelo ya publicadas
+// no se actualizan). Devuelve también un mini-histórico (máx. 8 puntos) para
+// que la interfaz muestre la coherencia reciente del sensor.
+export function mostRecentModelComparison(history, model, options = {}) {
+  const samples = (Array.isArray(history) ? history : [])
+    .filter((row) => row && numeric(row.temperatureC) != null && row.observedAt)
+    .map((row) => ({ ...row, observedAt: new Date(row.observedAt).toISOString() }))
+    .sort((a, b) => new Date(b.observedAt) - new Date(a.observedAt));
+  for (const sample of samples) {
+    const pair = modelPairForSample(sample, model, options);
+    if (pair.state === 'matched') {
+      const recentPairs = samples
+        .map((row) => modelPairForSample(row, model, options))
+        .filter((p) => p.state === 'matched' && p.differenceC != null)
+        .slice(0, 8)
+        .map((p) => ({ observedAt: p.local.observedAt, differenceC: p.differenceC }));
+      return { ...pair, recentPairs, isLatestLocal: sample.observedAt === samples[0]?.observedAt };
+    }
+    if (pair.state === 'no_pair' && sample.observedAt === samples[0]?.observedAt) break;
+  }
+  const latest = samples[0] ?? null;
+  const hours = (model?.hourly || []).length;
+  return {
+    state: !latest || !hours ? 'no_model' : 'no_pair',
+    windowMinutes: Math.round((options.windowMs ?? OPEN_METEO_PAIR_WINDOW_MS) / 60000),
+    local: latest ? { temperatureC: numeric(latest.temperatureC), observedAt: latest.observedAt, location: latest.location || null } : null,
+    differenceC: null,
+    timeOffsetSeconds: null,
+    differenceDefinition: 'temperatura_microestacion_menos_OpenMeteo',
+    isLatestLocal: false,
+  };
+}
+
 function ageSeconds(value, now = new Date()) {
   if (!value || !Number.isFinite(new Date(value).getTime())) return null;
   return Math.max(0, Math.round((now.getTime() - new Date(value).getTime()) / 1000));
@@ -869,7 +985,7 @@ async function fetchOpenMeteo(latitude, longitude) {
   const url = new URL(OPEN_METEO);
   url.search = new URLSearchParams({
     latitude: String(latitude), longitude: String(longitude), timezone: 'auto', forecast_days: '5',
-    current: 'temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
+    current: 'temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
     hourly: 'temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,rain,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
     daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,weather_code',
   }).toString();

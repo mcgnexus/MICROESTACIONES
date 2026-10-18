@@ -202,6 +202,61 @@ export function renderPublicZones(stations) {
   return `${cards}<p class="hint">Las diferencias solo se calculan cuando la medición y la observación oficial están separadas por menos de 10 minutos. Si el número es positivo, en este punto hace más calor; si es negativo, hace más frío. La distancia, la altitud, la exposición y el entorno pueden influir; no se atribuye el resultado a un factor único.</p>${forecasts || forecastNotice ? `<section class="public-forecast"><h3>Previsión · independiente de las observaciones</h3>${forecasts}${forecastNotice}</section>` : ''}${warnings ? `<section class="public-forecast"><h3>Avisos oficiales AEMET</h3>${warnings}</section>` : ''}`;
 }
 
+// Contraste con el modelo (Open-Meteo): pareja la lectura local más reciente
+// con la hora del modelo que la cubre. No es una comparación de verdad sino de
+// coherencia: el modelo describe una celda de ~11 km y la estación su punto
+// exacto, así que diferencias pequeñas son esperadas. Sin pareja, se dice y no
+// se calcula nada (mismo criterio que la comparación con AEMET).
+export function renderModelComparisonCard(stations) {
+  const station = selectUrbanStation(stations);
+  if (!station) return '';
+  const comparison = station.modelComparison;
+  if (!comparison) return '';
+  const where = [station.zone, station.name].filter(Boolean).join(' · ');
+  const matched = comparison.state === 'matched' && comparison.model;
+  const model = matched ? comparison.model : null;
+  const diff = matched && comparison.differenceC != null
+    ? `${comparison.differenceC > 0 ? '+' : ''}${numberText(comparison.differenceC, 1)} °C`
+    : 'No calculada';
+  const diffTone = matched && comparison.differenceC != null
+    ? comparison.differenceC > 0 ? 'La estación mide más calor que el modelo'
+      : comparison.differenceC < 0 ? 'La estación mide más frío que el modelo'
+        : 'La estación y el modelo coinciden'
+    : null;
+  const state = matched ? 'Estimación del modelo'
+    : comparison.state === 'no_pair' ? `Sin pareja: la lectura se separa más de ${numberText(comparison.windowMinutes || 20, 0)} min de la hora del modelo`
+      : 'El modelo no está disponible ahora mismo';
+  const pressure = matched && comparison.pressureDifferenceHpa != null
+    ? `<span>Presión: la estación marca ${comparison.pressureDifferenceHpa > 0 ? '+' : ''}${numberText(comparison.pressureDifferenceHpa, 1)} hPa frente a la superficie del modelo; coherente con la altitud del emplazamiento.</span>`
+    : '';
+  return `<article class="comparison-card comparison-model">
+    <h3>Sensor vs modelo · ${escapeText(where)}</h3>
+    <div class="comparison-readings">
+      <div class="reading reading-local">
+        <span class="reading-label">Medición local</span>
+        <strong>${comparison.local?.temperatureC == null ? '—' : `${numberText(comparison.local.temperatureC, 1)} °C`}</strong>
+        <span class="reading-time">${escapeText(dateText(comparison.local?.observedAt) || '—')}</span>
+        <span class="reading-state">Dato medido</span>
+      </div>
+      <div class="reading reading-aemet">
+        <span class="reading-label">Modelo Open-Meteo</span>
+        <strong>${model?.temperatureC == null ? '—' : `${numberText(model.temperatureC, 1)} °C`}</strong>
+        <span class="reading-time">${escapeText(dateText(model?.forecastFor) || '—')}</span>
+        <span class="reading-state">${escapeText(state)}</span>
+      </div>
+    </div>
+    <div class="comparison-diff">
+      <strong>${escapeText(diff)}</strong>
+      ${diffTone ? `<span>${escapeText(diffTone)} · las dos horas se separan menos de ${numberText(comparison.windowMinutes || 20, 0)} minutos</span>` : ''}
+      <span>Diferencia esperable: el modelo describe una celda de ~11 km; la estación mide su punto exacto.</span>
+      ${pressure}
+    </div>
+    <details class="comparison-metadata"><summary>Fuente del modelo</summary>
+      <p class="aemet-proximity">Modelo agregado de Open-Meteo.com (licencia CC-BY 4.0), consultado ${escapeText(dateText(station.openMeteo?.fetchedAt))}. El modelo no mide: estima con simulación numérica; el contraste sirve para vigilar la coherencia del sensor, no para corregirlo.</p>
+    </details>
+  </article>`;
+}
+
 export function renderDayHistory(station, now = Date.now()) {
   const start = now - 24 * 60 * 60 * 1000;
   const history = (station?.history || []).filter((row) => {
@@ -250,12 +305,14 @@ function setPublicFailure(root, message) {
   const loading = root.querySelector('#local-weather-state');
   const card = root.querySelector('#local-weather-card');
   const comparison = root.querySelector('#public-comparison');
+  const model = root.querySelector('#public-model');
   const evolution = root.querySelector('#public-evolution');
   if (loading) settle(loading).innerHTML = `<p class="public-state-card tone-warn" role="alert">${escapeText(message)}</p>`;
   // Si el servidor ya pintó la tarjeta (SSR), un fallo posterior no la borra:
   // se mantiene la última lectura mostrada en vez de dejar un hueco.
   if (card && !card.hasAttribute('data-public-ready')) card.innerHTML = '';
   if (comparison) settle(comparison).innerHTML = '<p class="public-state-card tone-muted">La comparación no está disponible hasta recuperar las observaciones.</p>';
+  if (model) settle(model).innerHTML = '';
   if (evolution) settle(evolution).innerHTML = '<p class="public-state-card tone-muted">La evolución no está disponible hasta recuperar las mediciones.</p>';
 }
 
@@ -278,6 +335,7 @@ export function renderPublicWeather(stations = []) {
     comparison: station
       ? renderPublicZones([station])
       : '<p class="public-state-card tone-muted">Aún no hay una estación urbana con permiso de publicación. La comparación con AEMET aparecerá cuando haya observaciones reales.</p>',
+    model: renderModelComparisonCard(stations),
     evolution: renderDayHistory(station),
     observedAt: station ? (station.temperatureObservedAt || station.humidityObservedAt || null) : null,
   };
@@ -302,6 +360,7 @@ export async function loadPublicWeather(root = document, { focus = true } = {}) 
       focusWeatherCard(root.querySelector('#local-weather-card'));
     }
     settle(root.querySelector('#public-comparison')).innerHTML = parts.comparison;
+    settle(root.querySelector('#public-model')).innerHTML = parts.model || '';
     settle(root.querySelector('#public-evolution')).innerHTML = parts.evolution;
     // Señal para que la app ofrezca instalar la PWA después de consultar datos.
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('tecrural:data-loaded'));
