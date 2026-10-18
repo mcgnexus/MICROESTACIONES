@@ -24,8 +24,10 @@ Autor: sesión Hermes (VPS) con aprobación de Manuel.
 ## Evidencias de aceptación
 
 - Suite completa: **664/664 tests** (`node --test`), incluidos 8 nuevos (`src/model-comparison.test.js`) que cubren zona horaria, pareja con signo, `no_pair`/`no_model`, histórico reciente y tarjeta.
-- Producción (deploy por push a `main`, verificado con curl): `GET /api/v1/public/stations` → HTTP 200, `modelComparison.state=matched`, diff +1,1 °C con offset 6 min, 5 parejas recientes. HTML servido con la sección nueva y el bundle firmado (`app-A7T4GCVQ.js`).
-- Incidente durante el despliegue: la columna real de presión en `measurements` es `pressure_pa` (Pa, unidad del firmware); el primer push usaba `pressure_hpa` y produjo 500 en `/api/v1/public/stations` (PostgresError 42703). Corregido convirtiendo en SQL (`pressure_pa / 100.0`); verificado 200 OK después.
+- Producción (deploy por push a `main`, verificado con curl): `GET /api/v1/public/stations` → HTTP 200, `modelComparison.state=matched`, diff +0,3 °C con offset 7 min, presión −1,0 hPa frente a `surface_pressure`, 2 parejas recientes. HTML servido con la sección nueva y el bundle firmado con la tarjeta.
+- Incidente 1 durante el despliegue: la columna real de presión en `measurements` es `pressure_pa` (Pa, unidad del firmware); el primer push usaba `pressure_hpa` y produjo 500 en `/api/v1/public/stations` (PostgresError 42703). Corregido convirtiendo en SQL (`pressure_pa / 100.0`); verificado 200 OK después.
+- Incidente 2 (bug preexistente destapado): el corte de frescura de `normalizeOpenMeteo` comparaba horas locales con `Date.parse` (zona del servidor): por la mañana descartaba las horas más recientes y el emparejamiento se quedaba sin pareja a media mañana. Corregido con `parseMadridLocal` + serie `hourlyRecent` (hasta 6 horas desde `now-2h`) que usa el emparejamiento sin tocar las tarjetas de futuro del panel.
+- Nota serverless: el refresco del snapshot en la ruta pública va diferido (`backgroundRefresh: true`) y puede no completarse; hasta que expira el TTL (30 min) la tarjeta explica que el modelo está retrasado (`modelStaleSnapshot`). El panel autenticado sí refresca al entrar.
 
 ## Coste operativo añadido
 
