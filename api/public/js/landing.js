@@ -227,7 +227,7 @@ export function renderModelComparisonCard(stations) {
     : comparison.state === 'no_pair' ? `Sin pareja: la lectura se separa más de ${numberText(comparison.windowMinutes || 20, 0)} min de la hora del modelo`
       : 'El modelo no está disponible ahora mismo';
   const pressure = matched && comparison.pressureDifferenceHpa != null
-    ? `<span>Presión: la estación marca ${comparison.pressureDifferenceHpa > 0 ? '+' : ''}${numberText(comparison.pressureDifferenceHpa, 1)} hPa frente a la superficie del modelo; coherente con la altitud del emplazamiento.</span>`
+    ? `<span>Presión: la estación marca ${comparison.pressureDifferenceHpa > 0 ? '+' : ''}${numberText(comparison.pressureDifferenceHpa, 1)} hPa frente a la superficie del modelo; refleja en parte la distinta altitud del emplazamiento y de la celda.</span>`
     : '';
   return `<article class="comparison-card comparison-model">
     <h3>Sensor vs modelo · ${escapeText(where)}</h3>
